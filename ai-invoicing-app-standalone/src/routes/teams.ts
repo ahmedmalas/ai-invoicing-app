@@ -6,7 +6,18 @@ import {
   createTeamSchema,
   deleteTeamParamsSchema,
   removeTeamMemberParamsSchema,
+  updateTeamMemberRoleSchema,
 } from '../domain/teams/validation.js';
+
+function parseActorUserId(headers: unknown): string | null {
+  const parsed = z
+    .object({
+      'x-actor-user-id': z.string().uuid().optional(),
+    })
+    .passthrough()
+    .parse(headers);
+  return parsed['x-actor-user-id'] ?? null;
+}
 
 export const teamRoutes: FastifyPluginAsync = async (app) => {
   app.post('/teams', async (request, reply) => {
@@ -33,7 +44,8 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
   app.post('/teams/:teamId/members', async (request, reply) => {
     const params = z.object({ teamId: z.string().uuid() }).parse(request.params);
     const body = addTeamMemberSchema.parse(request.body);
-    const membership = app.db.addTeamMember(params.teamId, body.userId, body.role);
+    const actorUserId = parseActorUserId(request.headers);
+    const membership = app.db.addTeamMember(params.teamId, body.userId, body.role, actorUserId);
     return reply.code(201).send(membership);
   });
 
@@ -46,13 +58,22 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/teams/:teamId/members/:userId', async (request, reply) => {
     const params = removeTeamMemberParamsSchema.parse(request.params);
-    app.db.removeTeamMember(params.teamId, params.userId);
+    const actorUserId = parseActorUserId(request.headers);
+    app.db.removeTeamMember(params.teamId, params.userId, actorUserId);
     return reply.code(204).send();
+  });
+
+  app.patch('/teams/:teamId/members/:userId/role', async (request) => {
+    const params = removeTeamMemberParamsSchema.parse(request.params);
+    const body = updateTeamMemberRoleSchema.parse(request.body);
+    const actorUserId = parseActorUserId(request.headers);
+    return app.db.updateTeamMemberRole(params.teamId, params.userId, body.role, actorUserId);
   });
 
   app.delete('/teams/:teamId', async (request, reply) => {
     const params = deleteTeamParamsSchema.parse(request.params);
-    app.db.deleteTeam(params.teamId);
+    const actorUserId = parseActorUserId(request.headers);
+    app.db.deleteTeam(params.teamId, actorUserId);
     return reply.code(204).send();
   });
 };

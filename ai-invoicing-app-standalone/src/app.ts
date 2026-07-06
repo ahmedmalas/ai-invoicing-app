@@ -48,12 +48,20 @@ export async function buildApp(options: BuildAppOptions) {
     }
 
     if (
+      errorMessage.includes('TEAM_PERMISSION_DENIED') ||
+      errorMessage.includes('TEAM_OWNER_MODIFICATION_FORBIDDEN')
+    ) {
+      return reply.code(403).send({ message: errorMessage });
+    }
+
+    if (
       errorMessage.includes('INVALID_TIMELINE_EVENT_TAXONOMY') ||
       errorMessage.includes('INVALID_JOB_STATUS_TRANSITION') ||
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('ROLE_NAME_EXISTS') ||
       errorMessage.includes('TEAM_MEMBER_EXISTS') ||
       errorMessage.includes('INVALID_TEAM_MEMBER_ROLE') ||
+      errorMessage.includes('TEAM_LAST_OWNER_REQUIRED') ||
       errorMessage.includes('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS') ||
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||

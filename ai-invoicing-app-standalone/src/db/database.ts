@@ -30,6 +30,7 @@ import {
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
+import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
 const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
@@ -235,9 +236,20 @@ export interface AppDatabase {
   createTeam(input: CreateTeamInput): Team;
   getTeamById(id: string): Team | null;
   listTeams(): Team[];
-  deleteTeam(teamId: string): void;
-  addTeamMember(teamId: string, userId: string, role?: TeamMembershipRole): TeamMembershipRecord;
-  removeTeamMember(teamId: string, userId: string): void;
+  deleteTeam(teamId: string, actorUserId?: string | null): void;
+  addTeamMember(
+    teamId: string,
+    userId: string,
+    role?: TeamMembershipRole,
+    actorUserId?: string | null,
+  ): TeamMembershipRecord;
+  removeTeamMember(teamId: string, userId: string, actorUserId?: string | null): void;
+  updateTeamMemberRole(
+    teamId: string,
+    userId: string,
+    role: TeamMembershipRole,
+    actorUserId?: string | null,
+  ): TeamMembershipRecord;
   listTeamMembers(teamId: string): TeamMembershipRecord[];
   createJob(input: CreateJobInput): Job;
   updateJob(id: string, input: UpdateJobInput): Job;
@@ -406,6 +418,27 @@ export function createDatabase(dbPath: string): AppDatabase {
     db.exec("ALTER TABLE team_memberships ADD COLUMN role TEXT NOT NULL DEFAULT 'member';");
   }
   db.exec("UPDATE team_memberships SET role = 'member' WHERE role IS NULL;");
+  db.exec(
+    `UPDATE team_memberships
+     SET role = 'owner'
+     WHERE id IN (
+       SELECT tm.id
+       FROM team_memberships tm
+       INNER JOIN (
+         SELECT team_id, min(created_at) AS first_created_at
+         FROM team_memberships
+         GROUP BY team_id
+       ) first_membership
+         ON first_membership.team_id = tm.team_id
+        AND first_membership.first_created_at = tm.created_at
+       WHERE tm.team_id IN (
+         SELECT tm2.team_id
+         FROM team_memberships tm2
+         GROUP BY tm2.team_id
+         HAVING sum(CASE WHEN tm2.role = 'owner' THEN 1 ELSE 0 END) = 0
+       )
+     );`,
+  );
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -595,6 +628,65 @@ export function createDatabase(dbPath: string): AppDatabase {
     if (role !== 'owner' && role !== 'manager' && role !== 'member') {
       throw new Error('INVALID_TEAM_MEMBER_ROLE');
     }
+  }
+
+  function getTeamMembershipCount(teamId: string): number {
+    const row = db
+      .prepare(
+        `SELECT COUNT(1) AS total
+         FROM team_memberships
+         WHERE team_id = ?`,
+      )
+      .get(teamId) as { total: number };
+    return row.total;
+  }
+
+  function getOwnerCountForTeam(teamId: string): number {
+    const row = db
+      .prepare(
+        `SELECT COUNT(1) AS total
+         FROM team_memberships
+         WHERE team_id = ? AND role = 'owner'`,
+      )
+      .get(teamId) as { total: number };
+    return row.total;
+  }
+
+  function getMembershipRole(teamId: string, userId: string): TeamMembershipRole | null {
+    const row = db
+      .prepare(
+        `SELECT role
+         FROM team_memberships
+         WHERE team_id = ? AND user_id = ?`,
+      )
+      .get(teamId, userId) as { role: string } | undefined;
+    if (!row) {
+      return null;
+    }
+    assertValidTeamMembershipRoleOrThrow(row.role);
+    return row.role;
+  }
+
+  function assertAuthorizedForTeamActionOrThrow(
+    teamId: string,
+    actorUserId: string | null,
+    action: 'add_member' | 'remove_member' | 'change_member_role' | 'delete_team',
+    targetRole?: TeamMembershipRole | null,
+    nextRole?: TeamMembershipRole | null,
+  ): void {
+    if (!actorUserId) {
+      throw new Error('TEAM_PERMISSION_DENIED');
+    }
+    const actorRole = getMembershipRole(teamId, actorUserId);
+    if (!actorRole) {
+      throw new Error('TEAM_PERMISSION_DENIED');
+    }
+    assertTeamActionAuthorizedOrThrow({
+      action,
+      actorRole,
+      targetRole: targetRole ?? null,
+      nextRole: nextRole ?? null,
+    });
   }
 
   return {
@@ -1031,18 +1123,12 @@ export function createDatabase(dbPath: string): AppDatabase {
       return rows.map(mapTeamRow);
     },
 
-    deleteTeam(teamId) {
+    deleteTeam(teamId, actorUserId = null) {
       ensureTeamExistsOrThrow(teamId);
 
-      const memberCount = db
-        .prepare(
-          `SELECT COUNT(1) AS total
-           FROM team_memberships
-           WHERE team_id = ?`,
-        )
-        .get(teamId) as { total: number };
-      if (memberCount.total > 0) {
-        throw new Error('TEAM_HAS_MEMBERS');
+      const memberCount = getTeamMembershipCount(teamId);
+      if (memberCount > 0) {
+        assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'delete_team');
       }
 
       const teamJobCount = db
@@ -1056,17 +1142,26 @@ export function createDatabase(dbPath: string): AppDatabase {
         throw new Error('TEAM_HAS_JOBS');
       }
 
+      db.prepare('DELETE FROM team_memberships WHERE team_id = ?').run(teamId);
       db.prepare('DELETE FROM teams WHERE id = ?').run(teamId);
       timeline('team.deleted', teamId, {});
     },
 
-    addTeamMember(teamId, userId, role = 'member') {
+    addTeamMember(teamId, userId, role = 'member', actorUserId = null) {
       ensureTeamExistsOrThrow(teamId);
       const user = this.getUserById(userId);
       if (!user) {
         throw new Error('USER_NOT_FOUND');
       }
-      assertValidTeamMembershipRoleOrThrow(role);
+      const membershipCount = getTeamMembershipCount(teamId);
+      const requestedRole = role ?? (membershipCount === 0 ? 'owner' : 'member');
+      assertValidTeamMembershipRoleOrThrow(requestedRole);
+      if (membershipCount === 0 && requestedRole !== 'owner') {
+        throw new Error('TEAM_LAST_OWNER_REQUIRED');
+      }
+      if (membershipCount > 0) {
+        assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'add_member', null, requestedRole);
+      }
 
       const id = randomUUID();
       const now = nowIso();
@@ -1074,7 +1169,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         db.prepare(
           `INSERT INTO team_memberships (id, team_id, user_id, role, created_at)
            VALUES (?, ?, ?, ?, ?)`,
-        ).run(id, teamId, userId, role, now);
+        ).run(id, teamId, userId, requestedRole, now);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes('UNIQUE constraint failed: team_memberships.team_id, team_memberships.user_id')) {
@@ -1085,19 +1180,20 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       timeline('team.member_added', teamId, {
         userId,
+        role: requestedRole,
       });
 
       return {
         id,
         teamId,
         userId,
-        role,
+        role: requestedRole,
         createdAt: now,
         user,
       };
     },
 
-    removeTeamMember(teamId, userId) {
+    removeTeamMember(teamId, userId, actorUserId = null) {
       ensureTeamExistsOrThrow(teamId);
       const user = this.getUserById(userId);
       if (!user) {
@@ -1106,13 +1202,19 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const membership = db
         .prepare(
-          `SELECT id
+          `SELECT id, role
            FROM team_memberships
            WHERE team_id = ? AND user_id = ?`,
         )
-        .get(teamId, userId) as { id: string } | undefined;
+        .get(teamId, userId) as { id: string; role: string } | undefined;
       if (!membership) {
         throw new Error('TEAM_MEMBER_NOT_FOUND');
+      }
+      assertValidTeamMembershipRoleOrThrow(membership.role);
+      const targetRole = membership.role;
+      assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'remove_member', targetRole, null);
+      if (targetRole === 'owner' && getOwnerCountForTeam(teamId) <= 1) {
+        throw new Error('TEAM_LAST_OWNER_REQUIRED');
       }
 
       const scopedAssignmentsCount = db
@@ -1129,7 +1231,83 @@ export function createDatabase(dbPath: string): AppDatabase {
       db.prepare('DELETE FROM team_memberships WHERE id = ?').run(membership.id);
       timeline('team.member_removed', teamId, {
         userId,
+        role: targetRole,
       });
+    },
+
+    updateTeamMemberRole(teamId, userId, role, actorUserId = null) {
+      ensureTeamExistsOrThrow(teamId);
+      assertValidTeamMembershipRoleOrThrow(role);
+      const membership = db
+        .prepare(
+          `SELECT id, role
+           FROM team_memberships
+           WHERE team_id = ? AND user_id = ?`,
+        )
+        .get(teamId, userId) as { id: string; role: string } | undefined;
+      if (!membership) {
+        throw new Error('TEAM_MEMBER_NOT_FOUND');
+      }
+      assertValidTeamMembershipRoleOrThrow(membership.role);
+      const currentRole = membership.role;
+      assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'change_member_role', currentRole, role);
+
+      if (currentRole === 'owner' && role !== 'owner' && getOwnerCountForTeam(teamId) <= 1) {
+        throw new Error('TEAM_LAST_OWNER_REQUIRED');
+      }
+
+      db.prepare('UPDATE team_memberships SET role = ? WHERE id = ?').run(role, membership.id);
+
+      const teamMembership = db
+        .prepare(
+          `SELECT
+             tm.id AS id,
+             tm.team_id AS team_id,
+             tm.user_id AS user_id,
+             tm.role AS role,
+             tm.created_at AS created_at,
+             u.id AS user_id_ref,
+             u.display_name AS user_display_name,
+             u.email AS user_email,
+             u.is_active AS user_is_active,
+             u.created_at AS user_created_at,
+             u.updated_at AS user_updated_at
+           FROM team_memberships tm
+           INNER JOIN users u ON u.id = tm.user_id
+           WHERE tm.id = ?`,
+        )
+        .get(membership.id) as {
+        id: string;
+        team_id: string;
+        user_id: string;
+        role: TeamMembershipRole;
+        created_at: string;
+        user_id_ref: string;
+        user_display_name: string;
+        user_email: string | null;
+        user_is_active: number;
+        user_created_at: string;
+        user_updated_at: string;
+      };
+
+      return {
+        id: teamMembership.id,
+        teamId: teamMembership.team_id,
+        userId: teamMembership.user_id,
+        role: teamMembership.role,
+        createdAt: teamMembership.created_at,
+        user: mapUserRow(
+          {
+            id: teamMembership.user_id_ref,
+            display_name: teamMembership.user_display_name,
+            email: teamMembership.user_email,
+            is_active: teamMembership.user_is_active,
+            created_at: teamMembership.user_created_at,
+            updated_at: teamMembership.user_updated_at,
+          },
+          getRoleIdsForUser(teamMembership.user_id_ref),
+        ),
+      };
     },
 
     listTeamMembers(teamId) {

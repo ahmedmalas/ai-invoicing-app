@@ -6,7 +6,7 @@ import { buildApp } from '../../src/app.js';
 const idSchema = z.object({ id: z.string().uuid() });
 
 describe('team assignment scope e2e', () => {
-  it('enforces team member scope and team deletion lifecycle', async () => {
+  it('enforces team role authorization, assignment scope, and team lifecycle', async () => {
     const app = await buildApp({ dbPath: ':memory:' });
 
     const roleRes = await app.inject({
@@ -20,16 +20,38 @@ describe('team assignment scope e2e', () => {
     expect(roleRes.statusCode).toBe(201);
     const role = idSchema.parse(roleRes.json());
 
-    const teamUserRes = await app.inject({
+    const ownerUserRes = await app.inject({
       method: 'POST',
       url: '/users',
       payload: {
-        displayName: 'Team Member User',
+        displayName: 'Owner User',
         roleIds: [role.id],
       },
     });
-    expect(teamUserRes.statusCode).toBe(201);
-    const teamUser = idSchema.parse(teamUserRes.json());
+    expect(ownerUserRes.statusCode).toBe(201);
+    const ownerUser = idSchema.parse(ownerUserRes.json());
+
+    const managerUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      payload: {
+        displayName: 'Manager User',
+        roleIds: [role.id],
+      },
+    });
+    expect(managerUserRes.statusCode).toBe(201);
+    const managerUser = idSchema.parse(managerUserRes.json());
+
+    const memberUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      payload: {
+        displayName: 'Member User',
+        roleIds: [role.id],
+      },
+    });
+    expect(memberUserRes.statusCode).toBe(201);
+    const memberUser = idSchema.parse(memberUserRes.json());
 
     const outsideUserRes = await app.inject({
       method: 'POST',
@@ -56,33 +78,68 @@ describe('team assignment scope e2e', () => {
       method: 'POST',
       url: `/teams/${team.id}/members`,
       payload: {
-        userId: teamUser.id,
-        role: 'manager',
+        userId: ownerUser.id,
+        role: 'owner',
       },
     });
     expect(addMemberRes.statusCode).toBe(201);
     expect(addMemberRes.json()).toMatchObject({
-      userId: teamUser.id,
-      role: 'manager',
+      userId: ownerUser.id,
+      role: 'owner',
     });
 
-    const addMemberInvalidRoleRes = await app.inject({
+    const addManagerRes = await app.inject({
       method: 'POST',
       url: `/teams/${team.id}/members`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
       payload: {
-        userId: outsideUser.id,
-        role: 'invalid-role',
+        userId: managerUser.id,
+        role: 'manager',
       },
     });
-    expect(addMemberInvalidRoleRes.statusCode).toBe(400);
+    expect(addManagerRes.statusCode).toBe(201);
 
-    const deleteTeamBlockedByMemberRes = await app.inject({
+    const addMemberResTwo = await app.inject({
+      method: 'POST',
+      url: `/teams/${team.id}/members`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
+      payload: {
+        userId: memberUser.id,
+        role: 'member',
+      },
+    });
+    expect(addMemberResTwo.statusCode).toBe(201);
+
+    const managerDeleteDeniedRes = await app.inject({
       method: 'DELETE',
       url: `/teams/${team.id}`,
+      headers: {
+        'x-actor-user-id': managerUser.id,
+      },
     });
-    expect(deleteTeamBlockedByMemberRes.statusCode).toBe(409);
-    expect(deleteTeamBlockedByMemberRes.json()).toMatchObject({
-      message: 'TEAM_HAS_MEMBERS',
+    expect(managerDeleteDeniedRes.statusCode).toBe(403);
+    expect(managerDeleteDeniedRes.json()).toMatchObject({
+      message: 'TEAM_PERMISSION_DENIED',
+    });
+
+    const memberManageDeniedRes = await app.inject({
+      method: 'POST',
+      url: `/teams/${team.id}/members`,
+      headers: {
+        'x-actor-user-id': memberUser.id,
+      },
+      payload: {
+        userId: outsideUser.id,
+        role: 'member',
+      },
+    });
+    expect(memberManageDeniedRes.statusCode).toBe(403);
+    expect(memberManageDeniedRes.json()).toMatchObject({
+      message: 'TEAM_PERMISSION_DENIED',
     });
 
     const customerRes = await app.inject({
@@ -104,7 +161,7 @@ describe('team assignment scope e2e', () => {
         status: 'Draft',
         priority: 'Normal',
         teamId: team.id,
-        assignedUserId: teamUser.id,
+        assignedUserId: memberUser.id,
       },
     });
     expect(scopedJobRes.statusCode).toBe(201);
@@ -125,7 +182,10 @@ describe('team assignment scope e2e', () => {
 
     const deleteMemberBlockedRes = await app.inject({
       method: 'DELETE',
-      url: `/teams/${team.id}/members/${teamUser.id}`,
+      url: `/teams/${team.id}/members/${memberUser.id}`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
     });
     expect(deleteMemberBlockedRes.statusCode).toBe(409);
     expect(deleteMemberBlockedRes.json()).toMatchObject({
@@ -147,13 +207,62 @@ describe('team assignment scope e2e', () => {
 
     const deleteMemberRes = await app.inject({
       method: 'DELETE',
-      url: `/teams/${team.id}/members/${teamUser.id}`,
+      url: `/teams/${team.id}/members/${memberUser.id}`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
     });
     expect(deleteMemberRes.statusCode).toBe(204);
+
+    const managerOwnerDemoteDeniedRes = await app.inject({
+      method: 'PATCH',
+      url: `/teams/${team.id}/members/${ownerUser.id}/role`,
+      headers: {
+        'x-actor-user-id': managerUser.id,
+      },
+      payload: {
+        role: 'member',
+      },
+    });
+    expect(managerOwnerDemoteDeniedRes.statusCode).toBe(403);
+    expect(managerOwnerDemoteDeniedRes.json()).toMatchObject({
+      message: 'TEAM_OWNER_MODIFICATION_FORBIDDEN',
+    });
+
+    const ownerPromoteManagerRes = await app.inject({
+      method: 'PATCH',
+      url: `/teams/${team.id}/members/${managerUser.id}/role`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
+      payload: {
+        role: 'owner',
+      },
+    });
+    expect(ownerPromoteManagerRes.statusCode).toBe(200);
+    expect(ownerPromoteManagerRes.json()).toMatchObject({
+      userId: managerUser.id,
+      role: 'owner',
+    });
+
+    const ownerDemoteSelfRes = await app.inject({
+      method: 'PATCH',
+      url: `/teams/${team.id}/members/${ownerUser.id}/role`,
+      headers: {
+        'x-actor-user-id': ownerUser.id,
+      },
+      payload: {
+        role: 'member',
+      },
+    });
+    expect(ownerDemoteSelfRes.statusCode).toBe(200);
 
     const deleteTeamBlockedByJobRes = await app.inject({
       method: 'DELETE',
       url: `/teams/${team.id}`,
+      headers: {
+        'x-actor-user-id': managerUser.id,
+      },
     });
     expect(deleteTeamBlockedByJobRes.statusCode).toBe(409);
     expect(deleteTeamBlockedByJobRes.json()).toMatchObject({
@@ -176,6 +285,9 @@ describe('team assignment scope e2e', () => {
     const deleteTeamRes = await app.inject({
       method: 'DELETE',
       url: `/teams/${team.id}`,
+      headers: {
+        'x-actor-user-id': managerUser.id,
+      },
     });
     expect(deleteTeamRes.statusCode).toBe(204);
 

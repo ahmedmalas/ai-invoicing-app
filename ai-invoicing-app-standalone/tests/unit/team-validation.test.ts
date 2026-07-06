@@ -7,6 +7,7 @@ import {
   deleteTeamParamsSchema,
   removeTeamMemberParamsSchema,
   teamMembershipRoleSchema,
+  updateTeamMemberRoleSchema,
 } from '../../src/domain/teams/validation.js';
 
 describe('team validation', () => {
@@ -43,6 +44,13 @@ describe('team validation', () => {
     expect(teamMembershipRoleSchema.parse('owner')).toBe('owner');
     expect(teamMembershipRoleSchema.parse('manager')).toBe('manager');
     expect(teamMembershipRoleSchema.parse('member')).toBe('member');
+  });
+
+  it('accepts role update payload', () => {
+    const parsed = updateTeamMemberRoleSchema.parse({
+      role: 'owner',
+    });
+    expect(parsed.role).toBe('owner');
   });
 
   it('accepts remove member route params payload', () => {

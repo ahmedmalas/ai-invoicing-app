@@ -19,3 +19,7 @@ export const removeTeamMemberParamsSchema = z.object({
 export const deleteTeamParamsSchema = z.object({
   teamId: z.string().uuid(),
 });
+
+export const updateTeamMemberRoleSchema = z.object({
+  role: teamMembershipRoleSchema,
+});
