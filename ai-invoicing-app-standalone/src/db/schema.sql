@@ -116,3 +116,103 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_invoices_finalised_immutable_update
+BEFORE UPDATE ON invoices
+WHEN OLD.status = 'Finalised'
+AND (
+  NEW.customer_id <> OLD.customer_id OR
+  ifnull(NEW.invoice_number, '') <> ifnull(OLD.invoice_number, '') OR
+  NEW.issue_date <> OLD.issue_date OR
+  NEW.due_date <> OLD.due_date OR
+  ifnull(NEW.notes, '') <> ifnull(OLD.notes, '') OR
+  ifnull(NEW.payment_terms, '') <> ifnull(OLD.payment_terms, '') OR
+  NEW.subtotal <> OLD.subtotal OR
+  NEW.gst_total <> OLD.gst_total OR
+  NEW.total <> OLD.total OR
+  NEW.status <> OLD.status
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoices_finalised_immutable_delete
+BEFORE DELETE ON invoices
+WHEN OLD.status = 'Finalised'
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_line_items_finalised_insert
+BEFORE INSERT ON invoice_line_items
+WHEN EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = NEW.invoice_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_line_items_finalised_update
+BEFORE UPDATE ON invoice_line_items
+WHEN EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = OLD.invoice_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_line_items_finalised_delete
+BEFORE DELETE ON invoice_line_items
+WHEN EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = OLD.invoice_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_only_finalised_insert
+BEFORE INSERT ON invoice_snapshots
+WHEN NOT EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = NEW.invoice_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'SNAPSHOT_REQUIRES_FINALISED_INVOICE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_immutable_update
+BEFORE UPDATE ON invoice_snapshots
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_INVOICE_SNAPSHOT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_immutable_delete
+BEFORE DELETE ON invoice_snapshots
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_INVOICE_SNAPSHOT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_invoice_update
+BEFORE UPDATE ON documents
+WHEN OLD.document_type = 'invoice'
+AND EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = OLD.entity_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_invoice_delete
+BEFORE DELETE ON documents
+WHEN OLD.document_type = 'invoice'
+AND EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = OLD.entity_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');
+END;

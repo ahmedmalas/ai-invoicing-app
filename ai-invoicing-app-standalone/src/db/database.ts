@@ -504,6 +504,12 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const invoiceNumber = formatInvoiceNumber(prefix, currentYear, sequence);
       const now = nowIso();
+      upsertDocument(
+        id,
+        `${invoiceNumber} ${invoice.title}`,
+        'invoice',
+        `${invoiceNumber} ${invoice.title} ${invoice.notes ?? ''}`,
+      );
       db.prepare(
         `UPDATE invoices
          SET status = 'Finalised', invoice_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
@@ -520,7 +526,6 @@ export function createDatabase(dbPath: string): AppDatabase {
          VALUES (?, ?, ?, ?)`,
       ).run(randomUUID(), id, JSON.stringify(finalised), now);
 
-      upsertDocument(id, `${invoiceNumber} ${finalised.title}`, 'invoice', JSON.stringify(finalised));
       timeline('invoice', id, 'Invoice Finalised', {
         invoiceNumber,
         total: finalised.totals.total,

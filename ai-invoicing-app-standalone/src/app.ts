@@ -43,6 +43,10 @@ export async function buildApp(options: BuildAppOptions) {
     }
 
     if (
+      errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
+      errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
+      errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
+      errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_DOCUMENT') ||
       errorMessage.includes('Only draft invoices can be edited') ||
       errorMessage.includes('already finalised')
     ) {
