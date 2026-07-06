@@ -157,7 +157,7 @@ describe('teams integration', () => {
     expect(() => db.removeTeamMember(team.id, user.id)).toThrow('TEAM_MEMBER_NOT_FOUND');
 
     const teamTimeline = db.getTimelineForEntity('team', team.id);
-    const timelineEventKeys = teamTimeline.map((event) => String(event.event_key));
+    const timelineEventKeys = teamTimeline.map((event) => String(event.eventKey));
     expect(timelineEventKeys).toContain('team.member_added');
     expect(timelineEventKeys).toContain('team.member_removed');
 
