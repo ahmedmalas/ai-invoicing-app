@@ -4,7 +4,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/ai-invoicing-foundation-19d3`
-- Current commit (Slice 8 implementation): `TBD`
+- Current commit (Slice 8 implementation): `44b44185c7fa5f82f7097e23c1008de90f7f3d60`
 - Current implemented slice: **Slice 8 — Teams Membership Foundation + Assignment Scope Controls**
 - Documentation baseline:
   - `docs/ROADMAP.md`

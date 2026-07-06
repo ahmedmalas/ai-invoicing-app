@@ -81,7 +81,7 @@
 - Added unit, integration, and e2e coverage for users/roles foundations and assignment integrity.
 
 #### Slice 8 — Teams Membership Foundation + Assignment Scope Controls
-- Commit: `TBD`
+- Commit: `44b44185c7fa5f82f7097e23c1008de90f7f3d60`
 - Added minimal teams persistence with create/list/get support.
 - Added team membership persistence with deterministic duplicate handling.
 - Extended jobs with optional `teamId` and team-scoped assignment validation.

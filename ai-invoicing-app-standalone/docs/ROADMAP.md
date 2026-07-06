@@ -5,7 +5,7 @@ This roadmap is the canonical planning index for implementation slices in this r
 
 ## Current Implemented Baseline
 - Current implemented slice: **Slice 8 — Teams Membership Foundation + Assignment Scope Controls**
-- Baseline commit: `TBD`
+- Baseline commit: `44b44185c7fa5f82f7097e23c1008de90f7f3d60`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)
