@@ -4,8 +4,8 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/ai-invoicing-foundation-19d3`
-- Current commit (at doc creation): `0dd37e679b31b8d0183759bc13ed2d37486a7969`
-- Current implemented slice: **Slice 6 — Jobs Workflow Foundation**
+- Current commit (Slice 7 implementation): `53277c89e10c31fd922a63449c964d756353996b`
+- Current implemented slice: **Slice 7 — Users/Roles Foundation + Job Assignment Integrity**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
