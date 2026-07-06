@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createJobSchema,
+  updateJobSchema,
   jobPrioritySchema,
   jobStatusSchema,
   linkJobDocumentSchema,
@@ -48,5 +50,32 @@ describe('job document link validation', () => {
         documentId: 'not-a-uuid',
       }),
     ).toThrow();
+  });
+});
+
+describe('job schedule validation', () => {
+  it('accepts valid scheduled start/end date-time values', () => {
+    const parsed = createJobSchema.parse({
+      title: 'Schedule Test',
+      customerId: '550e8400-e29b-41d4-a716-446655440000',
+      status: 'Scheduled',
+      priority: 'Normal',
+      scheduledStartAt: '2026-07-08T09:00:00.000Z',
+      scheduledEndAt: '2026-07-08T10:00:00.000Z',
+    });
+    expect(parsed.scheduledStartAt).toBe('2026-07-08T09:00:00.000Z');
+    expect(parsed.scheduledEndAt).toBe('2026-07-08T10:00:00.000Z');
+  });
+
+  it('rejects schedule ranges where end is before start', () => {
+    expect(() =>
+      updateJobSchema.parse({
+        title: 'Schedule Test',
+        status: 'Scheduled',
+        priority: 'Normal',
+        scheduledStartAt: '2026-07-08T11:00:00.000Z',
+        scheduledEndAt: '2026-07-08T10:00:00.000Z',
+      }),
+    ).toThrow('scheduledEndAt must be equal to or after scheduledStartAt');
   });
 });

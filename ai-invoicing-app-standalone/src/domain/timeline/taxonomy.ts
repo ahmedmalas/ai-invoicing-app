@@ -13,6 +13,9 @@ export const TIMELINE_EVENT_KEYS = [
   'job.completed',
   'job.document_linked',
   'document.linked_to_job',
+  'job.scheduled',
+  'job.assignment_updated',
+  'job.status_changed',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -184,6 +187,36 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.job.document_linked.v1',
     legacyEventType: 'Job Document Linked',
+  },
+  'job.scheduled': {
+    key: 'job.scheduled',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.scheduled.v1',
+    legacyEventType: 'Job Scheduled',
+  },
+  'job.assignment_updated': {
+    key: 'job.assignment_updated',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.assignment_updated.v1',
+    legacyEventType: 'Job Assignment Updated',
+  },
+  'job.status_changed': {
+    key: 'job.status_changed',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.status_changed.v1',
+    legacyEventType: 'Job Status Changed',
   },
   'document.linked_to_job': {
     key: 'document.linked_to_job',

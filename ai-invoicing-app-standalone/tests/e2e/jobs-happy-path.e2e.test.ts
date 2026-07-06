@@ -9,6 +9,10 @@ const jobSchema = z.object({
   title: z.string(),
   status: z.string(),
   priority: z.string(),
+  scheduledStartAt: z.string().nullable(),
+  scheduledEndAt: z.string().nullable(),
+  assignedUserId: z.string().nullable(),
+  assignedUserName: z.string().nullable(),
 });
 const invoiceSchema = z.object({
   id: z.string().uuid(),
@@ -38,7 +42,10 @@ describe('jobs happy path e2e', () => {
         customerId: customer.id,
         status: 'Scheduled',
         priority: 'Normal',
-        scheduledDate: '2026-07-12',
+        scheduledStartAt: '2026-07-12T09:00:00.000Z',
+        scheduledEndAt: '2026-07-12T10:00:00.000Z',
+        assignedUserId: '550e8400-e29b-41d4-a716-446655440010',
+        assignedUserName: 'Jamie Staff',
       },
     });
     expect(createJobRes.statusCode).toBe(201);
@@ -72,8 +79,47 @@ describe('jobs happy path e2e', () => {
     expect(getJobRes.statusCode).toBe(200);
     const retrieved = jobSchema.parse(getJobRes.json());
     expect(retrieved.title).toBe('Install equipment');
+    expect(retrieved.scheduledStartAt).toBe('2026-07-12T09:00:00.000Z');
+    expect(retrieved.assignedUserName).toBe('Jamie Staff');
+
+    const invalidTransitionRes = await app.inject({
+      method: 'PUT',
+      url: `/jobs/${createdJob.id}`,
+      payload: {
+        title: 'Install equipment',
+        description: 'Install and configure equipment onsite',
+        status: 'Completed',
+        priority: 'High',
+        scheduledStartAt: '2026-07-12T09:00:00.000Z',
+        scheduledEndAt: '2026-07-12T10:00:00.000Z',
+        assignedUserId: '550e8400-e29b-41d4-a716-446655440010',
+        assignedUserName: 'Jamie Staff',
+      },
+    });
+    expect(invalidTransitionRes.statusCode).toBe(409);
 
     const updateJobRes = await app.inject({
+      method: 'PUT',
+      url: `/jobs/${createdJob.id}`,
+      payload: {
+        title: 'Install equipment - in progress',
+        description: 'Installation started',
+        status: 'In Progress',
+        priority: 'High',
+        scheduledStartAt: '2026-07-12T09:15:00.000Z',
+        scheduledEndAt: '2026-07-12T11:15:00.000Z',
+        assignedUserId: '550e8400-e29b-41d4-a716-446655440011',
+        assignedUserName: 'Alex Staff',
+      },
+    });
+    expect(updateJobRes.statusCode).toBe(200);
+    const updated = jobSchema.parse(updateJobRes.json());
+    expect(updated.status).toBe('In Progress');
+    expect(updated.priority).toBe('High');
+    expect(updated.scheduledStartAt).toBe('2026-07-12T09:15:00.000Z');
+    expect(updated.assignedUserName).toBe('Alex Staff');
+
+    const completeJobRes = await app.inject({
       method: 'PUT',
       url: `/jobs/${createdJob.id}`,
       payload: {
@@ -82,12 +128,13 @@ describe('jobs happy path e2e', () => {
         status: 'Completed',
         priority: 'High',
         completedDate: '2026-07-13',
+        scheduledStartAt: '2026-07-12T09:15:00.000Z',
+        scheduledEndAt: '2026-07-12T11:15:00.000Z',
+        assignedUserId: '550e8400-e29b-41d4-a716-446655440011',
+        assignedUserName: 'Alex Staff',
       },
     });
-    expect(updateJobRes.statusCode).toBe(200);
-    const updated = jobSchema.parse(updateJobRes.json());
-    expect(updated.status).toBe('Completed');
-    expect(updated.priority).toBe('High');
+    expect(completeJobRes.statusCode).toBe(200);
 
     const linkRes = await app.inject({
       method: 'POST',

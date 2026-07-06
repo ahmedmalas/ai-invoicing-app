@@ -17,7 +17,10 @@ describe('jobs integration', () => {
       customerId: customer.id,
       status: 'Scheduled',
       priority: 'High',
-      scheduledDate: '2026-07-10',
+      scheduledStartAt: '2026-07-10T09:00:00.000Z',
+      scheduledEndAt: '2026-07-10T10:00:00.000Z',
+      assignedUserId: '550e8400-e29b-41d4-a716-446655440000',
+      assignedUserName: 'Casey Staff',
     });
 
     expect(created.customerId).toBe(customer.id);
@@ -26,15 +29,35 @@ describe('jobs integration', () => {
     const fetched = db.getJobById(created.id);
     expect(fetched?.title).toBe('Initial Site Visit');
 
+    const inProgress = db.updateJob(created.id, {
+      title: 'Initial Site Visit - Revised',
+      description: 'Requirements validated',
+      status: 'In Progress',
+      priority: 'Urgent',
+      scheduledStartAt: '2026-07-10T09:30:00.000Z',
+      scheduledEndAt: '2026-07-10T10:30:00.000Z',
+      assignedUserId: '550e8400-e29b-41d4-a716-446655440001',
+      assignedUserName: 'Taylor Staff',
+    });
+    expect(inProgress.status).toBe('In Progress');
+    expect(inProgress.priority).toBe('Urgent');
+    expect(inProgress.scheduledStartAt).toBe('2026-07-10T09:30:00.000Z');
+    expect(inProgress.scheduledEndAt).toBe('2026-07-10T10:30:00.000Z');
+    expect(inProgress.assignedUserId).toBe('550e8400-e29b-41d4-a716-446655440001');
+    expect(inProgress.assignedUserName).toBe('Taylor Staff');
+
     const updated = db.updateJob(created.id, {
       title: 'Initial Site Visit - Revised',
       description: 'Requirements validated',
       status: 'Completed',
       priority: 'Urgent',
       completedDate: '2026-07-11',
+      scheduledStartAt: '2026-07-10T09:30:00.000Z',
+      scheduledEndAt: '2026-07-10T10:30:00.000Z',
+      assignedUserId: '550e8400-e29b-41d4-a716-446655440001',
+      assignedUserName: 'Taylor Staff',
     });
     expect(updated.status).toBe('Completed');
-    expect(updated.priority).toBe('Urgent');
     expect(updated.completedDate).toBe('2026-07-11');
 
     const listed = db.listJobs();
@@ -44,13 +67,58 @@ describe('jobs integration', () => {
     const timeline = db.getTimelineForEntity('job', created.id);
     expect(timeline.map((event) => (event as { eventKey: string }).eventKey)).toEqual([
       'job.created',
+      'job.scheduled',
+      'job.assignment_updated',
       'job.updated',
+      'job.status_changed',
+      'job.scheduled',
+      'job.assignment_updated',
+      'job.updated',
+      'job.status_changed',
       'job.completed',
     ]);
 
     const search = db.search('Site Visit');
     expect(search.jobs).toHaveLength(1);
     expect(search.jobs[0]?.id).toBe(created.id);
+
+    db.close();
+  });
+
+  it('enforces valid status transitions', () => {
+    const db = createDatabase(':memory:');
+    const customer = db.createCustomer({
+      displayName: 'Workflow Customer',
+    });
+    const job = db.createJob({
+      title: 'Workflow Job',
+      customerId: customer.id,
+      status: 'Draft',
+      priority: 'Normal',
+    });
+
+    const scheduled = db.updateJob(job.id, {
+      title: 'Workflow Job',
+      status: 'Scheduled',
+      priority: 'Normal',
+      scheduledStartAt: '2026-07-20T08:00:00.000Z',
+      scheduledEndAt: '2026-07-20T09:00:00.000Z',
+      assignedUserId: '550e8400-e29b-41d4-a716-446655440002',
+      assignedUserName: 'Jordan Staff',
+    });
+    expect(scheduled.status).toBe('Scheduled');
+
+    expect(() =>
+      db.updateJob(job.id, {
+        title: 'Workflow Job',
+        status: 'Draft',
+        priority: 'Normal',
+        scheduledStartAt: '2026-07-20T08:00:00.000Z',
+        scheduledEndAt: '2026-07-20T09:00:00.000Z',
+        assignedUserId: '550e8400-e29b-41d4-a716-446655440002',
+        assignedUserName: 'Jordan Staff',
+      }),
+    ).toThrow('INVALID_JOB_STATUS_TRANSITION');
 
     db.close();
   });

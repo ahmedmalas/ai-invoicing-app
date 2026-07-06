@@ -24,6 +24,7 @@ import {
   assertValidTimelineEventOrThrow,
   type TimelineEventKey,
 } from '../domain/timeline/taxonomy.js';
+import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 
 const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
@@ -61,7 +62,10 @@ interface DbJobRow {
   customer_id: string;
   status: JobStatus;
   priority: JobPriority;
-  scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+  assigned_user_id: string | null;
+  assigned_user_name: string | null;
   completed_date: string | null;
   created_at: string;
   updated_at: string;
@@ -106,7 +110,10 @@ export interface CreateJobInput {
   customerId: string;
   status: JobStatus;
   priority: JobPriority;
-  scheduledDate?: string | undefined;
+  scheduledStartAt?: string | undefined;
+  scheduledEndAt?: string | undefined;
+  assignedUserId?: string | undefined;
+  assignedUserName?: string | undefined;
   completedDate?: string | undefined;
 }
 
@@ -115,7 +122,10 @@ export interface UpdateJobInput {
   description?: string | undefined;
   status: JobStatus;
   priority: JobPriority;
-  scheduledDate?: string | null | undefined;
+  scheduledStartAt?: string | null | undefined;
+  scheduledEndAt?: string | null | undefined;
+  assignedUserId?: string | null | undefined;
+  assignedUserName?: string | null | undefined;
   completedDate?: string | null | undefined;
 }
 
@@ -217,7 +227,10 @@ function mapJobRow(row: DbJobRow): Job {
     customerId: row.customer_id,
     status: row.status,
     priority: row.priority,
-    scheduledDate: row.scheduled_date,
+    scheduledStartAt: row.scheduled_start_at,
+    scheduledEndAt: row.scheduled_end_at,
+    assignedUserId: row.assigned_user_id,
+    assignedUserName: row.assigned_user_name,
     completedDate: row.completed_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -248,6 +261,32 @@ export function createDatabase(dbPath: string): AppDatabase {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
+
+  const jobColumns = db.prepare("SELECT name FROM pragma_table_info('jobs')").all() as Array<{
+    name: string;
+  }>;
+  const jobColumnSet = new Set(jobColumns.map((column) => column.name));
+  if (!jobColumnSet.has('scheduled_start_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN scheduled_start_at TEXT;');
+  }
+  if (!jobColumnSet.has('scheduled_end_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN scheduled_end_at TEXT;');
+  }
+  if (!jobColumnSet.has('assigned_user_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN assigned_user_id TEXT;');
+  }
+  if (!jobColumnSet.has('assigned_user_name')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN assigned_user_name TEXT;');
+  }
+  if (jobColumnSet.has('scheduled_date')) {
+    db.exec(
+      `UPDATE jobs
+       SET scheduled_start_at = coalesce(scheduled_start_at, scheduled_date)
+       WHERE scheduled_start_at IS NULL AND scheduled_date IS NOT NULL`,
+    );
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);');
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -296,7 +335,10 @@ export function createDatabase(dbPath: string): AppDatabase {
       'job.updated',
       'job.completed',
       'job.document_linked',
-      'document.linked_to_job'
+      'document.linked_to_job',
+      'job.scheduled',
+      'job.assignment_updated',
+      'job.status_changed'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -741,8 +783,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       db.prepare(
         `INSERT INTO jobs (
           id, job_number, title, description, customer_id, status, priority,
-          scheduled_date, completed_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          scheduled_start_at, scheduled_end_at, assigned_user_id, assigned_user_name,
+          completed_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         jobNumber,
@@ -751,7 +794,10 @@ export function createDatabase(dbPath: string): AppDatabase {
         input.customerId,
         input.status,
         input.priority,
-        input.scheduledDate ?? null,
+        input.scheduledStartAt ?? null,
+        input.scheduledEndAt ?? null,
+        input.assignedUserId ?? null,
+        input.assignedUserName ?? null,
         completedDate,
         now,
         now,
@@ -762,6 +808,18 @@ export function createDatabase(dbPath: string): AppDatabase {
         jobNumber,
         status: input.status,
       });
+      if (input.scheduledStartAt || input.scheduledEndAt) {
+        timeline('job.scheduled', id, {
+          scheduledStartAt: input.scheduledStartAt ?? null,
+          scheduledEndAt: input.scheduledEndAt ?? null,
+        });
+      }
+      if (input.assignedUserId || input.assignedUserName) {
+        timeline('job.assignment_updated', id, {
+          assignedUserId: input.assignedUserId ?? null,
+          assignedUserName: input.assignedUserName ?? null,
+        });
+      }
       if (input.status === 'Completed') {
         timeline('job.completed', id, { jobNumber });
       }
@@ -775,23 +833,38 @@ export function createDatabase(dbPath: string): AppDatabase {
       if (!existing) {
         throw new Error('Job not found');
       }
+      assertValidJobStatusTransitionOrThrow(existing.status, input.status);
 
       const now = nowIso();
       const completedDate =
         input.status === 'Completed'
           ? (input.completedDate ?? existing.completed_date ?? now)
           : (input.completedDate ?? null);
+      const nextScheduledStartAt = input.scheduledStartAt ?? null;
+      const nextScheduledEndAt = input.scheduledEndAt ?? null;
+      const nextAssignedUserId = input.assignedUserId ?? null;
+      const nextAssignedUserName = input.assignedUserName ?? null;
+      const statusChanged = existing.status !== input.status;
+      const scheduleChanged =
+        existing.scheduled_start_at !== nextScheduledStartAt ||
+        existing.scheduled_end_at !== nextScheduledEndAt;
+      const assignmentChanged =
+        existing.assigned_user_id !== nextAssignedUserId ||
+        existing.assigned_user_name !== nextAssignedUserName;
 
       db.prepare(
         `UPDATE jobs
-         SET title = ?, description = ?, status = ?, priority = ?, scheduled_date = ?, completed_date = ?, updated_at = ?
+         SET title = ?, description = ?, status = ?, priority = ?, scheduled_start_at = ?, scheduled_end_at = ?, assigned_user_id = ?, assigned_user_name = ?, completed_date = ?, updated_at = ?
          WHERE id = ?`,
       ).run(
         input.title,
         input.description ?? null,
         input.status,
         input.priority,
-        input.scheduledDate ?? null,
+        nextScheduledStartAt,
+        nextScheduledEndAt,
+        nextAssignedUserId,
+        nextAssignedUserName,
         completedDate,
         now,
         id,
@@ -801,6 +874,24 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('job.updated', id, {
         status: input.status,
       });
+      if (statusChanged) {
+        timeline('job.status_changed', id, {
+          fromStatus: existing.status,
+          toStatus: input.status,
+        });
+      }
+      if (scheduleChanged) {
+        timeline('job.scheduled', id, {
+          scheduledStartAt: nextScheduledStartAt,
+          scheduledEndAt: nextScheduledEndAt,
+        });
+      }
+      if (assignmentChanged) {
+        timeline('job.assignment_updated', id, {
+          assignedUserId: nextAssignedUserId,
+          assignedUserName: nextAssignedUserName,
+        });
+      }
       if (existing.status !== 'Completed' && input.status === 'Completed') {
         timeline('job.completed', id, {
           jobNumber: existing.job_number,
@@ -992,10 +1083,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       const jobs = db
         .prepare(
           `SELECT * FROM jobs
-           WHERE lower(title) LIKE ? OR lower(job_number) LIKE ? OR lower(coalesce(description, '')) LIKE ?
+           WHERE lower(title) LIKE ?
+             OR lower(job_number) LIKE ?
+             OR lower(coalesce(description, '')) LIKE ?
+             OR lower(coalesce(assigned_user_name, '')) LIKE ?
            ORDER BY updated_at DESC LIMIT 25`,
         )
-        .all(wildcard, wildcard, wildcard)
+        .all(wildcard, wildcard, wildcard, wildcard)
         .map((row: unknown) => mapJobRow(row as DbJobRow));
 
       return { customers, invoices, documents, jobs };

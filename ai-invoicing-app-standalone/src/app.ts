@@ -46,6 +46,7 @@ export async function buildApp(options: BuildAppOptions) {
 
     if (
       errorMessage.includes('INVALID_TIMELINE_EVENT_TAXONOMY') ||
+      errorMessage.includes('INVALID_JOB_STATUS_TRANSITION') ||
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||

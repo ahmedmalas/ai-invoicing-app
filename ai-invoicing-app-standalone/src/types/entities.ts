@@ -100,7 +100,10 @@ export interface Job {
   customerId: UUID;
   status: JobStatus;
   priority: JobPriority;
-  scheduledDate: string | null;
+  scheduledStartAt: string | null;
+  scheduledEndAt: string | null;
+  assignedUserId: string | null;
+  assignedUserName: string | null;
   completedDate: string | null;
   createdAt: string;
   updatedAt: string;
