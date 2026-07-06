@@ -45,6 +45,37 @@
 - This update is documentation-only.
 - No application code implementation started in this step.
 
+### Slice Implementation Milestones (Executed)
+
+#### Slice 1 — Invoice Vertical Foundation
+- Implemented backend-first vertical for customer/profile/preferences, invoice draft/finalise, GST totals, PDF generation, timeline, and search scaffolding.
+- Added unit, integration, and e2e coverage with build/type/lint/test gates.
+
+#### Slice 2 — DB-Level Finalised Invoice Immutability
+- Added SQLite trigger/constraint hardening so finalised invoice core data is immutable at persistence level.
+- Preserved allowed payment/reminder updates and added deterministic conflict handling.
+
+#### Slice 3 — Timeline Event Taxonomy + Versioning
+- Replaced ad-hoc timeline strings with canonical typed/versioned taxonomy keys.
+- Added migration-safe legacy compatibility and taxonomy enforcement trigger coverage.
+
+#### Slice 4 — Jobs Entity Foundation
+- Added first-class `jobs` domain, persistence, API routes, timeline events, and search integration.
+- Added tests for CRUD, customer linkage, timeline, and e2e flow.
+
+#### Slice 5 — Job Documents + Invoice Linkage
+- Extended `job_document_links` scaffolding into working linkage/listing support for job-document and job-invoice links.
+- Added timeline linkage events and deterministic duplicate-link conflicts.
+
+#### Slice 6 — Jobs Workflow Foundation
+- Commit: `3ca48a2ad4d29f3e1a733a808b91758136496cfc`
+- Added scheduling windows, assignment fields, validated status transition workflow, and timeline events for scheduling/assignment/status changes.
+- Added unit, integration, and e2e tests for workflow behavior and validation.
+
+### Current Project Status Snapshot
+- Branch: `cursor/ai-invoicing-foundation-19d3`
+- Status at logging: implementation baseline completed through Slice 6 and passing validation gates.
+
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
 - Updated vision and architecture docs to make universal search a mandatory platform capability.
