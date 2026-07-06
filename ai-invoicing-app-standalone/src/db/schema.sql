@@ -93,10 +93,16 @@ CREATE TABLE IF NOT EXISTS invoice_sequences (
 
 CREATE TABLE IF NOT EXISTS timeline_events (
   id TEXT PRIMARY KEY,
+  event_key TEXT,
+  event_version INTEGER,
+  category TEXT,
   entity_type TEXT NOT NULL,
   entity_id TEXT NOT NULL,
+  actor_type TEXT,
+  source TEXT,
   event_type TEXT NOT NULL,
   event_payload TEXT NOT NULL,
+  payload_schema TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -116,6 +122,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_event_key ON timeline_events(event_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);
 
@@ -242,4 +249,28 @@ AND EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_timeline_events_taxonomy_insert
+BEFORE INSERT ON timeline_events
+WHEN NEW.event_key IS NULL
+OR NEW.event_version IS NULL
+OR NEW.category IS NULL
+OR NEW.actor_type IS NULL
+OR NEW.source IS NULL
+OR NEW.payload_schema IS NULL
+OR NEW.event_version <> 1
+OR NEW.event_key NOT IN (
+  'document.created',
+  'document.updated',
+  'invoice.draft_created',
+  'invoice.draft_updated',
+  'invoice.finalised',
+  'customer.created',
+  'customer.updated',
+  'business_profile.updated',
+  'preferences.updated'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
 END;

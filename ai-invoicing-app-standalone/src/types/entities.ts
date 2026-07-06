@@ -13,12 +13,10 @@ export type PaymentState = 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Can
 
 export type ReminderState = 'None' | 'Scheduled' | 'Paused' | 'Stopped';
 
-export type TimelineEventType =
-  | 'Draft Created'
-  | 'Draft Updated'
-  | 'Invoice Finalised'
-  | 'Document Created'
-  | 'Document Updated';
+import type { TimelineEventKey } from '../domain/timeline/taxonomy.js';
+
+export type TimelineEventType = string;
+export type { TimelineEventKey };
 
 export interface DocumentRecord {
   id: UUID;

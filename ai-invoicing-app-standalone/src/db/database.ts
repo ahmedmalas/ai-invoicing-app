@@ -12,11 +12,15 @@ import type {
   LineItemInput,
   PaymentState,
   ReminderState,
-  TimelineEventType,
   UUID,
 } from '../types/entities.js';
 import { calculateTotals } from '../domain/invoices/gst.js';
 import { formatInvoiceNumber } from '../domain/invoices/numbering.js';
+import {
+  TIMELINE_TAXONOMY,
+  assertValidTimelineEventOrThrow,
+  type TimelineEventKey,
+} from '../domain/timeline/taxonomy.js';
 
 const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
@@ -108,7 +112,7 @@ export interface AppDatabase {
   updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): InvoiceDraft;
   getInvoiceById(id: string): (InvoiceDraft & { lineItems: LineItemInput[] }) | null;
   finaliseInvoice(id: string): InvoiceDraft;
-  getTimelineForEntity(entityType: string, entityId: string): unknown[];
+  getTimelineForEntity(entityType: string, entityId: string): Array<Record<string, unknown>>;
   search(query: string): SearchResults;
 }
 
@@ -178,24 +182,71 @@ export function createDatabase(dbPath: string): AppDatabase {
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
 
+  const timelineColumns = db
+    .prepare("SELECT name FROM pragma_table_info('timeline_events')")
+    .all() as Array<{ name: string }>;
+  const timelineColumnSet = new Set(timelineColumns.map((column) => column.name));
+  if (!timelineColumnSet.has('event_key')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN event_key TEXT;');
+  }
+  if (!timelineColumnSet.has('event_version')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN event_version INTEGER;');
+  }
+  if (!timelineColumnSet.has('category')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN category TEXT;');
+  }
+  if (!timelineColumnSet.has('actor_type')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN actor_type TEXT;');
+  }
+  if (!timelineColumnSet.has('source')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN source TEXT;');
+  }
+  if (!timelineColumnSet.has('payload_schema')) {
+    db.exec('ALTER TABLE timeline_events ADD COLUMN payload_schema TEXT;');
+  }
+
   const insertTimeline = db.prepare(
-    `INSERT INTO timeline_events (id, entity_type, entity_id, event_type, event_payload, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO timeline_events (
+      id,
+      event_key,
+      event_version,
+      category,
+      entity_type,
+      entity_id,
+      actor_type,
+      source,
+      event_type,
+      event_payload,
+      payload_schema,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  function timeline(entityType: string, entityId: string, eventType: TimelineEventType, payload: unknown): void {
+  function timeline(eventKey: TimelineEventKey, entityId: string, payload: unknown): void {
+    const definition = TIMELINE_TAXONOMY[eventKey];
+    assertValidTimelineEventOrThrow(definition.key, definition.version);
     insertTimeline.run(
       randomUUID(),
-      entityType,
+      definition.key,
+      definition.version,
+      definition.category,
+      definition.entityType,
       entityId,
-      eventType,
+      definition.actorType,
+      definition.source,
+      definition.legacyEventType,
       JSON.stringify(payload),
+      definition.payloadSchema,
       nowIso(),
     );
   }
 
   function upsertDocument(id: UUID, title: string, type: string, searchableText: string): void {
     const now = nowIso();
+    const existing = db.prepare('SELECT 1 FROM documents WHERE id = ?').get(id) as
+      | { 1: number }
+      | undefined;
     db.prepare(
       `INSERT INTO documents (id, document_type, title, entity_id, searchable_text, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -204,6 +255,18 @@ export function createDatabase(dbPath: string): AppDatabase {
          searchable_text = excluded.searchable_text,
          updated_at = excluded.updated_at`,
     ).run(id, type, title, id, searchableText, now, now);
+
+    if (existing) {
+      timeline('document.updated', id, {
+        documentType: type,
+        title,
+      });
+    } else {
+      timeline('document.created', id, {
+        documentType: type,
+        title,
+      });
+    }
   }
 
   return {
@@ -229,7 +292,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         now,
       );
       const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
-      timeline('customer', id, 'Document Created', { displayName: input.displayName });
+      timeline('customer.created', id, { displayName: input.displayName });
       return mapCustomerRow(row);
     },
 
@@ -254,7 +317,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         id,
       );
       const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
-      timeline('customer', id, 'Document Updated', { displayName: input.displayName });
+      timeline('customer.updated', id, { displayName: input.displayName });
       return mapCustomerRow(row);
     },
 
@@ -300,6 +363,9 @@ export function createDatabase(dbPath: string): AppDatabase {
         string,
         unknown
       >;
+      timeline('business_profile.updated', profileId, {
+        companyName: input.companyName,
+      });
       return mapBusinessProfileRow(row);
     },
 
@@ -318,6 +384,7 @@ export function createDatabase(dbPath: string): AppDatabase {
             value_json = excluded.value_json,
             updated_at = excluded.updated_at`,
       ).run(randomUUID(), key, JSON.stringify(value), nowIso());
+      timeline('preferences.updated', key, { key });
     },
 
     getPreference(key) {
@@ -378,7 +445,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
 
       upsertDocument(id, input.title, 'invoice', `${input.title} ${input.notes ?? ''}`);
-      timeline('invoice', id, 'Draft Created', { totals, lineItems: input.lineItems.length });
+      timeline('invoice.draft_created', id, { totals, lineItems: input.lineItems.length });
 
       const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
       return mapInvoiceRow(row);
@@ -435,7 +502,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
 
       upsertDocument(id, input.title, 'invoice', `${input.title} ${input.notes ?? ''}`);
-      timeline('invoice', id, 'Draft Updated', { totals, lineItems: input.lineItems.length });
+      timeline('invoice.draft_updated', id, { totals, lineItems: input.lineItems.length });
 
       const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
       return mapInvoiceRow(row);
@@ -526,7 +593,7 @@ export function createDatabase(dbPath: string): AppDatabase {
          VALUES (?, ?, ?, ?)`,
       ).run(randomUUID(), id, JSON.stringify(finalised), now);
 
-      timeline('invoice', id, 'Invoice Finalised', {
+      timeline('invoice.finalised', id, {
         invoiceNumber,
         total: finalised.totals.total,
       });
@@ -537,12 +604,24 @@ export function createDatabase(dbPath: string): AppDatabase {
     getTimelineForEntity(entityType, entityId) {
       return db
         .prepare(
-          `SELECT id, entity_type AS entityType, entity_id AS entityId, event_type AS eventType, event_payload AS eventPayload, created_at AS createdAt
-           FROM timeline_events
+          `SELECT
+            id,
+            coalesce(event_key, event_type) AS eventKey,
+            coalesce(event_version, 1) AS eventVersion,
+            coalesce(category, entity_type) AS category,
+            entity_type AS entityType,
+            entity_id AS entityId,
+            coalesce(actor_type, 'system') AS actorType,
+            coalesce(source, 'api') AS source,
+            event_type AS eventType,
+            event_payload AS eventPayload,
+            coalesce(payload_schema, 'timeline.legacy.v1') AS payloadSchema,
+            created_at AS createdAt
+          FROM timeline_events
            WHERE entity_type = ? AND entity_id = ?
            ORDER BY created_at ASC`,
         )
-        .all(entityType, entityId);
+        .all(entityType, entityId) as Array<Record<string, unknown>>;
     },
 
     search(query) {

@@ -101,8 +101,22 @@ describe('slice 1 happy path e2e', () => {
     });
     expect(timelineRes.statusCode).toBe(200);
     const timeline = z
-      .object({ events: z.array(z.object({ eventType: z.string() })) })
+      .object({
+        events: z.array(
+          z.object({
+            eventKey: z.string(),
+            eventVersion: z.number(),
+            eventType: z.string(),
+          }),
+        ),
+      })
       .parse(timelineRes.json());
+    expect(timeline.events.map((event) => event.eventKey)).toEqual([
+      'invoice.draft_created',
+      'invoice.draft_updated',
+      'invoice.finalised',
+    ]);
+    expect(timeline.events.map((event) => event.eventVersion)).toEqual([1, 1, 1]);
     expect(timeline.events.map((event) => event.eventType)).toEqual([
       'Draft Created',
       'Draft Updated',

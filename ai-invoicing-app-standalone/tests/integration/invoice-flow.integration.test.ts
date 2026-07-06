@@ -42,6 +42,12 @@ describe('invoice flow integration', () => {
 
     const timeline = db.getTimelineForEntity('invoice', draft.id);
     expect(timeline).toHaveLength(3);
+    expect(
+      timeline.map((event) => (event as { eventKey: string }).eventKey),
+    ).toEqual(['invoice.draft_created', 'invoice.draft_updated', 'invoice.finalised']);
+    expect(
+      timeline.map((event) => (event as { eventVersion: number }).eventVersion),
+    ).toEqual([1, 1, 1]);
 
     db.close();
   });

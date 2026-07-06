@@ -43,6 +43,7 @@ export async function buildApp(options: BuildAppOptions) {
     }
 
     if (
+      errorMessage.includes('INVALID_TIMELINE_EVENT_TAXONOMY') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
