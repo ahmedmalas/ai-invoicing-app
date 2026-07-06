@@ -116,6 +116,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
+ON invoice_snapshots(invoice_id);
 
 CREATE TRIGGER IF NOT EXISTS trg_invoices_finalised_immutable_update
 BEFORE UPDATE ON invoices
@@ -159,6 +161,10 @@ WHEN EXISTS (
   SELECT 1 FROM invoices i
   WHERE i.id = OLD.invoice_id AND i.status = 'Finalised'
 )
+OR EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = NEW.invoice_id AND i.status = 'Finalised'
+)
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS');
 END;
@@ -183,6 +189,16 @@ BEGIN
   SELECT RAISE(ABORT, 'SNAPSHOT_REQUIRES_FINALISED_INVOICE');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_singleton_insert
+BEFORE INSERT ON invoice_snapshots
+WHEN EXISTS (
+  SELECT 1 FROM invoice_snapshots s
+  WHERE s.invoice_id = NEW.invoice_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_INVOICE_SNAPSHOT');
+END;
+
 CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_immutable_update
 BEFORE UPDATE ON invoice_snapshots
 BEGIN
@@ -201,6 +217,17 @@ WHEN OLD.document_type = 'invoice'
 AND EXISTS (
   SELECT 1 FROM invoices i
   WHERE i.id = OLD.entity_id AND i.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_invoice_insert
+BEFORE INSERT ON documents
+WHEN NEW.document_type = 'invoice'
+AND EXISTS (
+  SELECT 1 FROM invoices i
+  WHERE i.id = NEW.entity_id AND i.status = 'Finalised'
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');

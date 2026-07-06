@@ -88,6 +88,12 @@ describe('finalised invoice immutability at persistence level', () => {
     ).toThrow(/IMMUTABLE_INVOICE_SNAPSHOT/);
 
     expect(() =>
+      raw
+        .prepare('INSERT INTO invoice_snapshots (id, invoice_id, snapshot_json, created_at) VALUES (?, ?, ?, ?)')
+        .run('extra-snapshot', finalised.id, '{"tampered":true}', new Date().toISOString()),
+    ).toThrow(/IMMUTABLE_INVOICE_SNAPSHOT/);
+
+    expect(() =>
       raw.prepare('UPDATE documents SET title = ? WHERE entity_id = ?').run('Tampered doc', finalised.id),
     ).toThrow(/IMMUTABLE_FINALISED_INVOICE_DOCUMENT/);
 
@@ -96,8 +102,40 @@ describe('finalised invoice immutability at persistence level', () => {
     ).toThrow(/IMMUTABLE_FINALISED_INVOICE_DOCUMENT/);
 
     expect(() =>
+      raw
+        .prepare(
+          'INSERT INTO documents (id, document_type, title, entity_id, searchable_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          'extra-doc',
+          'invoice',
+          'Injected document',
+          finalised.id,
+          'Injected',
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ),
+    ).toThrow(/IMMUTABLE_FINALISED_INVOICE_DOCUMENT/);
+
+    expect(() =>
       raw.prepare('DELETE FROM invoices WHERE id = ?').run(finalised.id),
     ).toThrow(/IMMUTABLE_FINALISED_INVOICE/);
+
+    const otherDraft = appDb.createInvoiceDraft({
+      customerId: customer.id,
+      title: 'Other draft',
+      issueDate: '2026-07-08',
+      dueDate: '2026-07-22',
+      lineItems: [{ description: 'Other', quantity: 1, unitPrice: 50, gstApplicable: false }],
+    });
+    const movableLine = raw
+      .prepare('SELECT id FROM invoice_line_items WHERE invoice_id = ? LIMIT 1')
+      .get(otherDraft.id) as { id: string };
+    expect(() =>
+      raw
+        .prepare('UPDATE invoice_line_items SET invoice_id = ? WHERE id = ?')
+        .run(finalised.id, movableLine.id),
+    ).toThrow(/IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS/);
 
     raw.prepare('UPDATE invoices SET payment_state = ? WHERE id = ?').run('Paid', finalised.id);
     raw.prepare('UPDATE invoices SET reminder_state = ? WHERE id = ?').run('Stopped', finalised.id);
