@@ -104,9 +104,22 @@
 - Added `team.deleted` timeline taxonomy event and persistence emission on successful deletion.
 - Added unit, integration, and e2e coverage for delete success, conflict guards, not-found behavior, and timeline verification.
 
+#### Slice 11 — Team Assignment Audit + Reconciliation
+- Commit: `8a5420c5b022ab3b1f1cc478cfb34ebbcfe8e78f`
+- Audited team deletion and team/job assignment integrity with no defects found.
+- Confirmed deterministic behavior for empty/member/job deletion paths, assignment/unassignment integrity, and `team.deleted` emission conditions.
+- Confirmed no duplicate team deletion logic and documentation/runtime alignment.
+
+#### Slice 12 — Team Permissions Foundation
+- Commit: `8fad55205d23a096ca1a6bf3c6736d02798df8b9`
+- Added backend-only team membership role scaffolding (`owner`, `manager`, `member`) with server-side validation.
+- Extended team membership persistence and listing to include role while preserving existing member flows and team deletion guards.
+- Added startup-safe schema evolution for existing databases by backfilling membership role defaults.
+- Added deterministic tests for valid/invalid role handling and role persistence across API/integration paths.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 10 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 12 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
