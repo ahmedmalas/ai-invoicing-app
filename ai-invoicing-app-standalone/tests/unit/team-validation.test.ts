@@ -4,6 +4,7 @@ import { assertAssignmentInTeamScopeOrThrow } from '../../src/domain/teams/assig
 import {
   addTeamMemberSchema,
   createTeamSchema,
+  deleteTeamParamsSchema,
   removeTeamMemberParamsSchema,
 } from '../../src/domain/teams/validation.js';
 
@@ -33,6 +34,13 @@ describe('team validation', () => {
     });
     expect(parsed.teamId).toBe('550e8400-e29b-41d4-a716-446655440230');
     expect(parsed.userId).toBe('550e8400-e29b-41d4-a716-446655440231');
+  });
+
+  it('accepts delete team route params payload', () => {
+    const parsed = deleteTeamParamsSchema.parse({
+      teamId: '550e8400-e29b-41d4-a716-446655440230',
+    });
+    expect(parsed.teamId).toBe('550e8400-e29b-41d4-a716-446655440230');
   });
 });
 

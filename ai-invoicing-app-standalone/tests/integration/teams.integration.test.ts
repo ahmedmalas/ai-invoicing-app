@@ -163,4 +163,55 @@ describe('teams integration', () => {
 
     db.close();
   });
+
+  it('enforces delete team lifecycle integrity', () => {
+    const db = createDatabase(':memory:');
+
+    const deletableTeam = db.createTeam({
+      name: 'Deletable Team',
+    });
+    expect(() => db.deleteTeam(deletableTeam.id)).not.toThrow();
+    expect(db.getTeamById(deletableTeam.id)).toBeNull();
+
+    const role = db.createRole({
+      name: 'Team Delete Worker',
+      canBeAssigned: true,
+    });
+    const memberUser = db.createUser({
+      displayName: 'Team Delete Member',
+      roleIds: [role.id],
+    });
+    const teamWithMember = db.createTeam({
+      name: 'Team With Member',
+    });
+    db.addTeamMember(teamWithMember.id, memberUser.id);
+    expect(() => db.deleteTeam(teamWithMember.id)).toThrow('TEAM_HAS_MEMBERS');
+
+    db.removeTeamMember(teamWithMember.id, memberUser.id);
+    expect(() => db.deleteTeam(teamWithMember.id)).not.toThrow();
+
+    const customer = db.createCustomer({
+      displayName: 'Delete Team Customer',
+    });
+    const teamWithJob = db.createTeam({
+      name: 'Team With Job',
+    });
+    db.createJob({
+      title: 'Team Job',
+      customerId: customer.id,
+      status: 'Draft',
+      priority: 'Normal',
+      teamId: teamWithJob.id,
+    });
+
+    expect(() => db.deleteTeam(teamWithJob.id)).toThrow('TEAM_HAS_JOBS');
+
+    expect(() => db.deleteTeam('550e8400-e29b-41d4-a716-446655440299')).toThrow('TEAM_NOT_FOUND');
+
+    const teamTimeline = db.getTimelineForEntity('team', teamWithMember.id);
+    const timelineEventKeys = teamTimeline.map((event) => String(event.eventKey));
+    expect(timelineEventKeys).toContain('team.deleted');
+
+    db.close();
+  });
 });

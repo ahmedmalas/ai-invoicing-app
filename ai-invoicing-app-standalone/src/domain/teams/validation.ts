@@ -12,3 +12,7 @@ export const removeTeamMemberParamsSchema = z.object({
   teamId: z.string().uuid(),
   userId: z.string().uuid(),
 });
+
+export const deleteTeamParamsSchema = z.object({
+  teamId: z.string().uuid(),
+});

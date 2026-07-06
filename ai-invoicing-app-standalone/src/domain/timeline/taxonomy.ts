@@ -19,6 +19,7 @@ export const TIMELINE_EVENT_KEYS = [
   'team.created',
   'team.member_added',
   'team.member_removed',
+  'team.deleted',
   'job.assignment_scope_set',
 ] as const;
 
@@ -252,6 +253,16 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.team.member_removed.v1',
     legacyEventType: 'Team Member Removed',
+  },
+  'team.deleted': {
+    key: 'team.deleted',
+    version: 1,
+    category: 'team',
+    entityType: 'team',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.team.deleted.v1',
+    legacyEventType: 'Team Deleted',
   },
   'job.assignment_scope_set': {
     key: 'job.assignment_scope_set',

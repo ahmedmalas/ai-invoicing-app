@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import {
   addTeamMemberSchema,
   createTeamSchema,
+  deleteTeamParamsSchema,
   removeTeamMemberParamsSchema,
 } from '../domain/teams/validation.js';
 
@@ -46,6 +47,12 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/teams/:teamId/members/:userId', async (request, reply) => {
     const params = removeTeamMemberParamsSchema.parse(request.params);
     app.db.removeTeamMember(params.teamId, params.userId);
+    return reply.code(204).send();
+  });
+
+  app.delete('/teams/:teamId', async (request, reply) => {
+    const params = deleteTeamParamsSchema.parse(request.params);
+    app.db.deleteTeam(params.teamId);
     return reply.code(204).send();
   });
 };

@@ -6,7 +6,7 @@ import { buildApp } from '../../src/app.js';
 const idSchema = z.object({ id: z.string().uuid() });
 
 describe('team assignment scope e2e', () => {
-  it('enforces team member scope for job assignment', async () => {
+  it('enforces team member scope and team deletion lifecycle', async () => {
     const app = await buildApp({ dbPath: ':memory:' });
 
     const roleRes = await app.inject({
@@ -60,6 +60,15 @@ describe('team assignment scope e2e', () => {
       },
     });
     expect(addMemberRes.statusCode).toBe(201);
+
+    const deleteTeamBlockedByMemberRes = await app.inject({
+      method: 'DELETE',
+      url: `/teams/${team.id}`,
+    });
+    expect(deleteTeamBlockedByMemberRes.statusCode).toBe(409);
+    expect(deleteTeamBlockedByMemberRes.json()).toMatchObject({
+      message: 'TEAM_HAS_MEMBERS',
+    });
 
     const customerRes = await app.inject({
       method: 'POST',
@@ -126,6 +135,44 @@ describe('team assignment scope e2e', () => {
       url: `/teams/${team.id}/members/${teamUser.id}`,
     });
     expect(deleteMemberRes.statusCode).toBe(204);
+
+    const deleteTeamBlockedByJobRes = await app.inject({
+      method: 'DELETE',
+      url: `/teams/${team.id}`,
+    });
+    expect(deleteTeamBlockedByJobRes.statusCode).toBe(409);
+    expect(deleteTeamBlockedByJobRes.json()).toMatchObject({
+      message: 'TEAM_HAS_JOBS',
+    });
+
+    const removeJobScopeRes = await app.inject({
+      method: 'PUT',
+      url: `/jobs/${job.id}`,
+      payload: {
+        title: 'Scoped install',
+        status: 'Draft',
+        priority: 'Normal',
+        teamId: null,
+        assignedUserId: null,
+      },
+    });
+    expect(removeJobScopeRes.statusCode).toBe(200);
+
+    const deleteTeamRes = await app.inject({
+      method: 'DELETE',
+      url: `/teams/${team.id}`,
+    });
+    expect(deleteTeamRes.statusCode).toBe(204);
+
+    const timelineRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/team/${team.id}`,
+    });
+    expect(timelineRes.statusCode).toBe(200);
+    const timelineBody = z.object({ events: z.array(z.object({ eventKey: z.string() })) }).parse(
+      timelineRes.json(),
+    );
+    expect(timelineBody.events.some((event) => event.eventKey === 'team.deleted')).toBe(true);
 
     await app.close();
   });

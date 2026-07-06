@@ -233,6 +233,7 @@ export interface AppDatabase {
   createTeam(input: CreateTeamInput): Team;
   getTeamById(id: string): Team | null;
   listTeams(): Team[];
+  deleteTeam(teamId: string): void;
   addTeamMember(teamId: string, userId: string): TeamMembershipRecord;
   removeTeamMember(teamId: string, userId: string): void;
   listTeamMembers(teamId: string): TeamMembershipRecord[];
@@ -449,6 +450,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       'team.created',
       'team.member_added',
       'team.member_removed',
+      'team.deleted',
       'job.assignment_scope_set'
     )
     BEGIN
@@ -1010,6 +1012,35 @@ export function createDatabase(dbPath: string): AppDatabase {
     listTeams() {
       const rows = db.prepare('SELECT * FROM teams ORDER BY name ASC').all() as DbTeamRow[];
       return rows.map(mapTeamRow);
+    },
+
+    deleteTeam(teamId) {
+      ensureTeamExistsOrThrow(teamId);
+
+      const memberCount = db
+        .prepare(
+          `SELECT COUNT(1) AS total
+           FROM team_memberships
+           WHERE team_id = ?`,
+        )
+        .get(teamId) as { total: number };
+      if (memberCount.total > 0) {
+        throw new Error('TEAM_HAS_MEMBERS');
+      }
+
+      const teamJobCount = db
+        .prepare(
+          `SELECT COUNT(1) AS total
+           FROM jobs
+           WHERE team_id = ?`,
+        )
+        .get(teamId) as { total: number };
+      if (teamJobCount.total > 0) {
+        throw new Error('TEAM_HAS_JOBS');
+      }
+
+      db.prepare('DELETE FROM teams WHERE id = ?').run(teamId);
+      timeline('team.deleted', teamId, {});
     },
 
     addTeamMember(teamId, userId) {
