@@ -63,6 +63,30 @@ CREATE TABLE IF NOT EXISTS invoices (
   FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
 
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  job_number TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT,
+  customer_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  scheduled_date TEXT,
+  completed_date TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE IF NOT EXISTS job_document_links (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id),
+  FOREIGN KEY (document_id) REFERENCES documents(id)
+);
+
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL,
@@ -85,6 +109,13 @@ CREATE TABLE IF NOT EXISTS invoice_snapshots (
 );
 
 CREATE TABLE IF NOT EXISTS invoice_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
   year INTEGER NOT NULL,
@@ -118,6 +149,11 @@ CREATE TABLE IF NOT EXISTS reminder_states (
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
+CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
+CREATE INDEX IF NOT EXISTS idx_job_document_links_job ON job_document_links(job_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;

@@ -9,6 +9,9 @@ import type {
   Customer,
   DocumentRecord,
   InvoiceDraft,
+  Job,
+  JobPriority,
+  JobStatus,
   LineItemInput,
   PaymentState,
   ReminderState,
@@ -50,6 +53,20 @@ interface DbInvoiceRow {
   updated_at: string;
 }
 
+interface DbJobRow {
+  id: string;
+  job_number: string;
+  title: string;
+  description: string | null;
+  customer_id: string;
+  status: JobStatus;
+  priority: JobPriority;
+  scheduled_date: string | null;
+  completed_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CreateCustomerInput {
   displayName: string;
   email?: string | undefined;
@@ -83,6 +100,25 @@ export interface CreateInvoiceDraftInput {
   lineItems: LineItemInput[];
 }
 
+export interface CreateJobInput {
+  title: string;
+  description?: string | undefined;
+  customerId: string;
+  status: JobStatus;
+  priority: JobPriority;
+  scheduledDate?: string | undefined;
+  completedDate?: string | undefined;
+}
+
+export interface UpdateJobInput {
+  title: string;
+  description?: string | undefined;
+  status: JobStatus;
+  priority: JobPriority;
+  scheduledDate?: string | null | undefined;
+  completedDate?: string | null | undefined;
+}
+
 export interface UpdateInvoiceDraftInput {
   title: string;
   issueDate: string;
@@ -97,6 +133,7 @@ export interface SearchResults {
   customers: Customer[];
   invoices: InvoiceDraft[];
   documents: DocumentRecord[];
+  jobs: Job[];
 }
 
 export interface AppDatabase {
@@ -112,6 +149,10 @@ export interface AppDatabase {
   updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): InvoiceDraft;
   getInvoiceById(id: string): (InvoiceDraft & { lineItems: LineItemInput[] }) | null;
   finaliseInvoice(id: string): InvoiceDraft;
+  createJob(input: CreateJobInput): Job;
+  updateJob(id: string, input: UpdateJobInput): Job;
+  getJobById(id: string): Job | null;
+  listJobs(): Job[];
   getTimelineForEntity(entityType: string, entityId: string): Array<Record<string, unknown>>;
   search(query: string): SearchResults;
 }
@@ -152,6 +193,22 @@ function mapInvoiceRow(row: DbInvoiceRow): InvoiceDraft {
       gstTotal: row.gst_total,
       total: row.total,
     },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapJobRow(row: DbJobRow): Job {
+  return {
+    id: row.id,
+    jobNumber: row.job_number,
+    title: row.title,
+    description: row.description,
+    customerId: row.customer_id,
+    status: row.status,
+    priority: row.priority,
+    scheduledDate: row.scheduled_date,
+    completedDate: row.completed_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -224,7 +281,10 @@ export function createDatabase(dbPath: string): AppDatabase {
       'customer.created',
       'customer.updated',
       'business_profile.updated',
-      'preferences.updated'
+      'preferences.updated',
+      'job.created',
+      'job.updated',
+      'job.completed'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -627,6 +687,130 @@ export function createDatabase(dbPath: string): AppDatabase {
       return finalised;
     },
 
+    createJob(input) {
+      const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
+      if (!customer) {
+        throw new Error('Customer not found');
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM job_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+      let prefix = 'JOB';
+      let sequence = 1;
+
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO job_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE job_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE job_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
+        }
+      }
+
+      const id = randomUUID();
+      const jobNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const now = nowIso();
+      const completedDate =
+        input.status === 'Completed' ? (input.completedDate ?? now) : (input.completedDate ?? null);
+
+      db.prepare(
+        `INSERT INTO jobs (
+          id, job_number, title, description, customer_id, status, priority,
+          scheduled_date, completed_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        jobNumber,
+        input.title,
+        input.description ?? null,
+        input.customerId,
+        input.status,
+        input.priority,
+        input.scheduledDate ?? null,
+        completedDate,
+        now,
+        now,
+      );
+
+      upsertDocument(id, input.title, 'custom', `${jobNumber} ${input.title} ${input.description ?? ''}`);
+      timeline('job.created', id, {
+        jobNumber,
+        status: input.status,
+      });
+      if (input.status === 'Completed') {
+        timeline('job.completed', id, { jobNumber });
+      }
+
+      const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow;
+      return mapJobRow(row);
+    },
+
+    updateJob(id, input) {
+      const existing = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
+      if (!existing) {
+        throw new Error('Job not found');
+      }
+
+      const now = nowIso();
+      const completedDate =
+        input.status === 'Completed'
+          ? (input.completedDate ?? existing.completed_date ?? now)
+          : (input.completedDate ?? null);
+
+      db.prepare(
+        `UPDATE jobs
+         SET title = ?, description = ?, status = ?, priority = ?, scheduled_date = ?, completed_date = ?, updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        input.title,
+        input.description ?? null,
+        input.status,
+        input.priority,
+        input.scheduledDate ?? null,
+        completedDate,
+        now,
+        id,
+      );
+
+      upsertDocument(id, input.title, 'custom', `${existing.job_number} ${input.title} ${input.description ?? ''}`);
+      timeline('job.updated', id, {
+        status: input.status,
+      });
+      if (existing.status !== 'Completed' && input.status === 'Completed') {
+        timeline('job.completed', id, {
+          jobNumber: existing.job_number,
+        });
+      }
+
+      const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow;
+      return mapJobRow(row);
+    },
+
+    getJobById(id) {
+      const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
+      return row ? mapJobRow(row) : null;
+    },
+
+    listJobs() {
+      const rows = db
+        .prepare('SELECT * FROM jobs ORDER BY created_at DESC')
+        .all() as DbJobRow[];
+      return rows.map(mapJobRow);
+    },
+
     getTimelineForEntity(entityType, entityId) {
       return db
         .prepare(
@@ -687,7 +871,16 @@ export function createDatabase(dbPath: string): AppDatabase {
         )
         .all(wildcard, wildcard) as DocumentRecord[];
 
-      return { customers, invoices, documents };
+      const jobs = db
+        .prepare(
+          `SELECT * FROM jobs
+           WHERE lower(title) LIKE ? OR lower(job_number) LIKE ? OR lower(coalesce(description, '')) LIKE ?
+           ORDER BY updated_at DESC LIMIT 25`,
+        )
+        .all(wildcard, wildcard, wildcard)
+        .map((row: unknown) => mapJobRow(row as DbJobRow));
+
+      return { customers, invoices, documents, jobs };
     },
   };
 }

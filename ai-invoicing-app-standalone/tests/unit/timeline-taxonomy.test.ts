@@ -8,7 +8,9 @@ import {
 describe('timeline taxonomy validator', () => {
   it('accepts canonical event keys at version 1', () => {
     expect(isValidTimelineEventKey('invoice.finalised')).toBe(true);
+    expect(isValidTimelineEventKey('job.created')).toBe(true);
     expect(() => assertValidTimelineEventOrThrow('invoice.finalised', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
   });
 
   it('rejects invalid event keys', () => {

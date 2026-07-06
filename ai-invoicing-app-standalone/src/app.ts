@@ -6,6 +6,7 @@ import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
 import { invoiceRoutes } from './routes/invoices.js';
+import { jobRoutes } from './routes/jobs.js';
 import { preferenceRoutes } from './routes/preferences.js';
 import { searchRoutes } from './routes/search.js';
 import { timelineRoutes } from './routes/timeline.js';
@@ -66,6 +67,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(businessProfileRoutes);
   await app.register(preferenceRoutes);
   await app.register(invoiceRoutes);
+  await app.register(jobRoutes);
   await app.register(searchRoutes);
   await app.register(timelineRoutes);
 

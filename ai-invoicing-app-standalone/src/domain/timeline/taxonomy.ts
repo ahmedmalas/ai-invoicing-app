@@ -8,6 +8,9 @@ export const TIMELINE_EVENT_KEYS = [
   'customer.updated',
   'business_profile.updated',
   'preferences.updated',
+  'job.created',
+  'job.updated',
+  'job.completed',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -17,7 +20,8 @@ export type TimelineCategory =
   | 'invoice'
   | 'customer'
   | 'business_profile'
-  | 'preferences';
+  | 'preferences'
+  | 'job';
 
 export type TimelineActorType = 'system';
 export type TimelineSource = 'api';
@@ -138,5 +142,35 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.preferences.updated.v1',
     legacyEventType: 'Preferences Updated',
+  },
+  'job.created': {
+    key: 'job.created',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.created.v1',
+    legacyEventType: 'Job Created',
+  },
+  'job.updated': {
+    key: 'job.updated',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.updated.v1',
+    legacyEventType: 'Job Updated',
+  },
+  'job.completed': {
+    key: 'job.completed',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.completed.v1',
+    legacyEventType: 'Job Completed',
   },
 };
