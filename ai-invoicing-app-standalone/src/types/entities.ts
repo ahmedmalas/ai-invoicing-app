@@ -48,6 +48,25 @@ export interface Customer {
   updatedAt: string;
 }
 
+export interface Role {
+  id: UUID;
+  name: string;
+  canBeAssigned: boolean;
+  canManageAssignments: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface User {
+  id: UUID;
+  displayName: string;
+  email: string | null;
+  isActive: boolean;
+  roleIds: UUID[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BrandingProfile {
   id: UUID;
   companyName: string;

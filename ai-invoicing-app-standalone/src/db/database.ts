@@ -14,7 +14,9 @@ import type {
   JobStatus,
   LineItemInput,
   PaymentState,
+  Role,
   ReminderState,
+  User,
   UUID,
 } from '../types/entities.js';
 import { calculateTotals } from '../domain/invoices/gst.js';
@@ -67,6 +69,24 @@ interface DbJobRow {
   assigned_user_id: string | null;
   assigned_user_name: string | null;
   completed_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbRoleRow {
+  id: string;
+  name: string;
+  can_be_assigned: number;
+  can_manage_assignments: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbUserRow {
+  id: string;
+  display_name: string;
+  email: string | null;
+  is_active: number;
   created_at: string;
   updated_at: string;
 }
@@ -139,6 +159,19 @@ export interface UpdateInvoiceDraftInput {
   paymentState: PaymentState;
 }
 
+export interface CreateRoleInput {
+  name: string;
+  canBeAssigned?: boolean | undefined;
+  canManageAssignments?: boolean | undefined;
+}
+
+export interface CreateUserInput {
+  displayName: string;
+  email?: string | undefined;
+  isActive?: boolean | undefined;
+  roleIds?: string[] | undefined;
+}
+
 export interface SearchResults {
   customers: Customer[];
   invoices: InvoiceDraft[];
@@ -167,6 +200,12 @@ export interface AppDatabase {
   updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): InvoiceDraft;
   getInvoiceById(id: string): (InvoiceDraft & { lineItems: LineItemInput[] }) | null;
   finaliseInvoice(id: string): InvoiceDraft;
+  createRole(input: CreateRoleInput): Role;
+  getRoleById(id: string): Role | null;
+  listRoles(): Role[];
+  createUser(input: CreateUserInput): User;
+  getUserById(id: string): User | null;
+  listUsers(): User[];
   createJob(input: CreateJobInput): Job;
   updateJob(id: string, input: UpdateJobInput): Job;
   getJobById(id: string): Job | null;
@@ -237,6 +276,17 @@ function mapJobRow(row: DbJobRow): Job {
   };
 }
 
+function mapRoleRow(row: DbRoleRow): Role {
+  return {
+    id: row.id,
+    name: row.name,
+    canBeAssigned: row.can_be_assigned === 1,
+    canManageAssignments: row.can_manage_assignments === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapBusinessProfileRow(row: Record<string, unknown>): BrandingProfile {
   return {
     id: String(row.id),
@@ -250,6 +300,18 @@ function mapBusinessProfileRow(row: Record<string, unknown>): BrandingProfile {
     primaryColor: String(row.primary_color),
     secondaryColor: String(row.secondary_color),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function mapUserRow(row: DbUserRow, roleIds: string[]): User {
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    email: row.email,
+    isActive: row.is_active === 1,
+    roleIds,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -407,6 +469,50 @@ export function createDatabase(dbPath: string): AppDatabase {
         title,
       });
     }
+  }
+
+  const listRoleIdsForUser = db.prepare(
+    'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC',
+  );
+
+  function getRoleIdsForUser(userId: string): string[] {
+    const rows = listRoleIdsForUser.all(userId) as Array<{ role_id: string }>;
+    return rows.map((row) => row.role_id);
+  }
+
+  function loadAssignableUserOrThrow(
+    assignedUserId: string,
+    assignedUserName: string | null,
+  ): { userId: string; userName: string } {
+    const user = db
+      .prepare('SELECT id, display_name, is_active FROM users WHERE id = ?')
+      .get(assignedUserId) as { id: string; display_name: string; is_active: number } | undefined;
+    if (!user) {
+      throw new Error('ASSIGNED_USER_NOT_FOUND');
+    }
+    if (user.is_active !== 1) {
+      throw new Error('ASSIGNED_USER_INACTIVE');
+    }
+    if (assignedUserName && assignedUserName !== user.display_name) {
+      throw new Error('ASSIGNED_USER_NAME_MISMATCH');
+    }
+
+    const assignableRoleCount = db
+      .prepare(
+        `SELECT count(*) AS count
+         FROM user_role_links url
+         INNER JOIN roles r ON r.id = url.role_id
+         WHERE url.user_id = ? AND r.can_be_assigned = 1`,
+      )
+      .get(assignedUserId) as { count: number };
+    if (assignableRoleCount.count < 1) {
+      throw new Error('ASSIGNED_USER_ROLE_REQUIRED');
+    }
+
+    return {
+      userId: user.id,
+      userName: user.display_name,
+    };
   }
 
   return {
@@ -741,6 +847,84 @@ export function createDatabase(dbPath: string): AppDatabase {
       return finalised;
     },
 
+    createRole(input) {
+      const id = randomUUID();
+      const now = nowIso();
+      try {
+        db.prepare(
+          `INSERT INTO roles (id, name, can_be_assigned, can_manage_assignments, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        ).run(
+          id,
+          input.name.trim(),
+          input.canBeAssigned ? 1 : 0,
+          input.canManageAssignments ? 1 : 0,
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('UNIQUE constraint failed: roles.name')) {
+          throw new Error('ROLE_NAME_EXISTS');
+        }
+        throw error;
+      }
+      const row = db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as DbRoleRow;
+      return mapRoleRow(row);
+    },
+
+    getRoleById(id) {
+      const row = db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as DbRoleRow | undefined;
+      return row ? mapRoleRow(row) : null;
+    },
+
+    listRoles() {
+      const rows = db.prepare('SELECT * FROM roles ORDER BY name ASC').all() as DbRoleRow[];
+      return rows.map(mapRoleRow);
+    },
+
+    createUser(input) {
+      const roleIds = Array.from(new Set(input.roleIds ?? []));
+      if (roleIds.length > 0) {
+        const existingRoleRows = db
+          .prepare(`SELECT id FROM roles WHERE id IN (${roleIds.map(() => '?').join(',')})`)
+          .all(...roleIds) as Array<{ id: string }>;
+        if (existingRoleRows.length !== roleIds.length) {
+          throw new Error('ROLE_NOT_FOUND');
+        }
+      }
+
+      const id = randomUUID();
+      const now = nowIso();
+      db.prepare(
+        `INSERT INTO users (id, display_name, email, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(id, input.displayName, input.email ?? null, input.isActive === false ? 0 : 1, now, now);
+
+      const insertUserRole = db.prepare(
+        `INSERT INTO user_role_links (id, user_id, role_id, created_at)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const roleId of roleIds) {
+        insertUserRole.run(randomUUID(), id, roleId, now);
+      }
+
+      const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as DbUserRow;
+      return mapUserRow(row, getRoleIdsForUser(id));
+    },
+
+    getUserById(id) {
+      const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as DbUserRow | undefined;
+      return row ? mapUserRow(row, getRoleIdsForUser(id)) : null;
+    },
+
+    listUsers() {
+      const rows = db
+        .prepare('SELECT * FROM users ORDER BY created_at DESC')
+        .all() as DbUserRow[];
+      return rows.map((row) => mapUserRow(row, getRoleIdsForUser(row.id)));
+    },
+
     createJob(input) {
       const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
       if (!customer) {
@@ -777,6 +961,12 @@ export function createDatabase(dbPath: string): AppDatabase {
       const id = randomUUID();
       const jobNumber = formatInvoiceNumber(prefix, currentYear, sequence);
       const now = nowIso();
+      if (!input.assignedUserId && input.assignedUserName) {
+        throw new Error('ASSIGNED_USER_REQUIRES_ID');
+      }
+      const assignment = input.assignedUserId
+        ? loadAssignableUserOrThrow(input.assignedUserId, input.assignedUserName ?? null)
+        : null;
       const completedDate =
         input.status === 'Completed' ? (input.completedDate ?? now) : (input.completedDate ?? null);
 
@@ -796,8 +986,8 @@ export function createDatabase(dbPath: string): AppDatabase {
         input.priority,
         input.scheduledStartAt ?? null,
         input.scheduledEndAt ?? null,
-        input.assignedUserId ?? null,
-        input.assignedUserName ?? null,
+        assignment?.userId ?? null,
+        assignment?.userName ?? null,
         completedDate,
         now,
         now,
@@ -816,8 +1006,8 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
       if (input.assignedUserId || input.assignedUserName) {
         timeline('job.assignment_updated', id, {
-          assignedUserId: input.assignedUserId ?? null,
-          assignedUserName: input.assignedUserName ?? null,
+          assignedUserId: assignment?.userId ?? null,
+          assignedUserName: assignment?.userName ?? null,
         });
       }
       if (input.status === 'Completed') {
@@ -842,8 +1032,25 @@ export function createDatabase(dbPath: string): AppDatabase {
           : (input.completedDate ?? null);
       const nextScheduledStartAt = input.scheduledStartAt ?? null;
       const nextScheduledEndAt = input.scheduledEndAt ?? null;
-      const nextAssignedUserId = input.assignedUserId ?? null;
-      const nextAssignedUserName = input.assignedUserName ?? null;
+      if (
+        (input.assignedUserId === null || input.assignedUserId === undefined) &&
+        input.assignedUserName
+      ) {
+        throw new Error('ASSIGNED_USER_REQUIRES_ID');
+      }
+      let nextAssignedUserId = existing.assigned_user_id;
+      let nextAssignedUserName = existing.assigned_user_name;
+      if (input.assignedUserId === null) {
+        nextAssignedUserId = null;
+        nextAssignedUserName = null;
+      } else if (input.assignedUserId !== undefined) {
+        const nextAssignment = loadAssignableUserOrThrow(
+          input.assignedUserId,
+          input.assignedUserName ?? null,
+        );
+        nextAssignedUserId = nextAssignment.userId;
+        nextAssignedUserName = nextAssignment.userName;
+      }
       const statusChanged = existing.status !== input.status;
       const scheduleChanged =
         existing.scheduled_start_at !== nextScheduledStartAt ||

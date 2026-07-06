@@ -72,9 +72,17 @@
 - Added scheduling windows, assignment fields, validated status transition workflow, and timeline events for scheduling/assignment/status changes.
 - Added unit, integration, and e2e tests for workflow behavior and validation.
 
+#### Slice 7 — Users/Roles Foundation + Job Assignment Integrity
+- Commit: `TBD`
+- Added minimal users/roles persistence with user-role association links.
+- Added create/list/get APIs for users and roles using existing backend route patterns.
+- Enforced assignment integrity for jobs so assigned users must exist, be active, and have assignable roles; canonicalized assignment display names from user records.
+- Added deterministic error handling for orphan assignment IDs and assignment policy violations.
+- Added unit, integration, and e2e coverage for users/roles foundations and assignment integrity.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 6 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 7 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

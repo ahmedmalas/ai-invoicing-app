@@ -33,6 +33,33 @@ CREATE TABLE IF NOT EXISTS customers (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS roles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  can_be_assigned INTEGER NOT NULL DEFAULT 0,
+  can_manage_assignments INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  email TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_role_links (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (role_id) REFERENCES roles(id)
+);
+
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   document_type TEXT NOT NULL,
@@ -150,6 +177,15 @@ CREATE TABLE IF NOT EXISTS reminder_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
+CREATE INDEX IF NOT EXISTS idx_roles_name ON roles(name);
+CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_not_null
+ON users(email)
+WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_role_links_user ON user_role_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_role_links_role ON user_role_links(role_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_role_links_user_role
+ON user_role_links(user_id, role_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);

@@ -17,6 +17,13 @@ const jobSchema = z.object({
 const invoiceSchema = z.object({
   id: z.string().uuid(),
 });
+const roleSchema = z.object({
+  id: z.string().uuid(),
+});
+const userSchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string(),
+});
 
 describe('jobs happy path e2e', () => {
   it('creates, retrieves, updates, links invoice documents, and searches jobs', async () => {
@@ -33,6 +40,28 @@ describe('jobs happy path e2e', () => {
     expect(customerRes.statusCode).toBe(201);
     const customer = customerIdSchema.parse(customerRes.json());
 
+    const createRoleRes = await app.inject({
+      method: 'POST',
+      url: '/roles',
+      payload: {
+        name: 'Field Technician',
+        canBeAssigned: true,
+      },
+    });
+    expect(createRoleRes.statusCode).toBe(201);
+    const role = roleSchema.parse(createRoleRes.json());
+
+    const createUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      payload: {
+        displayName: 'Jamie Staff',
+        roleIds: [role.id],
+      },
+    });
+    expect(createUserRes.statusCode).toBe(201);
+    const user = userSchema.parse(createUserRes.json());
+
     const createJobRes = await app.inject({
       method: 'POST',
       url: '/jobs',
@@ -44,8 +73,8 @@ describe('jobs happy path e2e', () => {
         priority: 'Normal',
         scheduledStartAt: '2026-07-12T09:00:00.000Z',
         scheduledEndAt: '2026-07-12T10:00:00.000Z',
-        assignedUserId: '550e8400-e29b-41d4-a716-446655440010',
-        assignedUserName: 'Jamie Staff',
+        assignedUserId: user.id,
+        assignedUserName: user.displayName,
       },
     });
     expect(createJobRes.statusCode).toBe(201);
@@ -92,8 +121,8 @@ describe('jobs happy path e2e', () => {
         priority: 'High',
         scheduledStartAt: '2026-07-12T09:00:00.000Z',
         scheduledEndAt: '2026-07-12T10:00:00.000Z',
-        assignedUserId: '550e8400-e29b-41d4-a716-446655440010',
-        assignedUserName: 'Jamie Staff',
+        assignedUserId: user.id,
+        assignedUserName: user.displayName,
       },
     });
     expect(invalidTransitionRes.statusCode).toBe(409);
@@ -108,8 +137,8 @@ describe('jobs happy path e2e', () => {
         priority: 'High',
         scheduledStartAt: '2026-07-12T09:15:00.000Z',
         scheduledEndAt: '2026-07-12T11:15:00.000Z',
-        assignedUserId: '550e8400-e29b-41d4-a716-446655440011',
-        assignedUserName: 'Alex Staff',
+        assignedUserId: user.id,
+        assignedUserName: user.displayName,
       },
     });
     expect(updateJobRes.statusCode).toBe(200);
@@ -117,7 +146,7 @@ describe('jobs happy path e2e', () => {
     expect(updated.status).toBe('In Progress');
     expect(updated.priority).toBe('High');
     expect(updated.scheduledStartAt).toBe('2026-07-12T09:15:00.000Z');
-    expect(updated.assignedUserName).toBe('Alex Staff');
+    expect(updated.assignedUserName).toBe(user.displayName);
 
     const completeJobRes = await app.inject({
       method: 'PUT',
@@ -130,8 +159,8 @@ describe('jobs happy path e2e', () => {
         completedDate: '2026-07-13',
         scheduledStartAt: '2026-07-12T09:15:00.000Z',
         scheduledEndAt: '2026-07-12T11:15:00.000Z',
-        assignedUserId: '550e8400-e29b-41d4-a716-446655440011',
-        assignedUserName: 'Alex Staff',
+        assignedUserId: user.id,
+        assignedUserName: user.displayName,
       },
     });
     expect(completeJobRes.statusCode).toBe(200);

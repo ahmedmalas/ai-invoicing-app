@@ -10,6 +10,18 @@ describe('jobs integration', () => {
       displayName: 'Job Customer',
       email: 'job-customer@example.test',
     });
+    const assignableRole = db.createRole({
+      name: 'Assignable Worker',
+      canBeAssigned: true,
+    });
+    const initialAssignee = db.createUser({
+      displayName: 'Casey Staff',
+      roleIds: [assignableRole.id],
+    });
+    const updatedAssignee = db.createUser({
+      displayName: 'Taylor Staff',
+      roleIds: [assignableRole.id],
+    });
 
     const created = db.createJob({
       title: 'Initial Site Visit',
@@ -19,8 +31,8 @@ describe('jobs integration', () => {
       priority: 'High',
       scheduledStartAt: '2026-07-10T09:00:00.000Z',
       scheduledEndAt: '2026-07-10T10:00:00.000Z',
-      assignedUserId: '550e8400-e29b-41d4-a716-446655440000',
-      assignedUserName: 'Casey Staff',
+      assignedUserId: initialAssignee.id,
+      assignedUserName: initialAssignee.displayName,
     });
 
     expect(created.customerId).toBe(customer.id);
@@ -36,15 +48,15 @@ describe('jobs integration', () => {
       priority: 'Urgent',
       scheduledStartAt: '2026-07-10T09:30:00.000Z',
       scheduledEndAt: '2026-07-10T10:30:00.000Z',
-      assignedUserId: '550e8400-e29b-41d4-a716-446655440001',
-      assignedUserName: 'Taylor Staff',
+      assignedUserId: updatedAssignee.id,
+      assignedUserName: updatedAssignee.displayName,
     });
     expect(inProgress.status).toBe('In Progress');
     expect(inProgress.priority).toBe('Urgent');
     expect(inProgress.scheduledStartAt).toBe('2026-07-10T09:30:00.000Z');
     expect(inProgress.scheduledEndAt).toBe('2026-07-10T10:30:00.000Z');
-    expect(inProgress.assignedUserId).toBe('550e8400-e29b-41d4-a716-446655440001');
-    expect(inProgress.assignedUserName).toBe('Taylor Staff');
+    expect(inProgress.assignedUserId).toBe(updatedAssignee.id);
+    expect(inProgress.assignedUserName).toBe(updatedAssignee.displayName);
 
     const updated = db.updateJob(created.id, {
       title: 'Initial Site Visit - Revised',
@@ -54,8 +66,8 @@ describe('jobs integration', () => {
       completedDate: '2026-07-11',
       scheduledStartAt: '2026-07-10T09:30:00.000Z',
       scheduledEndAt: '2026-07-10T10:30:00.000Z',
-      assignedUserId: '550e8400-e29b-41d4-a716-446655440001',
-      assignedUserName: 'Taylor Staff',
+      assignedUserId: updatedAssignee.id,
+      assignedUserName: updatedAssignee.displayName,
     });
     expect(updated.status).toBe('Completed');
     expect(updated.completedDate).toBe('2026-07-11');
@@ -90,6 +102,14 @@ describe('jobs integration', () => {
     const customer = db.createCustomer({
       displayName: 'Workflow Customer',
     });
+    const assignableRole = db.createRole({
+      name: 'Schedulable Worker',
+      canBeAssigned: true,
+    });
+    const assignee = db.createUser({
+      displayName: 'Jordan Staff',
+      roleIds: [assignableRole.id],
+    });
     const job = db.createJob({
       title: 'Workflow Job',
       customerId: customer.id,
@@ -103,8 +123,8 @@ describe('jobs integration', () => {
       priority: 'Normal',
       scheduledStartAt: '2026-07-20T08:00:00.000Z',
       scheduledEndAt: '2026-07-20T09:00:00.000Z',
-      assignedUserId: '550e8400-e29b-41d4-a716-446655440002',
-      assignedUserName: 'Jordan Staff',
+      assignedUserId: assignee.id,
+      assignedUserName: assignee.displayName,
     });
     expect(scheduled.status).toBe('Scheduled');
 
@@ -115,8 +135,8 @@ describe('jobs integration', () => {
         priority: 'Normal',
         scheduledStartAt: '2026-07-20T08:00:00.000Z',
         scheduledEndAt: '2026-07-20T09:00:00.000Z',
-        assignedUserId: '550e8400-e29b-41d4-a716-446655440002',
-        assignedUserName: 'Jordan Staff',
+        assignedUserId: assignee.id,
+        assignedUserName: assignee.displayName,
       }),
     ).toThrow('INVALID_JOB_STATUS_TRANSITION');
 

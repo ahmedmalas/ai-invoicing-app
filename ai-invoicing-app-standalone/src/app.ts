@@ -7,6 +7,8 @@ import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
 import { invoiceRoutes } from './routes/invoices.js';
 import { jobRoutes } from './routes/jobs.js';
+import { roleRoutes } from './routes/roles.js';
+import { userRoutes } from './routes/users.js';
 import { preferenceRoutes } from './routes/preferences.js';
 import { searchRoutes } from './routes/search.js';
 import { timelineRoutes } from './routes/timeline.js';
@@ -40,7 +42,7 @@ export async function buildApp(options: BuildAppOptions) {
       });
     }
 
-    if (normalizedMessage.includes('not found')) {
+    if (normalizedMessage.includes('not found') || normalizedMessage.includes('not_found')) {
       return reply.code(404).send({ message: errorMessage });
     }
 
@@ -48,6 +50,11 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('INVALID_TIMELINE_EVENT_TAXONOMY') ||
       errorMessage.includes('INVALID_JOB_STATUS_TRANSITION') ||
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
+      errorMessage.includes('ROLE_NAME_EXISTS') ||
+      errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
+      errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
+      errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
+      errorMessage.includes('ASSIGNED_USER_INACTIVE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
@@ -71,6 +78,8 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(preferenceRoutes);
   await app.register(invoiceRoutes);
   await app.register(jobRoutes);
+  await app.register(roleRoutes);
+  await app.register(userRoutes);
   await app.register(searchRoutes);
   await app.register(timelineRoutes);
 
