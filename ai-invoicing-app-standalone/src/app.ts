@@ -53,6 +53,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('ROLE_NAME_EXISTS') ||
       errorMessage.includes('TEAM_MEMBER_EXISTS') ||
+      errorMessage.includes('INVALID_TEAM_MEMBER_ROLE') ||
       errorMessage.includes('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS') ||
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||

@@ -33,7 +33,7 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
   app.post('/teams/:teamId/members', async (request, reply) => {
     const params = z.object({ teamId: z.string().uuid() }).parse(request.params);
     const body = addTeamMemberSchema.parse(request.body);
-    const membership = app.db.addTeamMember(params.teamId, body.userId);
+    const membership = app.db.addTeamMember(params.teamId, body.userId, body.role);
     return reply.code(201).send(membership);
   });
 

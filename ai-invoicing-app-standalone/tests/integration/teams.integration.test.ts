@@ -22,16 +22,21 @@ describe('teams integration', () => {
     expect(fetched?.name).toBe('Field Ops');
     expect(db.listTeams()).toHaveLength(1);
 
-    const membership = db.addTeamMember(team.id, user.id);
+    const membership = db.addTeamMember(team.id, user.id, 'manager');
     expect(membership.teamId).toBe(team.id);
     expect(membership.userId).toBe(user.id);
+    expect(membership.role).toBe('manager');
     expect(membership.user.displayName).toBe('Team User');
 
     const members = db.listTeamMembers(team.id);
     expect(members).toHaveLength(1);
     expect(members[0]?.user.id).toBe(user.id);
+    expect(members[0]?.role).toBe('manager');
 
     expect(() => db.addTeamMember(team.id, user.id)).toThrow('TEAM_MEMBER_EXISTS');
+    expect(() => db.addTeamMember(team.id, user.id, 'invalid-role' as never)).toThrow(
+      'INVALID_TEAM_MEMBER_ROLE',
+    );
 
     db.close();
   });

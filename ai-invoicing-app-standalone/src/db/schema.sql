@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS team_memberships (
   id TEXT PRIMARY KEY,
   team_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
   created_at TEXT NOT NULL,
   FOREIGN KEY (team_id) REFERENCES teams(id),
   FOREIGN KEY (user_id) REFERENCES users(id)

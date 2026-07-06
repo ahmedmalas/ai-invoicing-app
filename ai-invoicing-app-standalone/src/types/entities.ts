@@ -74,6 +74,8 @@ export interface Team {
   updatedAt: string;
 }
 
+export type TeamMembershipRole = 'owner' | 'manager' | 'member';
+
 export interface BrandingProfile {
   id: UUID;
   companyName: string;

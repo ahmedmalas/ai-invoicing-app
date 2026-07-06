@@ -17,6 +17,7 @@ import type {
   Role,
   ReminderState,
   Team,
+  TeamMembershipRole,
   User,
   UUID,
 } from '../types/entities.js';
@@ -192,6 +193,7 @@ export interface TeamMembershipRecord {
   id: string;
   teamId: string;
   userId: string;
+  role: TeamMembershipRole;
   createdAt: string;
   user: User;
 }
@@ -234,7 +236,7 @@ export interface AppDatabase {
   getTeamById(id: string): Team | null;
   listTeams(): Team[];
   deleteTeam(teamId: string): void;
-  addTeamMember(teamId: string, userId: string): TeamMembershipRecord;
+  addTeamMember(teamId: string, userId: string, role?: TeamMembershipRole): TeamMembershipRecord;
   removeTeamMember(teamId: string, userId: string): void;
   listTeamMembers(teamId: string): TeamMembershipRecord[];
   createJob(input: CreateJobInput): Job;
@@ -395,6 +397,15 @@ export function createDatabase(dbPath: string): AppDatabase {
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);');
+
+  const teamMembershipColumns = db
+    .prepare("SELECT name FROM pragma_table_info('team_memberships')")
+    .all() as Array<{ name: string }>;
+  const teamMembershipColumnSet = new Set(teamMembershipColumns.map((column) => column.name));
+  if (!teamMembershipColumnSet.has('role')) {
+    db.exec("ALTER TABLE team_memberships ADD COLUMN role TEXT NOT NULL DEFAULT 'member';");
+  }
+  db.exec("UPDATE team_memberships SET role = 'member' WHERE role IS NULL;");
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -578,6 +589,12 @@ export function createDatabase(dbPath: string): AppDatabase {
       .prepare('SELECT 1 FROM team_memberships WHERE team_id = ? AND user_id = ?')
       .get(teamId, userId) as { 1: number } | undefined;
     return Boolean(row);
+  }
+
+  function assertValidTeamMembershipRoleOrThrow(role: string): asserts role is TeamMembershipRole {
+    if (role !== 'owner' && role !== 'manager' && role !== 'member') {
+      throw new Error('INVALID_TEAM_MEMBER_ROLE');
+    }
   }
 
   return {
@@ -1043,20 +1060,21 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('team.deleted', teamId, {});
     },
 
-    addTeamMember(teamId, userId) {
+    addTeamMember(teamId, userId, role = 'member') {
       ensureTeamExistsOrThrow(teamId);
       const user = this.getUserById(userId);
       if (!user) {
         throw new Error('USER_NOT_FOUND');
       }
+      assertValidTeamMembershipRoleOrThrow(role);
 
       const id = randomUUID();
       const now = nowIso();
       try {
         db.prepare(
-          `INSERT INTO team_memberships (id, team_id, user_id, created_at)
-           VALUES (?, ?, ?, ?)`,
-        ).run(id, teamId, userId, now);
+          `INSERT INTO team_memberships (id, team_id, user_id, role, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(id, teamId, userId, role, now);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes('UNIQUE constraint failed: team_memberships.team_id, team_memberships.user_id')) {
@@ -1073,6 +1091,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         id,
         teamId,
         userId,
+        role,
         createdAt: now,
         user,
       };
@@ -1121,6 +1140,7 @@ export function createDatabase(dbPath: string): AppDatabase {
              tm.id AS id,
              tm.team_id AS team_id,
              tm.user_id AS user_id,
+             tm.role AS role,
              tm.created_at AS created_at,
              u.id AS user_id_ref,
              u.display_name AS user_display_name,
@@ -1137,6 +1157,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         id: string;
         team_id: string;
         user_id: string;
+        role: TeamMembershipRole;
         created_at: string;
         user_id_ref: string;
         user_display_name: string;
@@ -1150,6 +1171,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         id: row.id,
         teamId: row.team_id,
         userId: row.user_id,
+        role: row.role,
         createdAt: row.created_at,
         user: mapUserRow(
           {

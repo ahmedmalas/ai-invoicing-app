@@ -6,6 +6,7 @@ import {
   createTeamSchema,
   deleteTeamParamsSchema,
   removeTeamMemberParamsSchema,
+  teamMembershipRoleSchema,
 } from '../../src/domain/teams/validation.js';
 
 describe('team validation', () => {
@@ -23,8 +24,25 @@ describe('team validation', () => {
   it('accepts team membership payload', () => {
     const parsed = addTeamMemberSchema.parse({
       userId: '550e8400-e29b-41d4-a716-446655440230',
+      role: 'manager',
     });
     expect(parsed.userId).toBe('550e8400-e29b-41d4-a716-446655440230');
+    expect(parsed.role).toBe('manager');
+  });
+
+  it('rejects invalid team membership role', () => {
+    expect(() =>
+      addTeamMemberSchema.parse({
+        userId: '550e8400-e29b-41d4-a716-446655440230',
+        role: 'invalid-role',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts canonical team membership role values', () => {
+    expect(teamMembershipRoleSchema.parse('owner')).toBe('owner');
+    expect(teamMembershipRoleSchema.parse('manager')).toBe('manager');
+    expect(teamMembershipRoleSchema.parse('member')).toBe('member');
   });
 
   it('accepts remove member route params payload', () => {

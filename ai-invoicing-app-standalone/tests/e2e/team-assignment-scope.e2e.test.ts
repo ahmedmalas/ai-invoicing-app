@@ -57,9 +57,24 @@ describe('team assignment scope e2e', () => {
       url: `/teams/${team.id}/members`,
       payload: {
         userId: teamUser.id,
+        role: 'manager',
       },
     });
     expect(addMemberRes.statusCode).toBe(201);
+    expect(addMemberRes.json()).toMatchObject({
+      userId: teamUser.id,
+      role: 'manager',
+    });
+
+    const addMemberInvalidRoleRes = await app.inject({
+      method: 'POST',
+      url: `/teams/${team.id}/members`,
+      payload: {
+        userId: outsideUser.id,
+        role: 'invalid-role',
+      },
+    });
+    expect(addMemberInvalidRoleRes.statusCode).toBe(400);
 
     const deleteTeamBlockedByMemberRes = await app.inject({
       method: 'DELETE',
