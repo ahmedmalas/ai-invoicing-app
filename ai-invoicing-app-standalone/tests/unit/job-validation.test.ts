@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { jobPrioritySchema, jobStatusSchema } from '../../src/domain/jobs/validation.js';
+import {
+  jobPrioritySchema,
+  jobStatusSchema,
+  linkJobDocumentSchema,
+} from '../../src/domain/jobs/validation.js';
 
 describe('job status validation', () => {
   it('accepts all allowed statuses', () => {
@@ -27,5 +31,22 @@ describe('job priority validation', () => {
 
   it('rejects unknown priorities', () => {
     expect(() => jobPrioritySchema.parse('Critical')).toThrow();
+  });
+});
+
+describe('job document link validation', () => {
+  it('accepts valid document link payload', () => {
+    const parsed = linkJobDocumentSchema.parse({
+      documentId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(parsed.documentId).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('rejects invalid document id', () => {
+    expect(() =>
+      linkJobDocumentSchema.parse({
+        documentId: 'not-a-uuid',
+      }),
+    ).toThrow();
   });
 });

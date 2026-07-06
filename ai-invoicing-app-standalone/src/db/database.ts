@@ -136,6 +136,14 @@ export interface SearchResults {
   jobs: Job[];
 }
 
+export interface JobDocumentLinkRecord {
+  id: string;
+  jobId: string;
+  documentId: string;
+  createdAt: string;
+  document: DocumentRecord;
+}
+
 export interface AppDatabase {
   close(): void;
   createCustomer(input: CreateCustomerInput): Customer;
@@ -153,6 +161,8 @@ export interface AppDatabase {
   updateJob(id: string, input: UpdateJobInput): Job;
   getJobById(id: string): Job | null;
   listJobs(): Job[];
+  linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
+  listJobDocuments(jobId: string): JobDocumentLinkRecord[];
   getTimelineForEntity(entityType: string, entityId: string): Array<Record<string, unknown>>;
   search(query: string): SearchResults;
 }
@@ -284,7 +294,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       'preferences.updated',
       'job.created',
       'job.updated',
-      'job.completed'
+      'job.completed',
+      'job.document_linked',
+      'document.linked_to_job'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -809,6 +821,112 @@ export function createDatabase(dbPath: string): AppDatabase {
         .prepare('SELECT * FROM jobs ORDER BY created_at DESC')
         .all() as DbJobRow[];
       return rows.map(mapJobRow);
+    },
+
+    linkDocumentToJob(jobId, documentId) {
+      const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(jobId);
+      if (!job) {
+        throw new Error('Job not found');
+      }
+
+      const document = db
+        .prepare(
+          `SELECT
+             id,
+             document_type AS documentType,
+             title,
+             entity_id AS entityId,
+             searchable_text AS searchableText,
+             created_at AS createdAt,
+             updated_at AS updatedAt
+           FROM documents
+           WHERE id = ?`,
+        )
+        .get(documentId) as DocumentRecord | undefined;
+      if (!document) {
+        throw new Error('Document not found');
+      }
+
+      const existing = db
+        .prepare('SELECT id FROM job_document_links WHERE job_id = ? AND document_id = ?')
+        .get(jobId, documentId) as { id: string } | undefined;
+      if (existing) {
+        throw new Error('JOB_DOCUMENT_LINK_EXISTS');
+      }
+
+      const now = nowIso();
+      const linkId = randomUUID();
+      db.prepare(
+        `INSERT INTO job_document_links (id, job_id, document_id, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(linkId, jobId, documentId, now);
+
+      timeline('job.document_linked', jobId, { documentId });
+      timeline('document.linked_to_job', documentId, { jobId });
+
+      return {
+        id: linkId,
+        jobId,
+        documentId,
+        createdAt: now,
+        document,
+      };
+    },
+
+    listJobDocuments(jobId) {
+      const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(jobId);
+      if (!job) {
+        throw new Error('Job not found');
+      }
+
+      const rows = db
+        .prepare(
+          `SELECT
+             l.id AS id,
+             l.job_id AS jobId,
+             l.document_id AS documentId,
+             l.created_at AS createdAt,
+             d.id AS document_id,
+             d.document_type AS document_type,
+             d.title AS document_title,
+             d.entity_id AS document_entity_id,
+             d.searchable_text AS document_searchable_text,
+             d.created_at AS document_created_at,
+             d.updated_at AS document_updated_at
+           FROM job_document_links l
+           INNER JOIN documents d ON d.id = l.document_id
+           WHERE l.job_id = ?
+           ORDER BY l.created_at DESC`,
+        )
+        .all(jobId) as Array<{
+        id: string;
+        jobId: string;
+        documentId: string;
+        createdAt: string;
+        document_id: string;
+        document_type: string;
+        document_title: string;
+        document_entity_id: string;
+        document_searchable_text: string;
+        document_created_at: string;
+        document_updated_at: string;
+      }>;
+
+      return rows.map((row) => ({
+        id: row.id,
+        jobId: row.jobId,
+        documentId: row.documentId,
+        createdAt: row.createdAt,
+        document: {
+          id: row.document_id,
+          documentType: row.document_type as DocumentRecord['documentType'],
+          title: row.document_title,
+          entityId: row.document_entity_id,
+          searchableText: row.document_searchable_text,
+          createdAt: row.document_created_at,
+          updatedAt: row.document_updated_at,
+        },
+      }));
     },
 
     getTimelineForEntity(entityType, entityId) {

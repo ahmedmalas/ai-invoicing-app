@@ -11,6 +11,8 @@ export const TIMELINE_EVENT_KEYS = [
   'job.created',
   'job.updated',
   'job.completed',
+  'job.document_linked',
+  'document.linked_to_job',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -172,5 +174,25 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.job.completed.v1',
     legacyEventType: 'Job Completed',
+  },
+  'job.document_linked': {
+    key: 'job.document_linked',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.document_linked.v1',
+    legacyEventType: 'Job Document Linked',
+  },
+  'document.linked_to_job': {
+    key: 'document.linked_to_job',
+    version: 1,
+    category: 'document',
+    entityType: 'document',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.document.linked_to_job.v1',
+    legacyEventType: 'Document Linked To Job',
   },
 };

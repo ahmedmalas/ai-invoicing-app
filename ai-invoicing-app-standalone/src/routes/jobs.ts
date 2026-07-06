@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
-import { createJobSchema, updateJobSchema } from '../domain/jobs/validation.js';
+import { createJobSchema, linkJobDocumentSchema, updateJobSchema } from '../domain/jobs/validation.js';
 
 export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post('/jobs', async (request, reply) => {
@@ -28,6 +28,20 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.get('/jobs', async () => {
     return {
       jobs: app.db.listJobs(),
+    };
+  });
+
+  app.post('/jobs/:jobId/documents', async (request, reply) => {
+    const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
+    const body = linkJobDocumentSchema.parse(request.body);
+    const link = app.db.linkDocumentToJob(params.jobId, body.documentId);
+    return reply.code(201).send(link);
+  });
+
+  app.get('/jobs/:jobId/documents', async (request) => {
+    const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
+    return {
+      documents: app.db.listJobDocuments(params.jobId),
     };
   });
 };

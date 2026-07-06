@@ -54,4 +54,57 @@ describe('jobs integration', () => {
 
     db.close();
   });
+
+  it('links documents to jobs and lists linked documents with timeline events', () => {
+    const db = createDatabase(':memory:');
+    const customer = db.createCustomer({
+      displayName: 'Link Customer',
+    });
+    const job = db.createJob({
+      title: 'Job With Linked Invoice',
+      customerId: customer.id,
+      status: 'Draft',
+      priority: 'Normal',
+    });
+    const invoice = db.createInvoiceDraft({
+      customerId: customer.id,
+      title: 'Invoice for linked job',
+      issueDate: '2026-07-06',
+      dueDate: '2026-07-20',
+      lineItems: [
+        {
+          description: 'Work',
+          quantity: 1,
+          unitPrice: 120,
+          gstApplicable: true,
+        },
+      ],
+    });
+
+    const link = db.linkDocumentToJob(job.id, invoice.id);
+    expect(link.jobId).toBe(job.id);
+    expect(link.documentId).toBe(invoice.id);
+    expect(link.document.documentType).toBe('invoice');
+
+    const linked = db.listJobDocuments(job.id);
+    expect(linked).toHaveLength(1);
+    expect(linked[0]?.document.id).toBe(invoice.id);
+
+    const jobTimeline = db.getTimelineForEntity('job', job.id);
+    expect(jobTimeline.map((event) => (event as { eventKey: string }).eventKey)).toContain(
+      'job.document_linked',
+    );
+
+    const documentTimeline = db.getTimelineForEntity('document', invoice.id);
+    expect(documentTimeline.map((event) => (event as { eventKey: string }).eventKey)).toContain(
+      'document.linked_to_job',
+    );
+
+    expect(() => db.linkDocumentToJob(job.id, invoice.id)).toThrow('JOB_DOCUMENT_LINK_EXISTS');
+    expect(() => db.linkDocumentToJob(job.id, '550e8400-e29b-41d4-a716-446655440000')).toThrow(
+      'Document not found',
+    );
+
+    db.close();
+  });
 });

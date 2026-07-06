@@ -31,6 +31,7 @@ export async function buildApp(options: BuildAppOptions) {
 
   app.setErrorHandler((error, _request, reply) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const normalizedMessage = errorMessage.toLowerCase();
 
     if (error instanceof ZodError) {
       return reply.code(400).send({
@@ -39,12 +40,13 @@ export async function buildApp(options: BuildAppOptions) {
       });
     }
 
-    if (errorMessage.includes('not found')) {
+    if (normalizedMessage.includes('not found')) {
       return reply.code(404).send({ message: errorMessage });
     }
 
     if (
       errorMessage.includes('INVALID_TIMELINE_EVENT_TAXONOMY') ||
+      errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||

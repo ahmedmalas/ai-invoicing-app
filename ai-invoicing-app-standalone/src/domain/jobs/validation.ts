@@ -29,3 +29,7 @@ export const updateJobSchema = z.object({
   scheduledDate: z.string().nullable().optional(),
   completedDate: z.string().nullable().optional(),
 });
+
+export const linkJobDocumentSchema = z.object({
+  documentId: z.string().uuid(),
+});

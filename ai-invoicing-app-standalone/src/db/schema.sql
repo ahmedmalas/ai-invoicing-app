@@ -154,6 +154,9 @@ CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_job ON job_document_links(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_document_links_document ON job_document_links(document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_document_link_pair
+ON job_document_links(job_id, document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;

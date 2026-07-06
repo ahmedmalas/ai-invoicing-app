@@ -10,9 +10,12 @@ const jobSchema = z.object({
   status: z.string(),
   priority: z.string(),
 });
+const invoiceSchema = z.object({
+  id: z.string().uuid(),
+});
 
 describe('jobs happy path e2e', () => {
-  it('creates, retrieves, updates, and searches jobs', async () => {
+  it('creates, retrieves, updates, links invoice documents, and searches jobs', async () => {
     const app = await buildApp({ dbPath: ':memory:' });
 
     const customerRes = await app.inject({
@@ -41,6 +44,27 @@ describe('jobs happy path e2e', () => {
     expect(createJobRes.statusCode).toBe(201);
     const createdJob = jobSchema.parse(createJobRes.json());
 
+    const createInvoiceRes = await app.inject({
+      method: 'POST',
+      url: '/invoices',
+      payload: {
+        customerId: customer.id,
+        title: 'Linked invoice',
+        issueDate: '2026-07-10',
+        dueDate: '2026-07-20',
+        lineItems: [
+          {
+            description: 'Service',
+            quantity: 2,
+            unitPrice: 100,
+            gstApplicable: true,
+          },
+        ],
+      },
+    });
+    expect(createInvoiceRes.statusCode).toBe(201);
+    const createdInvoice = invoiceSchema.parse(createInvoiceRes.json());
+
     const getJobRes = await app.inject({
       method: 'GET',
       url: `/jobs/${createdJob.id}`,
@@ -64,6 +88,48 @@ describe('jobs happy path e2e', () => {
     const updated = jobSchema.parse(updateJobRes.json());
     expect(updated.status).toBe('Completed');
     expect(updated.priority).toBe('High');
+
+    const linkRes = await app.inject({
+      method: 'POST',
+      url: `/jobs/${createdJob.id}/documents`,
+      payload: {
+        documentId: createdInvoice.id,
+      },
+    });
+    expect(linkRes.statusCode).toBe(201);
+
+    const listLinkedRes = await app.inject({
+      method: 'GET',
+      url: `/jobs/${createdJob.id}/documents`,
+    });
+    expect(listLinkedRes.statusCode).toBe(200);
+    const linkedPayload = z
+      .object({
+        documents: z.array(
+          z.object({
+            id: z.string().uuid(),
+            jobId: z.string().uuid(),
+            documentId: z.string().uuid(),
+            document: z.object({
+              id: z.string().uuid(),
+              documentType: z.string(),
+            }),
+          }),
+        ),
+      })
+      .parse(listLinkedRes.json());
+    expect(linkedPayload.documents).toHaveLength(1);
+    expect(linkedPayload.documents[0]?.documentId).toBe(createdInvoice.id);
+    expect(linkedPayload.documents[0]?.document.documentType).toBe('invoice');
+
+    const duplicateLinkRes = await app.inject({
+      method: 'POST',
+      url: `/jobs/${createdJob.id}/documents`,
+      payload: {
+        documentId: createdInvoice.id,
+      },
+    });
+    expect(duplicateLinkRes.statusCode).toBe(409);
 
     const listRes = await app.inject({
       method: 'GET',
