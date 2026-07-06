@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
-import { addTeamMemberSchema, createTeamSchema } from '../domain/teams/validation.js';
+import {
+  addTeamMemberSchema,
+  createTeamSchema,
+  removeTeamMemberParamsSchema,
+} from '../domain/teams/validation.js';
 
 export const teamRoutes: FastifyPluginAsync = async (app) => {
   app.post('/teams', async (request, reply) => {
@@ -37,5 +41,11 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
     return {
       members: app.db.listTeamMembers(params.teamId),
     };
+  });
+
+  app.delete('/teams/:teamId/members/:userId', async (request, reply) => {
+    const params = removeTeamMemberParamsSchema.parse(request.params);
+    app.db.removeTeamMember(params.teamId, params.userId);
+    return reply.code(204).send();
   });
 };

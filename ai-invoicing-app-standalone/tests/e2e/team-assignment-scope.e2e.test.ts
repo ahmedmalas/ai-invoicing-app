@@ -99,6 +99,34 @@ describe('team assignment scope e2e', () => {
     });
     expect(outOfScopeUpdateRes.statusCode).toBe(409);
 
+    const deleteMemberBlockedRes = await app.inject({
+      method: 'DELETE',
+      url: `/teams/${team.id}/members/${teamUser.id}`,
+    });
+    expect(deleteMemberBlockedRes.statusCode).toBe(409);
+    expect(deleteMemberBlockedRes.json()).toMatchObject({
+      message: 'TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS',
+    });
+
+    const unassignJobRes = await app.inject({
+      method: 'PUT',
+      url: `/jobs/${job.id}`,
+      payload: {
+        title: 'Scoped install',
+        status: 'Draft',
+        priority: 'Normal',
+        teamId: team.id,
+        assignedUserId: null,
+      },
+    });
+    expect(unassignJobRes.statusCode).toBe(200);
+
+    const deleteMemberRes = await app.inject({
+      method: 'DELETE',
+      url: `/teams/${team.id}/members/${teamUser.id}`,
+    });
+    expect(deleteMemberRes.statusCode).toBe(204);
+
     await app.close();
   });
 });

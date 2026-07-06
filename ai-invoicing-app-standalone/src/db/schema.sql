@@ -218,6 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_job ON job_document_links(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_document ON job_document_links(document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_job_document_link_pair

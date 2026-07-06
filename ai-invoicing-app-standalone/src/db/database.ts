@@ -234,6 +234,7 @@ export interface AppDatabase {
   getTeamById(id: string): Team | null;
   listTeams(): Team[];
   addTeamMember(teamId: string, userId: string): TeamMembershipRecord;
+  removeTeamMember(teamId: string, userId: string): void;
   listTeamMembers(teamId: string): TeamMembershipRecord[];
   createJob(input: CreateJobInput): Job;
   updateJob(id: string, input: UpdateJobInput): Job;
@@ -392,6 +393,7 @@ export function createDatabase(dbPath: string): AppDatabase {
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);');
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -446,6 +448,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       'job.status_changed',
       'team.created',
       'team.member_added',
+      'team.member_removed',
       'job.assignment_scope_set'
     )
     BEGIN
@@ -1042,6 +1045,41 @@ export function createDatabase(dbPath: string): AppDatabase {
         createdAt: now,
         user,
       };
+    },
+
+    removeTeamMember(teamId, userId) {
+      ensureTeamExistsOrThrow(teamId);
+      const user = this.getUserById(userId);
+      if (!user) {
+        throw new Error('USER_NOT_FOUND');
+      }
+
+      const membership = db
+        .prepare(
+          `SELECT id
+           FROM team_memberships
+           WHERE team_id = ? AND user_id = ?`,
+        )
+        .get(teamId, userId) as { id: string } | undefined;
+      if (!membership) {
+        throw new Error('TEAM_MEMBER_NOT_FOUND');
+      }
+
+      const scopedAssignmentsCount = db
+        .prepare(
+          `SELECT COUNT(1) AS total
+           FROM jobs
+           WHERE team_id = ? AND assigned_user_id = ?`,
+        )
+        .get(teamId, userId) as { total: number };
+      if (scopedAssignmentsCount.total > 0) {
+        throw new Error('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS');
+      }
+
+      db.prepare('DELETE FROM team_memberships WHERE id = ?').run(membership.id);
+      timeline('team.member_removed', teamId, {
+        userId,
+      });
     },
 
     listTeamMembers(teamId) {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { assertAssignmentInTeamScopeOrThrow } from '../../src/domain/teams/assignment-scope.js';
-import { addTeamMemberSchema, createTeamSchema } from '../../src/domain/teams/validation.js';
+import {
+  addTeamMemberSchema,
+  createTeamSchema,
+  removeTeamMemberParamsSchema,
+} from '../../src/domain/teams/validation.js';
 
 describe('team validation', () => {
   it('accepts create team payload', () => {
@@ -20,6 +24,15 @@ describe('team validation', () => {
       userId: '550e8400-e29b-41d4-a716-446655440230',
     });
     expect(parsed.userId).toBe('550e8400-e29b-41d4-a716-446655440230');
+  });
+
+  it('accepts remove member route params payload', () => {
+    const parsed = removeTeamMemberParamsSchema.parse({
+      teamId: '550e8400-e29b-41d4-a716-446655440230',
+      userId: '550e8400-e29b-41d4-a716-446655440231',
+    });
+    expect(parsed.teamId).toBe('550e8400-e29b-41d4-a716-446655440230');
+    expect(parsed.userId).toBe('550e8400-e29b-41d4-a716-446655440231');
   });
 });
 

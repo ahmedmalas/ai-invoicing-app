@@ -110,4 +110,57 @@ describe('teams integration', () => {
 
     db.close();
   });
+
+  it('blocks member removal with scoped assignments and allows removal after unassignment', () => {
+    const db = createDatabase(':memory:');
+
+    const customer = db.createCustomer({
+      displayName: 'Removal Guard Customer',
+    });
+    const role = db.createRole({
+      name: 'Removal Assignable Worker',
+      canBeAssigned: true,
+    });
+    const user = db.createUser({
+      displayName: 'Assigned Team Member',
+      roleIds: [role.id],
+    });
+    const team = db.createTeam({
+      name: 'Removal Team',
+    });
+    db.addTeamMember(team.id, user.id);
+
+    const job = db.createJob({
+      title: 'Removal Guard Job',
+      customerId: customer.id,
+      status: 'Draft',
+      priority: 'Normal',
+      teamId: team.id,
+      assignedUserId: user.id,
+    });
+    expect(job.assignedUserId).toBe(user.id);
+
+    expect(() => db.removeTeamMember(team.id, user.id)).toThrow('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS');
+
+    db.updateJob(job.id, {
+      title: 'Removal Guard Job',
+      description: 'Unassigned for member removal',
+      status: 'Draft',
+      priority: 'Normal',
+      teamId: team.id,
+      assignedUserId: null,
+    });
+
+    expect(() => db.removeTeamMember(team.id, user.id)).not.toThrow();
+    expect(db.listTeamMembers(team.id)).toHaveLength(0);
+
+    expect(() => db.removeTeamMember(team.id, user.id)).toThrow('TEAM_MEMBER_NOT_FOUND');
+
+    const teamTimeline = db.getTimelineForEntity('team', team.id);
+    const timelineEventKeys = teamTimeline.map((event) => String(event.event_key));
+    expect(timelineEventKeys).toContain('team.member_added');
+    expect(timelineEventKeys).toContain('team.member_removed');
+
+    db.close();
+  });
 });

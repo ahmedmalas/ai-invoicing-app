@@ -7,3 +7,8 @@ export const createTeamSchema = z.object({
 export const addTeamMemberSchema = z.object({
   userId: z.string().uuid(),
 });
+
+export const removeTeamMemberParamsSchema = z.object({
+  teamId: z.string().uuid(),
+  userId: z.string().uuid(),
+});

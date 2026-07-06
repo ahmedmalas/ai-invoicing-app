@@ -53,6 +53,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('ROLE_NAME_EXISTS') ||
       errorMessage.includes('TEAM_MEMBER_EXISTS') ||
+      errorMessage.includes('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS') ||
       errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
       errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
       errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
