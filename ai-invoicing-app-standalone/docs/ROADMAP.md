@@ -5,7 +5,7 @@ This roadmap is the canonical planning index for implementation slices in this r
 
 ## Current Implemented Baseline
 - Current implemented slice: **Slice 7 — Users/Roles Foundation + Job Assignment Integrity**
-- Baseline commit: `TBD`
+- Baseline commit: `53277c89e10c31fd922a63449c964d756353996b`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)

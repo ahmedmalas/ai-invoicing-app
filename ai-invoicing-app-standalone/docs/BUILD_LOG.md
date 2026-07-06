@@ -73,7 +73,7 @@
 - Added unit, integration, and e2e tests for workflow behavior and validation.
 
 #### Slice 7 — Users/Roles Foundation + Job Assignment Integrity
-- Commit: `TBD`
+- Commit: `53277c89e10c31fd922a63449c964d756353996b`
 - Added minimal users/roles persistence with user-role association links.
 - Added create/list/get APIs for users and roles using existing backend route patterns.
 - Enforced assignment integrity for jobs so assigned users must exist, be active, and have assignable roles; canonicalized assignment display names from user records.
