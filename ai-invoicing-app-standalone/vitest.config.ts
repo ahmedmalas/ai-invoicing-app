@@ -8,6 +8,10 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
       exclude: [
+        'dist/**',
+        'eslint.config.mjs',
+        'prettier.config.cjs',
+        'vitest.config.ts',
         'src/index.ts',
         'src/config/env.ts',
         'src/types/**',
