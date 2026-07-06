@@ -117,9 +117,18 @@
 - Added startup-safe schema evolution for existing databases by backfilling membership role defaults.
 - Added deterministic tests for valid/invalid role handling and role persistence across API/integration paths.
 
+#### Slice 13 — Team Role Authorization Foundation
+- Commit: `651ae8c84ec697de665f997a4f636a9d6cb9f16b`
+- Added server-side role authorization helper for team management actions (`owner`, `manager`, `member`).
+- Added `PATCH /teams/:teamId/members/:userId/role` for deterministic membership role updates.
+- Enforced deterministic authorization and owner-protection errors (`TEAM_PERMISSION_DENIED`, `TEAM_OWNER_MODIFICATION_FORBIDDEN`, `TEAM_LAST_OWNER_REQUIRED`).
+- Enforced final-owner safeguards for member removal and owner demotion.
+- Preserved team/job assignment integrity and team deletion safeguards against linked jobs (`TEAM_HAS_JOBS`) while requiring owner authorization for team deletion when memberships exist.
+- Added unit, integration, and e2e coverage for authorization paths, role updates, and regressions.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 12 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 13 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
