@@ -25,11 +25,23 @@ describe('slice 1 error paths e2e', () => {
     });
     expect(customerNotFound.statusCode).toBe(404);
 
+    const customerInvalidId = await app.inject({
+      method: 'GET',
+      url: '/customers/not-a-uuid',
+    });
+    expect(customerInvalidId.statusCode).toBe(400);
+
     const invoiceNotFound = await app.inject({
       method: 'GET',
       url: '/invoices/550e8400-e29b-41d4-a716-446655440001',
     });
     expect(invoiceNotFound.statusCode).toBe(404);
+
+    const invoiceInvalidId = await app.inject({
+      method: 'GET',
+      url: '/invoices/not-a-uuid',
+    });
+    expect(invoiceInvalidId.statusCode).toBe(400);
 
     const pdfNotFound = await app.inject({
       method: 'GET',

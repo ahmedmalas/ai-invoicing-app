@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { ZodError } from 'zod';
 
 import { createDatabase } from './db/database.js';
 import { healthRoutes } from './routes/health.js';
@@ -26,6 +27,30 @@ export async function buildApp(options: BuildAppOptions) {
   const db = createDatabase(options.dbPath);
 
   app.decorate('db', db);
+
+  app.setErrorHandler((error, _request, reply) => {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (error instanceof ZodError) {
+      return reply.code(400).send({
+        message: 'Validation failed',
+        issues: error.issues,
+      });
+    }
+
+    if (errorMessage.includes('not found')) {
+      return reply.code(404).send({ message: errorMessage });
+    }
+
+    if (
+      errorMessage.includes('Only draft invoices can be edited') ||
+      errorMessage.includes('already finalised')
+    ) {
+      return reply.code(409).send({ message: errorMessage });
+    }
+
+    return reply.code(500).send({ message: 'Internal server error' });
+  });
 
   app.addHook('onClose', async () => {
     db.close();

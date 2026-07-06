@@ -112,4 +112,7 @@ CREATE TABLE IF NOT EXISTS reminder_states (
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
+ON invoices(invoice_number)
+WHERE invoice_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
