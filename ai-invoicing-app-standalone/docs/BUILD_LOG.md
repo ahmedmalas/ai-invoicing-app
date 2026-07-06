@@ -89,9 +89,16 @@
 - Preserved Slice 6/7 behavior for jobs when `teamId` is absent.
 - Added unit, integration, and e2e tests for team validation, memberships, and assignment scope controls.
 
+#### Slice 9 — Team Membership Lifecycle Integrity
+- Commit: `5549776666f2f663c67ff3a834a4e753d7e61537`
+- Added `DELETE /teams/:teamId/members/:userId` for team member removal.
+- Blocked team member removal when user has assigned jobs scoped to the same team using deterministic `TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS`.
+- Added `team.member_removed` timeline taxonomy event and persistence emission on successful removals.
+- Added tests for blocked/successful removal lifecycle and regression coverage for existing team assignment behavior.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 8 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 9 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
