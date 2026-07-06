@@ -96,9 +96,17 @@
 - Added `team.member_removed` timeline taxonomy event and persistence emission on successful removals.
 - Added tests for blocked/successful removal lifecycle and regression coverage for existing team assignment behavior.
 
+#### Slice 10 — Team Deletion Integrity
+- Commit: `34abe09699cdf570e92001cc0aa446a6e1dbf46f`
+- Added `DELETE /teams/:teamId` to complete team lifecycle with deterministic deletion behavior.
+- Blocked team deletion while memberships exist using `TEAM_HAS_MEMBERS`.
+- Blocked team deletion while team-scoped jobs still exist using `TEAM_HAS_JOBS`.
+- Added `team.deleted` timeline taxonomy event and persistence emission on successful deletion.
+- Added unit, integration, and e2e coverage for delete success, conflict guards, not-found behavior, and timeline verification.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 9 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 10 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

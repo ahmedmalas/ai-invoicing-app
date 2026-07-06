@@ -4,8 +4,8 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 9 — Team Membership Lifecycle Integrity**
-- Baseline commit: `5549776666f2f663c67ff3a834a4e753d7e61537`
+- Current implemented slice: **Slice 10 — Team Deletion Integrity**
+- Baseline commit: `34abe09699cdf570e92001cc0aa446a6e1dbf46f`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)
@@ -18,15 +18,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 7. **Slice 7 — Users/Roles Foundation + Job Assignment Integrity** (implemented)
 8. **Slice 8 — Teams Membership Foundation + Assignment Scope Controls** (implemented)
 9. **Slice 9 — Team Membership Lifecycle Integrity** (implemented)
+10. **Slice 10 — Team Deletion Integrity** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 10 — TBD (placeholder only)
 - Slice 11 — TBD (placeholder only)
 - Slice 12 — TBD (placeholder only)
+- Slice 13 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.
