@@ -61,7 +61,7 @@ describe('user/role foundation and job assignment integrity', () => {
         priority: 'Normal',
         assignedUserId: '550e8400-e29b-41d4-a716-446655440099',
       }),
-    ).toThrow('ASSIGNED_USER_NOT_FOUND');
+    ).toThrow('USER_NOT_FOUND');
 
     expect(() =>
       db.createJob({

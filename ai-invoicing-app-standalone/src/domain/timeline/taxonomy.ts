@@ -16,6 +16,9 @@ export const TIMELINE_EVENT_KEYS = [
   'job.scheduled',
   'job.assignment_updated',
   'job.status_changed',
+  'team.created',
+  'team.member_added',
+  'job.assignment_scope_set',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -26,7 +29,8 @@ export type TimelineCategory =
   | 'customer'
   | 'business_profile'
   | 'preferences'
-  | 'job';
+  | 'job'
+  | 'team';
 
 export type TimelineActorType = 'system';
 export type TimelineSource = 'api';
@@ -217,6 +221,36 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.job.status_changed.v1',
     legacyEventType: 'Job Status Changed',
+  },
+  'team.created': {
+    key: 'team.created',
+    version: 1,
+    category: 'team',
+    entityType: 'team',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.team.created.v1',
+    legacyEventType: 'Team Created',
+  },
+  'team.member_added': {
+    key: 'team.member_added',
+    version: 1,
+    category: 'team',
+    entityType: 'team',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.team.member_added.v1',
+    legacyEventType: 'Team Member Added',
+  },
+  'job.assignment_scope_set': {
+    key: 'job.assignment_scope_set',
+    version: 1,
+    category: 'job',
+    entityType: 'job',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.job.assignment_scope_set.v1',
+    legacyEventType: 'Job Assignment Scope Set',
   },
   'document.linked_to_job': {
     key: 'document.linked_to_job',

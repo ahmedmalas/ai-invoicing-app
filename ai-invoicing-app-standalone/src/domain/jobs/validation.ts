@@ -41,6 +41,7 @@ export const createJobSchema = z
     scheduledEndAt: z.string().datetime({ offset: true }).optional(),
     assignedUserId: z.string().uuid().optional(),
     assignedUserName: z.string().min(1).optional(),
+    teamId: z.string().uuid().optional(),
     completedDate: z.string().optional(),
   })
   .and(scheduleSchema);
@@ -55,6 +56,7 @@ export const updateJobSchema = z
     scheduledEndAt: z.string().datetime({ offset: true }).nullable().optional(),
     assignedUserId: z.string().uuid().nullable().optional(),
     assignedUserName: z.string().min(1).nullable().optional(),
+    teamId: z.string().uuid().nullable().optional(),
     completedDate: z.string().nullable().optional(),
   })
   .and(scheduleSchema);

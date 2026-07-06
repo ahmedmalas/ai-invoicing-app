@@ -67,6 +67,13 @@ export interface User {
   updatedAt: string;
 }
 
+export interface Team {
+  id: UUID;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BrandingProfile {
   id: UUID;
   companyName: string;
@@ -123,6 +130,7 @@ export interface Job {
   scheduledEndAt: string | null;
   assignedUserId: string | null;
   assignedUserName: string | null;
+  teamId: string | null;
   completedDate: string | null;
   createdAt: string;
   updatedAt: string;

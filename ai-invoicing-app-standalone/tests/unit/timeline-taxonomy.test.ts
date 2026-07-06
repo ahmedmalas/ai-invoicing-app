@@ -14,6 +14,9 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('job.scheduled')).toBe(true);
     expect(isValidTimelineEventKey('job.assignment_updated')).toBe(true);
     expect(isValidTimelineEventKey('job.status_changed')).toBe(true);
+    expect(isValidTimelineEventKey('team.created')).toBe(true);
+    expect(isValidTimelineEventKey('team.member_added')).toBe(true);
+    expect(isValidTimelineEventKey('job.assignment_scope_set')).toBe(true);
     expect(() => assertValidTimelineEventOrThrow('invoice.finalised', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.document_linked', 1)).not.toThrow();
@@ -21,6 +24,9 @@ describe('timeline taxonomy validator', () => {
     expect(() => assertValidTimelineEventOrThrow('job.scheduled', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.assignment_updated', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.status_changed', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('team.created', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('team.member_added', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('job.assignment_scope_set', 1)).not.toThrow();
   });
 
   it('rejects invalid event keys', () => {

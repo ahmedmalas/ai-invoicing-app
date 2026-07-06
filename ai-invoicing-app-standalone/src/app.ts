@@ -8,6 +8,7 @@ import { businessProfileRoutes } from './routes/business-profile.js';
 import { invoiceRoutes } from './routes/invoices.js';
 import { jobRoutes } from './routes/jobs.js';
 import { roleRoutes } from './routes/roles.js';
+import { teamRoutes } from './routes/teams.js';
 import { userRoutes } from './routes/users.js';
 import { preferenceRoutes } from './routes/preferences.js';
 import { searchRoutes } from './routes/search.js';
@@ -51,10 +52,12 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('INVALID_JOB_STATUS_TRANSITION') ||
       errorMessage.includes('JOB_DOCUMENT_LINK_EXISTS') ||
       errorMessage.includes('ROLE_NAME_EXISTS') ||
+      errorMessage.includes('TEAM_MEMBER_EXISTS') ||
       errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
       errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
       errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
       errorMessage.includes('ASSIGNED_USER_INACTIVE') ||
+      errorMessage.includes('ASSIGNED_USER_OUTSIDE_TEAM_SCOPE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
@@ -79,6 +82,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(invoiceRoutes);
   await app.register(jobRoutes);
   await app.register(roleRoutes);
+  await app.register(teamRoutes);
   await app.register(userRoutes);
   await app.register(searchRoutes);
   await app.register(timelineRoutes);

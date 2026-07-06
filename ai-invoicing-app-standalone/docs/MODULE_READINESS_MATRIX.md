@@ -4,8 +4,8 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/ai-invoicing-foundation-19d3`
-- Current commit (Slice 7 implementation): `53277c89e10c31fd922a63449c964d756353996b`
-- Current implemented slice: **Slice 7 — Users/Roles Foundation + Job Assignment Integrity**
+- Current commit (Slice 8 implementation): `TBD`
+- Current implemented slice: **Slice 8 — Teams Membership Foundation + Assignment Scope Controls**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
@@ -22,15 +22,15 @@ This matrix tracks implementation readiness at module level without prescribing 
 ## Matrix
 | Module | Status | Current Implemented Slice | Dependencies | Next Planned Work | Risks | Notes |
 |---|---|---|---|---|---|---|
-| Foundation | Implemented | Slice 1-7 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
-| Jobs | Partial | Slice 4-7 | Customers, Documents, Timeline, Search, Users/Roles | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, and assignment integrity checks exist. |
+| Foundation | Implemented | Slice 1-8 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
+| Jobs | Partial | Slice 4-8 | Customers, Documents, Timeline, Search, Users/Roles, Teams | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, assignment integrity, and team-scope assignment controls exist. |
 | Customers | Partial | Slice 1 | Foundation, Timeline, Search | TBD | Data model expansion without governance | Core customer lifecycle exists. |
 | Quotes | Not Started | N/A | Customers, Documents, Timeline, Numbering, PDF | TBD | Contract drift with invoice model | Placeholder only. |
 | Invoices | Partial | Slice 1-2 | Customers, Documents, Timeline, Numbering, PDF | TBD | Regulatory/rules expansion risk | Draft/finalise/immutability baseline exists. |
 | Payments | Not Started | N/A | Invoices, Timeline, Integrations | TBD | External dependency risk | Placeholder only. |
 | Scheduling | Partial | Slice 6 | Jobs, Timeline | TBD | Transition rule complexity | Start/end scheduling exists for jobs. |
 | Calendar | Not Started | N/A | Scheduling, Users/Roles, Notifications | TBD | Integration coupling risk | Placeholder only. |
-| Teams | Not Started | N/A | Users/Roles, Jobs, Audit | TBD | Access model ambiguity | Placeholder only. |
+| Teams | Partial | Slice 8 | Users/Roles, Jobs, Audit | TBD | Scope expansion into org-management/permissions | Team create/list/get and membership baseline are implemented for assignment scoping. |
 | Users/Roles | Partial | Slice 7 | Foundation, Audit | TBD | Scope expansion into full auth/permissions | Minimal users/roles persistence, role association, and assignment-policy baseline are implemented. |
 | Documents | Partial | Slice 1,5 | Foundation, Search, Timeline | TBD | Schema breadth risk | Document records + job linkage baseline exists. |
 | Attachments | Not Started | N/A | Documents, Storage strategy, Audit | TBD | Storage/security risk | Placeholder only. |
@@ -40,7 +40,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Dashboard | Not Started | N/A | Reporting, Jobs, Invoices | TBD | UX scope creep risk | Placeholder only. |
 | Settings | Partial | Slice 1 | Business profile, Preferences, Validation | TBD | Configuration sprawl risk | Branding/preferences baseline exists. |
 | Integrations | Not Started | N/A | Security, Audit, Payments, Calendar | TBD | Third-party contract volatility | Placeholder only. |
-| Audit | Partial | Slice 1-6 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists. |
+| Audit | Partial | Slice 1-8 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including team and assignment scope events. |
 | Administration | Not Started | N/A | Users/Roles, Audit, Settings | TBD | Privilege escalation risk | Placeholder only. |
 
 ## Cross-References

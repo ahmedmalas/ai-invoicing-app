@@ -80,9 +80,18 @@
 - Added deterministic error handling for orphan assignment IDs and assignment policy violations.
 - Added unit, integration, and e2e coverage for users/roles foundations and assignment integrity.
 
+#### Slice 8 — Teams Membership Foundation + Assignment Scope Controls
+- Commit: `TBD`
+- Added minimal teams persistence with create/list/get support.
+- Added team membership persistence with deterministic duplicate handling.
+- Extended jobs with optional `teamId` and team-scoped assignment validation.
+- Enforced deterministic `ASSIGNED_USER_OUTSIDE_TEAM_SCOPE` validation when team-scoped assignments are invalid.
+- Preserved Slice 6/7 behavior for jobs when `teamId` is absent.
+- Added unit, integration, and e2e tests for team validation, memberships, and assignment scope controls.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 7 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 8 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

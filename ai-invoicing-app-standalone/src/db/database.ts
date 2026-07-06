@@ -16,6 +16,7 @@ import type {
   PaymentState,
   Role,
   ReminderState,
+  Team,
   User,
   UUID,
 } from '../types/entities.js';
@@ -27,6 +28,7 @@ import {
   type TimelineEventKey,
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
+import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 
 const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
@@ -68,6 +70,7 @@ interface DbJobRow {
   scheduled_end_at: string | null;
   assigned_user_id: string | null;
   assigned_user_name: string | null;
+  team_id: string | null;
   completed_date: string | null;
   created_at: string;
   updated_at: string;
@@ -87,6 +90,13 @@ interface DbUserRow {
   display_name: string;
   email: string | null;
   is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbTeamRow {
+  id: string;
+  name: string;
   created_at: string;
   updated_at: string;
 }
@@ -134,6 +144,7 @@ export interface CreateJobInput {
   scheduledEndAt?: string | undefined;
   assignedUserId?: string | undefined;
   assignedUserName?: string | undefined;
+  teamId?: string | undefined;
   completedDate?: string | undefined;
 }
 
@@ -146,6 +157,7 @@ export interface UpdateJobInput {
   scheduledEndAt?: string | null | undefined;
   assignedUserId?: string | null | undefined;
   assignedUserName?: string | null | undefined;
+  teamId?: string | null | undefined;
   completedDate?: string | null | undefined;
 }
 
@@ -170,6 +182,18 @@ export interface CreateUserInput {
   email?: string | undefined;
   isActive?: boolean | undefined;
   roleIds?: string[] | undefined;
+}
+
+export interface CreateTeamInput {
+  name: string;
+}
+
+export interface TeamMembershipRecord {
+  id: string;
+  teamId: string;
+  userId: string;
+  createdAt: string;
+  user: User;
 }
 
 export interface SearchResults {
@@ -206,6 +230,11 @@ export interface AppDatabase {
   createUser(input: CreateUserInput): User;
   getUserById(id: string): User | null;
   listUsers(): User[];
+  createTeam(input: CreateTeamInput): Team;
+  getTeamById(id: string): Team | null;
+  listTeams(): Team[];
+  addTeamMember(teamId: string, userId: string): TeamMembershipRecord;
+  listTeamMembers(teamId: string): TeamMembershipRecord[];
   createJob(input: CreateJobInput): Job;
   updateJob(id: string, input: UpdateJobInput): Job;
   getJobById(id: string): Job | null;
@@ -270,6 +299,7 @@ function mapJobRow(row: DbJobRow): Job {
     scheduledEndAt: row.scheduled_end_at,
     assignedUserId: row.assigned_user_id,
     assignedUserName: row.assigned_user_name,
+    teamId: row.team_id,
     completedDate: row.completed_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -315,6 +345,15 @@ function mapUserRow(row: DbUserRow, roleIds: string[]): User {
   };
 }
 
+function mapTeamRow(row: DbTeamRow): Team {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function createDatabase(dbPath: string): AppDatabase {
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -340,6 +379,9 @@ export function createDatabase(dbPath: string): AppDatabase {
   if (!jobColumnSet.has('assigned_user_name')) {
     db.exec('ALTER TABLE jobs ADD COLUMN assigned_user_name TEXT;');
   }
+  if (!jobColumnSet.has('team_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN team_id TEXT;');
+  }
   if (jobColumnSet.has('scheduled_date')) {
     db.exec(
       `UPDATE jobs
@@ -349,6 +391,7 @@ export function createDatabase(dbPath: string): AppDatabase {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);');
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -400,7 +443,10 @@ export function createDatabase(dbPath: string): AppDatabase {
       'document.linked_to_job',
       'job.scheduled',
       'job.assignment_updated',
-      'job.status_changed'
+      'job.status_changed',
+      'team.created',
+      'team.member_added',
+      'job.assignment_scope_set'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -488,7 +534,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       .prepare('SELECT id, display_name, is_active FROM users WHERE id = ?')
       .get(assignedUserId) as { id: string; display_name: string; is_active: number } | undefined;
     if (!user) {
-      throw new Error('ASSIGNED_USER_NOT_FOUND');
+      throw new Error('USER_NOT_FOUND');
     }
     if (user.is_active !== 1) {
       throw new Error('ASSIGNED_USER_INACTIVE');
@@ -513,6 +559,20 @@ export function createDatabase(dbPath: string): AppDatabase {
       userId: user.id,
       userName: user.display_name,
     };
+  }
+
+  function ensureTeamExistsOrThrow(teamId: string): void {
+    const team = db.prepare('SELECT id FROM teams WHERE id = ?').get(teamId);
+    if (!team) {
+      throw new Error('TEAM_NOT_FOUND');
+    }
+  }
+
+  function isUserInTeam(teamId: string, userId: string): boolean {
+    const row = db
+      .prepare('SELECT 1 FROM team_memberships WHERE team_id = ? AND user_id = ?')
+      .get(teamId, userId) as { 1: number } | undefined;
+    return Boolean(row);
   }
 
   return {
@@ -925,6 +985,117 @@ export function createDatabase(dbPath: string): AppDatabase {
       return rows.map((row) => mapUserRow(row, getRoleIdsForUser(row.id)));
     },
 
+    createTeam(input) {
+      const id = randomUUID();
+      const now = nowIso();
+      db.prepare(
+        `INSERT INTO teams (id, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(id, input.name.trim(), now, now);
+      const row = db.prepare('SELECT * FROM teams WHERE id = ?').get(id) as DbTeamRow;
+      timeline('team.created', id, {
+        name: row.name,
+      });
+      return mapTeamRow(row);
+    },
+
+    getTeamById(id) {
+      const row = db.prepare('SELECT * FROM teams WHERE id = ?').get(id) as DbTeamRow | undefined;
+      return row ? mapTeamRow(row) : null;
+    },
+
+    listTeams() {
+      const rows = db.prepare('SELECT * FROM teams ORDER BY name ASC').all() as DbTeamRow[];
+      return rows.map(mapTeamRow);
+    },
+
+    addTeamMember(teamId, userId) {
+      ensureTeamExistsOrThrow(teamId);
+      const user = this.getUserById(userId);
+      if (!user) {
+        throw new Error('USER_NOT_FOUND');
+      }
+
+      const id = randomUUID();
+      const now = nowIso();
+      try {
+        db.prepare(
+          `INSERT INTO team_memberships (id, team_id, user_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(id, teamId, userId, now);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('UNIQUE constraint failed: team_memberships.team_id, team_memberships.user_id')) {
+          throw new Error('TEAM_MEMBER_EXISTS');
+        }
+        throw error;
+      }
+
+      timeline('team.member_added', teamId, {
+        userId,
+      });
+
+      return {
+        id,
+        teamId,
+        userId,
+        createdAt: now,
+        user,
+      };
+    },
+
+    listTeamMembers(teamId) {
+      ensureTeamExistsOrThrow(teamId);
+      const rows = db
+        .prepare(
+          `SELECT
+             tm.id AS id,
+             tm.team_id AS team_id,
+             tm.user_id AS user_id,
+             tm.created_at AS created_at,
+             u.id AS user_id_ref,
+             u.display_name AS user_display_name,
+             u.email AS user_email,
+             u.is_active AS user_is_active,
+             u.created_at AS user_created_at,
+             u.updated_at AS user_updated_at
+           FROM team_memberships tm
+           INNER JOIN users u ON u.id = tm.user_id
+           WHERE tm.team_id = ?
+           ORDER BY tm.created_at ASC`,
+        )
+        .all(teamId) as Array<{
+        id: string;
+        team_id: string;
+        user_id: string;
+        created_at: string;
+        user_id_ref: string;
+        user_display_name: string;
+        user_email: string | null;
+        user_is_active: number;
+        user_created_at: string;
+        user_updated_at: string;
+      }>;
+
+      return rows.map((row) => ({
+        id: row.id,
+        teamId: row.team_id,
+        userId: row.user_id,
+        createdAt: row.created_at,
+        user: mapUserRow(
+          {
+            id: row.user_id_ref,
+            display_name: row.user_display_name,
+            email: row.user_email,
+            is_active: row.user_is_active,
+            created_at: row.user_created_at,
+            updated_at: row.user_updated_at,
+          },
+          getRoleIdsForUser(row.user_id_ref),
+        ),
+      }));
+    },
+
     createJob(input) {
       const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
       if (!customer) {
@@ -961,12 +1132,21 @@ export function createDatabase(dbPath: string): AppDatabase {
       const id = randomUUID();
       const jobNumber = formatInvoiceNumber(prefix, currentYear, sequence);
       const now = nowIso();
+      const nextTeamId = input.teamId ?? null;
+      if (nextTeamId) {
+        ensureTeamExistsOrThrow(nextTeamId);
+      }
       if (!input.assignedUserId && input.assignedUserName) {
         throw new Error('ASSIGNED_USER_REQUIRES_ID');
       }
       const assignment = input.assignedUserId
         ? loadAssignableUserOrThrow(input.assignedUserId, input.assignedUserName ?? null)
         : null;
+      assertAssignmentInTeamScopeOrThrow(
+        nextTeamId,
+        assignment?.userId ?? null,
+        nextTeamId && assignment ? isUserInTeam(nextTeamId, assignment.userId) : true,
+      );
       const completedDate =
         input.status === 'Completed' ? (input.completedDate ?? now) : (input.completedDate ?? null);
 
@@ -974,8 +1154,8 @@ export function createDatabase(dbPath: string): AppDatabase {
         `INSERT INTO jobs (
           id, job_number, title, description, customer_id, status, priority,
           scheduled_start_at, scheduled_end_at, assigned_user_id, assigned_user_name,
-          completed_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          team_id, completed_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         jobNumber,
@@ -988,6 +1168,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         input.scheduledEndAt ?? null,
         assignment?.userId ?? null,
         assignment?.userName ?? null,
+        nextTeamId,
         completedDate,
         now,
         now,
@@ -1008,6 +1189,11 @@ export function createDatabase(dbPath: string): AppDatabase {
         timeline('job.assignment_updated', id, {
           assignedUserId: assignment?.userId ?? null,
           assignedUserName: assignment?.userName ?? null,
+        });
+      }
+      if (nextTeamId) {
+        timeline('job.assignment_scope_set', id, {
+          teamId: nextTeamId,
         });
       }
       if (input.status === 'Completed') {
@@ -1032,6 +1218,10 @@ export function createDatabase(dbPath: string): AppDatabase {
           : (input.completedDate ?? null);
       const nextScheduledStartAt = input.scheduledStartAt ?? null;
       const nextScheduledEndAt = input.scheduledEndAt ?? null;
+      const nextTeamId = input.teamId === undefined ? existing.team_id : input.teamId;
+      if (nextTeamId) {
+        ensureTeamExistsOrThrow(nextTeamId);
+      }
       if (
         (input.assignedUserId === null || input.assignedUserId === undefined) &&
         input.assignedUserName
@@ -1051,6 +1241,11 @@ export function createDatabase(dbPath: string): AppDatabase {
         nextAssignedUserId = nextAssignment.userId;
         nextAssignedUserName = nextAssignment.userName;
       }
+      assertAssignmentInTeamScopeOrThrow(
+        nextTeamId,
+        nextAssignedUserId,
+        nextTeamId && nextAssignedUserId ? isUserInTeam(nextTeamId, nextAssignedUserId) : true,
+      );
       const statusChanged = existing.status !== input.status;
       const scheduleChanged =
         existing.scheduled_start_at !== nextScheduledStartAt ||
@@ -1058,10 +1253,11 @@ export function createDatabase(dbPath: string): AppDatabase {
       const assignmentChanged =
         existing.assigned_user_id !== nextAssignedUserId ||
         existing.assigned_user_name !== nextAssignedUserName;
+      const teamScopeChanged = existing.team_id !== nextTeamId;
 
       db.prepare(
         `UPDATE jobs
-         SET title = ?, description = ?, status = ?, priority = ?, scheduled_start_at = ?, scheduled_end_at = ?, assigned_user_id = ?, assigned_user_name = ?, completed_date = ?, updated_at = ?
+         SET title = ?, description = ?, status = ?, priority = ?, scheduled_start_at = ?, scheduled_end_at = ?, assigned_user_id = ?, assigned_user_name = ?, team_id = ?, completed_date = ?, updated_at = ?
          WHERE id = ?`,
       ).run(
         input.title,
@@ -1072,6 +1268,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         nextScheduledEndAt,
         nextAssignedUserId,
         nextAssignedUserName,
+        nextTeamId,
         completedDate,
         now,
         id,
@@ -1097,6 +1294,11 @@ export function createDatabase(dbPath: string): AppDatabase {
         timeline('job.assignment_updated', id, {
           assignedUserId: nextAssignedUserId,
           assignedUserName: nextAssignedUserName,
+        });
+      }
+      if (teamScopeChanged) {
+        timeline('job.assignment_scope_set', id, {
+          teamId: nextTeamId,
         });
       }
       if (existing.status !== 'Completed' && input.status === 'Completed') {

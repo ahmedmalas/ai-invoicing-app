@@ -60,6 +60,22 @@ CREATE TABLE IF NOT EXISTS user_role_links (
   FOREIGN KEY (role_id) REFERENCES roles(id)
 );
 
+CREATE TABLE IF NOT EXISTS teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (team_id) REFERENCES teams(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   document_type TEXT NOT NULL,
@@ -102,10 +118,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   scheduled_end_at TEXT,
   assigned_user_id TEXT,
   assigned_user_name TEXT,
+  team_id TEXT,
   completed_date TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (customer_id) REFERENCES customers(id)
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (team_id) REFERENCES teams(id)
 );
 
 CREATE TABLE IF NOT EXISTS job_document_links (
@@ -186,6 +204,11 @@ CREATE INDEX IF NOT EXISTS idx_user_role_links_user ON user_role_links(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_role_links_role ON user_role_links(role_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_role_links_user_role
 ON user_role_links(user_id, role_id);
+CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user
+ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
@@ -194,6 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_job ON job_document_links(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_document ON job_document_links(document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_job_document_link_pair
