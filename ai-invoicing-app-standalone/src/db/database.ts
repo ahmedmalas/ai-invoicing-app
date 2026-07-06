@@ -204,6 +204,32 @@ export function createDatabase(dbPath: string): AppDatabase {
   if (!timelineColumnSet.has('payload_schema')) {
     db.exec('ALTER TABLE timeline_events ADD COLUMN payload_schema TEXT;');
   }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_timeline_event_key ON timeline_events(event_key);');
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_timeline_events_taxonomy_insert
+    BEFORE INSERT ON timeline_events
+    WHEN NEW.event_key IS NULL
+    OR NEW.event_version IS NULL
+    OR NEW.category IS NULL
+    OR NEW.actor_type IS NULL
+    OR NEW.source IS NULL
+    OR NEW.payload_schema IS NULL
+    OR NEW.event_version <> 1
+    OR NEW.event_key NOT IN (
+      'document.created',
+      'document.updated',
+      'invoice.draft_created',
+      'invoice.draft_updated',
+      'invoice.finalised',
+      'customer.created',
+      'customer.updated',
+      'business_profile.updated',
+      'preferences.updated'
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
+    END;
+  `);
 
   const insertTimeline = db.prepare(
     `INSERT INTO timeline_events (
