@@ -453,6 +453,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_number_not_null
 ON supplier_bills(bill_number)
 WHERE bill_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_entity_order ON timeline_events(entity_type, entity_id, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);
 

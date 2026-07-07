@@ -495,6 +495,12 @@ export interface CustomerStatementReport {
   creditsOmittedReason: string;
 }
 
+interface TimelineQueryOptions {
+  eventKey?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface AppDatabase {
   close(): void;
   createCustomer(input: CreateCustomerInput): Customer;
@@ -567,7 +573,11 @@ export interface AppDatabase {
   linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
   listJobDocuments(jobId: string): JobDocumentLinkRecord[];
   getCustomerStatement(customerId: string, from?: string | null, to?: string | null): CustomerStatementReport;
-  getTimelineForEntity(entityType: string, entityId: string): Array<Record<string, unknown>>;
+  getTimelineForEntity(
+    entityType: string,
+    entityId: string,
+    options?: TimelineQueryOptions,
+  ): Array<Record<string, unknown>>;
   search(query: string): SearchResults;
 }
 
@@ -1747,6 +1757,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         `${creditNoteNumber} ${input.reason} ${invoice.invoice_number ?? input.linkedInvoiceId}`,
       );
       timeline('credit_note.created', id, {
+        creditNoteNumber,
         linkedInvoiceId: input.linkedInvoiceId,
         type: input.type,
         totalCredit,
@@ -3885,27 +3896,41 @@ export function createDatabase(dbPath: string): AppDatabase {
       };
     },
 
-    getTimelineForEntity(entityType, entityId) {
-      return db
-        .prepare(
-          `SELECT
-            id,
-            coalesce(event_key, event_type) AS eventKey,
-            coalesce(event_version, 1) AS eventVersion,
-            coalesce(category, entity_type) AS category,
-            entity_type AS entityType,
-            entity_id AS entityId,
-            coalesce(actor_type, 'system') AS actorType,
-            coalesce(source, 'api') AS source,
-            event_type AS eventType,
-            event_payload AS eventPayload,
-            coalesce(payload_schema, 'timeline.legacy.v1') AS payloadSchema,
-            created_at AS createdAt
-          FROM timeline_events
-           WHERE entity_type = ? AND entity_id = ?
-           ORDER BY created_at ASC`,
-        )
-        .all(entityType, entityId) as Array<Record<string, unknown>>;
+    getTimelineForEntity(entityType, entityId, options) {
+      const queryOptions = options ?? {};
+      const whereClauses = ['entity_type = ?', 'entity_id = ?'];
+      const params: Array<string | number> = [entityType, entityId];
+      if (queryOptions.eventKey) {
+        whereClauses.push('coalesce(event_key, event_type) = ?');
+        params.push(queryOptions.eventKey);
+      }
+
+      let sql = `SELECT
+        id,
+        coalesce(event_key, event_type) AS eventKey,
+        coalesce(event_version, 1) AS eventVersion,
+        coalesce(category, entity_type) AS category,
+        entity_type AS entityType,
+        entity_id AS entityId,
+        coalesce(actor_type, 'system') AS actorType,
+        coalesce(source, 'api') AS source,
+        event_type AS eventType,
+        event_payload AS eventPayload,
+        coalesce(payload_schema, 'timeline.legacy.v1') AS payloadSchema,
+        created_at AS createdAt
+      FROM timeline_events
+       WHERE ${whereClauses.join(' AND ')}
+       ORDER BY created_at ASC, id ASC`;
+      if (typeof queryOptions.limit === 'number') {
+        sql += ' LIMIT ?';
+        params.push(queryOptions.limit);
+      }
+      if (typeof queryOptions.offset === 'number') {
+        sql += ' OFFSET ?';
+        params.push(queryOptions.offset);
+      }
+
+      return db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
     },
 
     search(query) {

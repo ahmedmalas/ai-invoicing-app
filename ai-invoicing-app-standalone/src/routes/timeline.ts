@@ -10,8 +10,16 @@ export const timelineRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(request.params);
 
+    const query = z
+      .object({
+        eventKey: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      })
+      .parse(request.query);
+
     return {
-      events: app.db.getTimelineForEntity(params.entityType, params.entityId),
+      events: app.db.getTimelineForEntity(params.entityType, params.entityId, query),
     };
   });
 };
