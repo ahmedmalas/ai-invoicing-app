@@ -400,6 +400,22 @@ describe('supplier bill po-link guardrails e2e', () => {
       url: `/supplier-bills/${linkedBill2.id}/finalise`,
     });
     expect(finaliseLinkedBillRes.statusCode).toBe(200);
+    const linkedFinaliseTimelineRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/supplier_bill/${linkedBill2.id}`,
+    });
+    expect(linkedFinaliseTimelineRes.statusCode).toBe(200);
+    const linkedFinaliseTimeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(linkedFinaliseTimelineRes.json());
+    const linkedFinaliseEvent = linkedFinaliseTimeline.events.find((event) => event.eventKey === 'supplier_bill.finalised');
+    expect(linkedFinaliseEvent).toBeTruthy();
+    const linkedFinalisePayload = JSON.parse(linkedFinaliseEvent?.eventPayload ?? '{}') as {
+      linkageType?: string;
+      sourcePurchaseOrderId?: string | null;
+    };
+    expect(linkedFinalisePayload.linkageType).toBe('purchase_order_linked');
+    expect(linkedFinalisePayload.sourcePurchaseOrderId).toBe(poDraft.id);
 
     const editFinalisedLinkedBillRes = await app.inject({
       method: 'PUT',

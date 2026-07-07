@@ -123,6 +123,11 @@ describe('supplier bills e2e', () => {
     const finalisedBill = supplierBillSchema.parse(finaliseRes.json());
     expect(finalisedBill.status).toBe('Finalised');
     expect(finalisedBill.billNumber).toBeTruthy();
+    const finaliseAgainRes = await app.inject({
+      method: 'POST',
+      url: `/supplier-bills/${draftBill.id}/finalise`,
+    });
+    expect(finaliseAgainRes.statusCode).toBe(409);
 
     const immutableUpdateRes = await app.inject({
       method: 'PUT',
@@ -190,9 +195,15 @@ describe('supplier bills e2e', () => {
       url: `/timeline/supplier_bill/${draftBill.id}`,
     });
     expect(timelineRes.statusCode).toBe(200);
-    const timeline = z.object({ events: z.array(z.object({ eventKey: z.string() })) }).parse(timelineRes.json());
+    const timeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(timelineRes.json());
     expect(timeline.events.some((event) => event.eventKey === 'supplier_bill.created')).toBe(true);
     expect(timeline.events.some((event) => event.eventKey === 'supplier_bill.finalised')).toBe(true);
+    const finalisedEvent = timeline.events.find((event) => event.eventKey === 'supplier_bill.finalised');
+    expect(finalisedEvent).toBeTruthy();
+    const finalisedPayload = JSON.parse(finalisedEvent?.eventPayload ?? '{}') as { linkageType?: string };
+    expect(finalisedPayload.linkageType).toBe('standalone');
 
     const searchRes = await app.inject({
       method: 'GET',

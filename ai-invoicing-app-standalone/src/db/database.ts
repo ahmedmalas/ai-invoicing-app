@@ -2415,6 +2415,98 @@ export function createDatabase(dbPath: string): AppDatabase {
       if (bill.status !== 'Draft') {
         throw new Error('Supplier bill already finalised');
       }
+      if (!bill.lineItems || bill.lineItems.length === 0) {
+        throw new Error('SUPPLIER_BILL_FINALISE_EMPTY_LINE_ITEMS');
+      }
+
+      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(bill.supplierId);
+      if (!supplier) {
+        throw new Error('SUPPLIER_BILL_FINALISE_SUPPLIER_NOT_FOUND');
+      }
+
+      for (const lineItem of bill.lineItems) {
+        if (lineItem.quantity <= 0) {
+          throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_QUANTITY');
+        }
+        if (lineItem.unitPrice < 0) {
+          throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_UNIT_PRICE');
+        }
+      }
+
+      const reconciledTotals = calculateTotals(bill.lineItems).totals;
+      if (
+        Math.abs(reconciledTotals.subtotal - bill.totals.subtotal) > 1e-6 ||
+        Math.abs(reconciledTotals.gstTotal - bill.totals.gstTotal) > 1e-6 ||
+        Math.abs(reconciledTotals.total - bill.totals.total) > 1e-6
+      ) {
+        throw new Error('SUPPLIER_BILL_FINALISE_TOTALS_MISMATCH');
+      }
+
+      if (bill.sourcePurchaseOrderId) {
+        const sourcePurchaseOrder = this.getPurchaseOrderById(bill.sourcePurchaseOrderId);
+        if (!sourcePurchaseOrder) {
+          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_NOT_FOUND');
+        }
+        if (sourcePurchaseOrder.supplierId !== bill.supplierId) {
+          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_SUPPLIER_MISMATCH');
+        }
+
+        const sourcePurchaseOrderLineMap = new Map(
+          sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+        );
+        let projectedSupplierBillTotal = 0;
+        for (const lineItem of bill.lineItems) {
+          if (!lineItem.sourcePurchaseOrderLineItemId) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_REQUIRED');
+          }
+          const sourceLine = sourcePurchaseOrderLineMap.get(lineItem.sourcePurchaseOrderLineItemId);
+          if (!sourceLine) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_INVALID');
+          }
+
+          const otherBillsSummary = db
+            .prepare(
+              `SELECT
+                 coalesce(sum(li.quantity), 0) AS total_quantity,
+                 coalesce(sum(li.line_total), 0) AS total_amount
+               FROM supplier_bill_line_items li
+               INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+               WHERE b.source_purchase_order_id = ?
+                 AND b.id != ?
+                 AND li.source_purchase_order_line_item_id = ?`,
+            )
+            .get(bill.sourcePurchaseOrderId, id, lineItem.sourcePurchaseOrderLineItemId) as {
+            total_quantity: number;
+            total_amount: number;
+          };
+
+          const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+          if (lineItem.quantity > remainingLineQuantity + 1e-9) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
+          }
+
+          const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+          const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+          const lineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
+          if (lineAmount > remainingLineAmount + 1e-6) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+          }
+          projectedSupplierBillTotal += lineAmount;
+        }
+
+        const otherLinkedBillsTotal = db
+          .prepare(
+            `SELECT coalesce(sum(li.line_total), 0) AS total
+             FROM supplier_bill_line_items li
+             INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+             WHERE b.source_purchase_order_id = ?
+               AND b.id != ?`,
+          )
+          .get(bill.sourcePurchaseOrderId, id) as { total: number };
+        if (otherLinkedBillsTotal.total + projectedSupplierBillTotal > sourcePurchaseOrder.totals.total + 1e-6) {
+          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+        }
+      }
 
       const currentYear = new Date().getUTCFullYear();
       const sequenceRow = db.prepare('SELECT * FROM supplier_bill_sequences WHERE id = 1').get() as
@@ -2464,6 +2556,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('supplier_bill.finalised', id, {
         billNumber,
         total: finalised.totals.total,
+        linkageType: finalised.sourcePurchaseOrderId ? 'purchase_order_linked' : 'standalone',
+        sourcePurchaseOrderId: finalised.sourcePurchaseOrderId,
+        sourcePurchaseOrderNumber: finalised.sourcePurchaseOrderNumber,
       });
 
       return mapSupplierBillRow(db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow);
