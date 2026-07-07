@@ -241,9 +241,17 @@
 - Extended `supplier_bill.finalised` timeline metadata to distinguish `standalone` vs `purchase_order_linked` finalisations without introducing new taxonomy keys.
 - Added focused integration/e2e coverage for readiness failures (empty lines, totals mismatch, supplier mismatch, orphaned PO linkage, invalid PO line refs, over-billing), standalone and linked finalisation metadata, and unchanged HTML/PDF pipeline behavior.
 
+#### Slice 29 — Supplier Bill Finalisation Timeline & Regression Hardening
+- Commit: `a8f08203fa50f98f3166644ce8ef7fe99b5e70fc`
+- Executed as tests/docs-focused hardening; no production behavior changes were required.
+- Added regression assertions that failed finalisation readiness attempts do not emit `supplier_bill.finalised` timeline events.
+- Added regression assertions that finalise-again rejections do not create duplicate `supplier_bill.finalised` events for standalone and PO-linked bills.
+- Strengthened timeline payload verification for standalone and PO-linked finalisation metadata without adding taxonomy keys.
+- Reconfirmed finalised supplier bill immutability, PO billing calculated behavior, and unchanged HTML/PDF rendering pipeline through existing tests.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-28-supplier-bill-finalisation-readiness-19d3`
-- Status at logging: implementation baseline completed through Slice 28 and passing validation gates.
+- Branch: `cursor/slice-29-supplier-bill-finalisation-audit-hardening-19d3`
+- Status at logging: implementation baseline completed through Slice 29 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
