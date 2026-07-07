@@ -19,6 +19,10 @@ const supplierBillSchema = z.object({
   supplierId: z.string().uuid(),
   sourcePurchaseOrderId: z.string().uuid().nullable(),
   sourcePurchaseOrderNumber: z.string().nullable(),
+  dueDate: z.string().optional(),
+  supplierReference: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  currency: z.string().optional(),
   status: z.enum(['Draft', 'Finalised']),
   totals: z.object({ total: z.number() }),
   lineItems: z.array(supplierBillLineSchema).optional(),
@@ -92,6 +96,11 @@ describe('supplier bill po-link guardrails e2e', () => {
     expect(linkedBill1Res.statusCode).toBe(201);
     const linkedBill1 = supplierBillSchema.parse(linkedBill1Res.json());
     expect(linkedBill1.sourcePurchaseOrderId).toBe(poDraft.id);
+    const linkedBill1PdfBeforeAmendRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedBill1.id}/pdf`,
+    });
+    expect(linkedBill1PdfBeforeAmendRes.statusCode).toBe(200);
 
     const linkedBill1DetailsRes = await app.inject({
       method: 'GET',
@@ -157,7 +166,7 @@ describe('supplier bill po-link guardrails e2e', () => {
     expect(missingSourceLineRes.statusCode).toBe(409);
     expect(missingSourceLineRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_LINKED_LINE_SOURCE_REQUIRED' });
 
-    const wrongSourceLineRes = await app.inject({
+    const changeSourceLineReferenceRes = await app.inject({
       method: 'PUT',
       url: `/supplier-bills/${linkedBill1.id}`,
       payload: {
@@ -170,13 +179,38 @@ describe('supplier bill po-link guardrails e2e', () => {
             quantity: 1,
             unitPrice: 50,
             gstApplicable: true,
-            sourcePurchaseOrderLineItemId: '550e8400-e29b-41d4-a716-446655440088',
+            sourcePurchaseOrderLineItemId: poLineBId,
           },
         ],
       },
     });
-    expect(wrongSourceLineRes.statusCode).toBe(409);
-    expect(wrongSourceLineRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_SOURCE_PO_LINE_MISMATCH' });
+    expect(changeSourceLineReferenceRes.statusCode).toBe(409);
+    expect(changeSourceLineReferenceRes.json()).toMatchObject({
+      message: 'SUPPLIER_BILL_SOURCE_PO_LINE_REFERENCE_IMMUTABLE',
+    });
+
+    const mutateLinkedCurrencyRes = await app.inject({
+      method: 'PUT',
+      url: `/supplier-bills/${linkedBill1.id}`,
+      payload: {
+        billDate: '2026-08-01',
+        dueDate: '2026-08-10',
+        currency: 'USD',
+        lineItems: [
+          {
+            description: 'Line A',
+            quantity: 1,
+            unitPrice: 50,
+            gstApplicable: true,
+            sourcePurchaseOrderLineItemId: poLineAId,
+          },
+        ],
+      },
+    });
+    expect(mutateLinkedCurrencyRes.statusCode).toBe(409);
+    expect(mutateLinkedCurrencyRes.json()).toMatchObject({
+      message: 'SUPPLIER_BILL_LINKED_CURRENCY_IMMUTABLE',
+    });
 
     const linkedBill2Res = await app.inject({
       method: 'POST',
@@ -209,7 +243,7 @@ describe('supplier bill po-link guardrails e2e', () => {
       message: 'PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING',
     });
 
-    const validLinkedEditRes = await app.inject({
+    const overValueByEditRes = await app.inject({
       method: 'PUT',
       url: `/supplier-bills/${linkedBill1.id}`,
       payload: {
@@ -219,8 +253,61 @@ describe('supplier bill po-link guardrails e2e', () => {
         lineItems: [
           {
             description: 'Line A',
+            quantity: 1,
+            unitPrice: 90,
+            gstApplicable: true,
+            sourcePurchaseOrderLineItemId: poLineAId,
+          },
+        ],
+      },
+    });
+    expect(overValueByEditRes.statusCode).toBe(409);
+    expect(overValueByEditRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING',
+    });
+
+    const validPriceAndNotesAmendRes = await app.inject({
+      method: 'PUT',
+      url: `/supplier-bills/${linkedBill1.id}`,
+      payload: {
+        billDate: '2026-08-01',
+        dueDate: '2026-08-11',
+        supplierReference: 'PO-AMEND-1',
+        notes: 'Draft amendment note',
+        currency: 'AUD',
+        lineItems: [
+          {
+            description: 'Line A amended',
+            quantity: 1,
+            unitPrice: 45,
+            gstApplicable: true,
+            sourcePurchaseOrderLineItemId: poLineAId,
+          },
+        ],
+      },
+    });
+    expect(validPriceAndNotesAmendRes.statusCode).toBe(200);
+    const validPriceAndNotesAmend = supplierBillSchema.parse(validPriceAndNotesAmendRes.json());
+    expect(validPriceAndNotesAmend.notes).toBe('Draft amendment note');
+    expect(validPriceAndNotesAmend.dueDate).toBe('2026-08-11');
+    expect(validPriceAndNotesAmend.supplierReference).toBe('PO-AMEND-1');
+    expect(validPriceAndNotesAmend.lineItems?.[0]?.description).toBe('Line A amended');
+    expect(validPriceAndNotesAmend.lineItems?.[0]?.unitPrice).toBe(45);
+
+    const validLinkedEditRes = await app.inject({
+      method: 'PUT',
+      url: `/supplier-bills/${linkedBill1.id}`,
+      payload: {
+        billDate: '2026-08-01',
+        dueDate: '2026-08-10',
+        supplierReference: 'PO-AMEND-2',
+        notes: 'Draft final amendment note',
+        currency: 'AUD',
+        lineItems: [
+          {
+            description: 'Line A final amendment',
             quantity: 0.5,
-            unitPrice: 50,
+            unitPrice: 45,
             gstApplicable: true,
             sourcePurchaseOrderLineItemId: poLineAId,
           },
@@ -230,6 +317,8 @@ describe('supplier bill po-link guardrails e2e', () => {
     expect(validLinkedEditRes.statusCode).toBe(200);
     const validLinkedEdit = supplierBillSchema.parse(validLinkedEditRes.json());
     expect(validLinkedEdit.sourcePurchaseOrderId).toBe(poDraft.id);
+    expect(validLinkedEdit.notes).toBe('Draft final amendment note');
+    expect(validLinkedEdit.lineItems?.[0]?.sourcePurchaseOrderLineItemId).toBe(poLineAId);
 
     const poAfterDraftEditRes = await app.inject({
       method: 'GET',
@@ -238,7 +327,22 @@ describe('supplier bill po-link guardrails e2e', () => {
     expect(poAfterDraftEditRes.statusCode).toBe(200);
     const poAfterDraftEdit = purchaseOrderSchema.parse(poAfterDraftEditRes.json());
     expect(poAfterDraftEdit.billingStatus).toBe('partially_billed');
-    expect(poAfterDraftEdit.totalBilledAmount).toBeCloseTo(82.5, 6);
+    expect(poAfterDraftEdit.totalBilledAmount).toBeCloseTo(79.75, 6);
+
+    const linkedSupplierBillHtmlAfterAmendRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedBill1.id}/html`,
+    });
+    expect(linkedSupplierBillHtmlAfterAmendRes.statusCode).toBe(200);
+    expect(linkedSupplierBillHtmlAfterAmendRes.body).toContain('Line A final amendment');
+    expect(linkedSupplierBillHtmlAfterAmendRes.body).toContain('45.00');
+
+    const linkedSupplierBillPdfAfterAmendRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedBill1.id}/pdf`,
+    });
+    expect(linkedSupplierBillPdfAfterAmendRes.statusCode).toBe(200);
+    expect(linkedSupplierBillPdfAfterAmendRes.body).not.toEqual(linkedBill1PdfBeforeAmendRes.body);
 
     const linkedBill3Res = await app.inject({
       method: 'POST',
@@ -258,7 +362,7 @@ describe('supplier bill po-link guardrails e2e', () => {
           {
             description: 'Line A',
             quantity: 1.5,
-            unitPrice: 50,
+            unitPrice: 51.6666666667,
             gstApplicable: true,
             sourcePurchaseOrderLineItemId: poLineAId,
           },

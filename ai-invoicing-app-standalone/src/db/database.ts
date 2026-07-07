@@ -2223,6 +2223,31 @@ export function createDatabase(dbPath: string): AppDatabase {
         if (linkedPurchaseOrder.supplierId !== existing.supplier_id) {
           throw new Error('SUPPLIER_BILL_SOURCE_PO_SUPPLIER_MISMATCH');
         }
+        if (input.currency !== linkedPurchaseOrder.currency) {
+          throw new Error('SUPPLIER_BILL_LINKED_CURRENCY_IMMUTABLE');
+        }
+
+        const existingLinkedLineRows = db
+          .prepare(
+            `SELECT source_purchase_order_line_item_id
+             FROM supplier_bill_line_items
+             WHERE supplier_bill_id = ?`,
+          )
+          .all(id) as Array<{ source_purchase_order_line_item_id: string | null }>;
+        const existingLinkedSourceIds = existingLinkedLineRows
+          .map((row) => row.source_purchase_order_line_item_id)
+          .filter((value): value is string => value !== null)
+          .sort();
+        const updatedLinkedSourceIds = input.lineItems
+          .map((lineItem) => lineItem.sourcePurchaseOrderLineItemId)
+          .filter((value): value is string => typeof value === 'string')
+          .sort();
+        if (
+          existingLinkedSourceIds.length !== updatedLinkedSourceIds.length ||
+          existingLinkedSourceIds.some((value, index) => value !== updatedLinkedSourceIds[index])
+        ) {
+          throw new Error('SUPPLIER_BILL_SOURCE_PO_LINE_REFERENCE_IMMUTABLE');
+        }
 
         const purchaseOrderLineMap = new Map(
           linkedPurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
