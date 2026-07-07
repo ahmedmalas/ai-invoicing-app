@@ -80,6 +80,14 @@ async function seedLinkedDraftBill(dbPath: string): Promise<{
 }
 
 describe('supplier bill finalisation readiness integration', () => {
+  async function countFinalisedEvents(app: Awaited<ReturnType<typeof buildApp>>, billId: string): Promise<number> {
+    const timelineRes = await app.inject({ method: 'GET', url: `/timeline/supplier_bill/${billId}` });
+    const timeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string() })) })
+      .parse(timelineRes.json());
+    return timeline.events.filter((event) => event.eventKey === 'supplier_bill.finalised').length;
+  }
+
   it('rejects finalisation when supplier no longer exists', async () => {
     const { dir, dbPath } = createTempDbPath('sb-finalise-supplier');
     const { billId } = await seedLinkedDraftBill(dbPath);
@@ -93,9 +101,11 @@ describe('supplier bill finalisation readiness integration', () => {
     db.close();
 
     const app = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     const finaliseRes = await app.inject({ method: 'POST', url: `/supplier-bills/${billId}/finalise` });
     expect(finaliseRes.statusCode).toBe(404);
     expect(finaliseRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SUPPLIER_NOT_FOUND' });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     await app.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -108,9 +118,11 @@ describe('supplier bill finalisation readiness integration', () => {
     db.close();
 
     const app = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     const finaliseRes = await app.inject({ method: 'POST', url: `/supplier-bills/${billId}/finalise` });
     expect(finaliseRes.statusCode).toBe(409);
     expect(finaliseRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_EMPTY_LINE_ITEMS' });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     await app.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -123,9 +135,11 @@ describe('supplier bill finalisation readiness integration', () => {
     db.close();
 
     const app = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     const finaliseRes = await app.inject({ method: 'POST', url: `/supplier-bills/${billId}/finalise` });
     expect(finaliseRes.statusCode).toBe(409);
     expect(finaliseRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_TOTALS_MISMATCH' });
+    expect(await countFinalisedEvents(app, billId)).toBe(0);
     await app.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -143,9 +157,11 @@ describe('supplier bill finalisation readiness integration', () => {
     db.close();
 
     const app = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app, seed.billId)).toBe(0);
     const supplierMismatchRes = await app.inject({ method: 'POST', url: `/supplier-bills/${seed.billId}/finalise` });
     expect(supplierMismatchRes.statusCode).toBe(409);
     expect(supplierMismatchRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_SUPPLIER_MISMATCH' });
+    expect(await countFinalisedEvents(app, seed.billId)).toBe(0);
     await app.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -163,9 +179,11 @@ describe('supplier bill finalisation readiness integration', () => {
     db2.close();
 
     const app2 = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app2, seed.billId)).toBe(0);
     const orphanedPoRes = await app2.inject({ method: 'POST', url: `/supplier-bills/${seed.billId}/finalise` });
     expect(orphanedPoRes.statusCode).toBe(404);
     expect(orphanedPoRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_NOT_FOUND' });
+    expect(await countFinalisedEvents(app2, seed.billId)).toBe(0);
     await app2.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -184,11 +202,13 @@ describe('supplier bill finalisation readiness integration', () => {
     db.close();
 
     const app = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app, seed.billId)).toBe(0);
     const invalidLineRes = await app.inject({ method: 'POST', url: `/supplier-bills/${seed.billId}/finalise` });
     expect(invalidLineRes.statusCode).toBe(409);
     expect(invalidLineRes.json()).toMatchObject({
       message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_INVALID',
     });
+    expect(await countFinalisedEvents(app, seed.billId)).toBe(0);
     await app.close();
 
     const db2 = new Database(dbPath);
@@ -201,11 +221,13 @@ describe('supplier bill finalisation readiness integration', () => {
     db2.close();
 
     const app2 = await buildApp({ dbPath });
+    expect(await countFinalisedEvents(app2, seed.billId)).toBe(0);
     const overBillingRes = await app2.inject({ method: 'POST', url: `/supplier-bills/${seed.billId}/finalise` });
     expect(overBillingRes.statusCode).toBe(409);
     expect(overBillingRes.json()).toMatchObject({
       message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING',
     });
+    expect(await countFinalisedEvents(app2, seed.billId)).toBe(0);
     await app2.close();
     rmSync(dir, { recursive: true, force: true });
   });

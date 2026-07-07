@@ -200,6 +200,7 @@ describe('supplier bills e2e', () => {
       .parse(timelineRes.json());
     expect(timeline.events.some((event) => event.eventKey === 'supplier_bill.created')).toBe(true);
     expect(timeline.events.some((event) => event.eventKey === 'supplier_bill.finalised')).toBe(true);
+    expect(timeline.events.filter((event) => event.eventKey === 'supplier_bill.finalised')).toHaveLength(1);
     const finalisedEvent = timeline.events.find((event) => event.eventKey === 'supplier_bill.finalised');
     expect(finalisedEvent).toBeTruthy();
     const finalisedPayload = JSON.parse(finalisedEvent?.eventPayload ?? '{}') as { linkageType?: string };

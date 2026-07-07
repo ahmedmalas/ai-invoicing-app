@@ -416,6 +416,24 @@ describe('supplier bill po-link guardrails e2e', () => {
     };
     expect(linkedFinalisePayload.linkageType).toBe('purchase_order_linked');
     expect(linkedFinalisePayload.sourcePurchaseOrderId).toBe(poDraft.id);
+    expect(linkedFinaliseTimeline.events.filter((event) => event.eventKey === 'supplier_bill.finalised')).toHaveLength(1);
+
+    const finaliseLinkedBillAgainRes = await app.inject({
+      method: 'POST',
+      url: `/supplier-bills/${linkedBill2.id}/finalise`,
+    });
+    expect(finaliseLinkedBillAgainRes.statusCode).toBe(409);
+    const linkedFinaliseTimelineAfterRetryRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/supplier_bill/${linkedBill2.id}`,
+    });
+    expect(linkedFinaliseTimelineAfterRetryRes.statusCode).toBe(200);
+    const linkedFinaliseTimelineAfterRetry = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(linkedFinaliseTimelineAfterRetryRes.json());
+    expect(linkedFinaliseTimelineAfterRetry.events.filter((event) => event.eventKey === 'supplier_bill.finalised')).toHaveLength(
+      1,
+    );
 
     const editFinalisedLinkedBillRes = await app.inject({
       method: 'PUT',
