@@ -2026,9 +2026,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const [index, item] of calculatedItems.entries()) {
-        const sourcePurchaseOrderLineItemId = (
-          input.lineItems[index] as { sourcePurchaseOrderLineItemId?: string }
-        ).sourcePurchaseOrderLineItemId;
+        const sourcePurchaseOrderLineItemId = input.lineItems[index].sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,
@@ -2192,14 +2190,91 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     updateSupplierBillDraft(id, input) {
-      const existing = db.prepare('SELECT status FROM supplier_bills WHERE id = ?').get(id) as
-        | { status: SupplierBillStatus }
+      const existing = db
+        .prepare('SELECT status, supplier_id, source_purchase_order_id FROM supplier_bills WHERE id = ?')
+        .get(id) as
+        | {
+            status: SupplierBillStatus;
+            supplier_id: string;
+            source_purchase_order_id: string | null;
+          }
         | undefined;
       if (!existing) {
         throw new Error('Supplier bill not found');
       }
       if (existing.status !== 'Draft') {
         throw new Error('Only draft supplier bills can be edited');
+      }
+
+      const isPoLinked = Boolean(existing.source_purchase_order_id);
+      if (isPoLinked) {
+        const sourcePurchaseOrderId = existing.source_purchase_order_id;
+        if (!sourcePurchaseOrderId) {
+          throw new Error('SUPPLIER_BILL_SOURCE_PO_NOT_FOUND');
+        }
+        const linkedPurchaseOrder = this.getPurchaseOrderById(sourcePurchaseOrderId);
+        if (!linkedPurchaseOrder) {
+          throw new Error('SUPPLIER_BILL_SOURCE_PO_NOT_FOUND');
+        }
+        if (linkedPurchaseOrder.supplierId !== existing.supplier_id) {
+          throw new Error('SUPPLIER_BILL_SOURCE_PO_SUPPLIER_MISMATCH');
+        }
+
+        const purchaseOrderLineMap = new Map(
+          linkedPurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+        );
+        let projectedLinkedTotal = 0;
+        for (const lineItem of input.lineItems) {
+          if (!lineItem.sourcePurchaseOrderLineItemId) {
+            throw new Error('SUPPLIER_BILL_LINKED_LINE_SOURCE_REQUIRED');
+          }
+          const sourceLine = purchaseOrderLineMap.get(lineItem.sourcePurchaseOrderLineItemId);
+          if (!sourceLine) {
+            throw new Error('SUPPLIER_BILL_SOURCE_PO_LINE_MISMATCH');
+          }
+
+          const otherBillsSummary = db
+            .prepare(
+              `SELECT
+                 coalesce(sum(li.quantity), 0) AS total_quantity,
+                 coalesce(sum(li.line_total), 0) AS total_amount
+               FROM supplier_bill_line_items li
+               INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+               WHERE b.source_purchase_order_id = ?
+                 AND b.id != ?
+                 AND li.source_purchase_order_line_item_id = ?`,
+            )
+            .get(sourcePurchaseOrderId, id, lineItem.sourcePurchaseOrderLineItemId) as {
+            total_quantity: number;
+            total_amount: number;
+          };
+
+          const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+          if (lineItem.quantity > remainingLineQuantity + 1e-9) {
+            throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING');
+          }
+
+          const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+          const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+          const updatedLineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
+          if (updatedLineAmount > remainingLineAmount + 1e-6) {
+            throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
+          }
+          projectedLinkedTotal += updatedLineAmount;
+        }
+
+        const linkedPoSummaryExcludingBill = db
+          .prepare(
+            `SELECT coalesce(sum(li.line_total), 0) AS total
+             FROM supplier_bill_line_items li
+             INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+             WHERE b.source_purchase_order_id = ?
+               AND b.id != ?`,
+          )
+          .get(sourcePurchaseOrderId, id) as { total: number };
+        if (linkedPoSummaryExcludingBill.total + projectedLinkedTotal > linkedPurchaseOrder.totals.total + 1e-6) {
+          throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
+        }
       }
 
       const { totals, calculatedItems } = calculateTotals(input.lineItems);
@@ -2238,9 +2313,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const [index, item] of calculatedItems.entries()) {
-        const sourcePurchaseOrderLineItemId = (
-          input.lineItems[index] as { sourcePurchaseOrderLineItemId?: string }
-        ).sourcePurchaseOrderLineItemId;
+        const sourcePurchaseOrderLineItemId = input.lineItems[index].sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,
@@ -2288,6 +2361,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         .all(id) as DbSupplierBillLineItemRow[];
       const lineItems: SupplierBillLineItemInput[] = lineItemsRows.map((item) => ({
         id: item.id,
+        sourcePurchaseOrderLineItemId: item.source_purchase_order_line_item_id ?? undefined,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unit_price,

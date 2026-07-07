@@ -17,11 +17,13 @@ export const supplierSchema = z.object({
 });
 
 export const supplierBillLineItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  sourcePurchaseOrderLineItemId: z.string().uuid().optional(),
   description: z.string().min(1),
   quantity: z.number().positive(),
   unitPrice: z.number().nonnegative(),
   gstApplicable: z.boolean(),
-});
+}).strict();
 
 const supplierBillDraftBaseSchema = z.object({
   supplierId: z.string().uuid(),
@@ -31,7 +33,7 @@ const supplierBillDraftBaseSchema = z.object({
   currency: z.string().min(3).max(3),
   notes: z.string().optional(),
   lineItems: z.array(supplierBillLineItemSchema).min(1),
-});
+}).strict();
 
 export const createSupplierBillDraftSchema = supplierBillDraftBaseSchema;
 

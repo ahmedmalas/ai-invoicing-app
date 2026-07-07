@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSupplierBillDraftSchema } from '../../src/domain/supplier-bills/validation.js';
+import { createSupplierBillDraftSchema, updateSupplierBillDraftSchema } from '../../src/domain/supplier-bills/validation.js';
 
 describe('supplier bill validation', () => {
   it('accepts valid supplier bill draft payload', () => {
@@ -22,6 +22,18 @@ describe('supplier bill validation', () => {
         dueDate: '2026-07-14',
         currency: 'AUD',
         lineItems: [],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects immutable linkage fields in update payload', () => {
+    expect(() =>
+      updateSupplierBillDraftSchema.parse({
+        billDate: '2026-07-07',
+        dueDate: '2026-07-14',
+        currency: 'AUD',
+        sourcePurchaseOrderId: '550e8400-e29b-41d4-a716-446655440099',
+        lineItems: [{ description: 'Material', quantity: 1, unitPrice: 10, gstApplicable: true }],
       }),
     ).toThrow();
   });
