@@ -13,6 +13,7 @@ import { userRoutes } from './routes/users.js';
 import { preferenceRoutes } from './routes/preferences.js';
 import { searchRoutes } from './routes/search.js';
 import { timelineRoutes } from './routes/timeline.js';
+import { statementRoutes } from './routes/statements.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -98,6 +99,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(userRoutes);
   await app.register(searchRoutes);
   await app.register(timelineRoutes);
+  await app.register(statementRoutes);
 
   return app;
 }

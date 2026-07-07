@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 
 import type { BrandingProfile, Customer, InvoiceDraft, LineItemInput } from '../types/entities.js';
+import type { CustomerStatementReport } from '../db/database.js';
 
 export function generateInvoicePdfBuffer(input: {
   invoice: InvoiceDraft;
@@ -97,6 +98,72 @@ export function generateInvoicePdfBuffer(input: {
       doc.moveDown(1.4);
       doc.fillColor('#111827').fontSize(11).text('Notes');
       doc.fontSize(10).fillColor('#4b5563').text(input.invoice.notes, { width: 500 });
+    }
+
+    doc.end();
+  });
+}
+
+export function generateCustomerStatementPdfBuffer(input: {
+  statement: CustomerStatementReport;
+  businessProfile: BrandingProfile | null;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: 'A4' });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', (err) => reject(err));
+
+    const profile = input.businessProfile;
+    const brandPrimary = profile?.primaryColor ?? '#0f172a';
+    const statement = input.statement;
+
+    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    doc.moveDown(0.2);
+    doc.fillColor('#111827').fontSize(11).text('Customer Statement');
+    doc.text(`Customer: ${statement.customer.displayName}`);
+    doc.text(`Generated: ${statement.generatedAt}`);
+    doc.text(`Period: ${statement.period.from ?? 'Beginning'} to ${statement.period.to ?? 'Now'}`);
+
+    doc.moveDown(1);
+    doc.fillColor('#111827').fontSize(12).text('Summary');
+    doc.fontSize(11);
+    doc.text(`Opening Balance: ${statement.openingBalance.toFixed(2)}`);
+    doc.text(`Period Activity: ${statement.periodTotal.toFixed(2)}`);
+    doc.text(`Closing Balance: ${statement.closingBalance.toFixed(2)}`);
+    doc.moveDown(0.5);
+    doc
+      .fontSize(10)
+      .fillColor('#4b5563')
+      .text('Credits: omitted (not supported by current invoice architecture).');
+
+    doc.moveDown(1);
+    doc.fillColor('#111827').fontSize(12).text('Invoices');
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#6b7280').text('Invoice #', 50, doc.y, { width: 110 });
+    doc.text('Issue', 165, doc.y - 12, { width: 80 });
+    doc.text('Due', 250, doc.y - 12, { width: 80 });
+    doc.text('Title', 335, doc.y - 12, { width: 130 });
+    doc.text('Total', 470, doc.y - 12, { width: 78, align: 'right' });
+
+    doc.moveDown(0.4);
+    doc.strokeColor('#d1d5db').lineWidth(1).moveTo(48, doc.y).lineTo(548, doc.y).stroke();
+
+    if (statement.entries.length === 0) {
+      doc.moveDown(0.8);
+      doc.fillColor('#6b7280').text('No finalised invoices in selected period.');
+    } else {
+      for (const entry of statement.entries) {
+        doc.moveDown(0.6);
+        const y = doc.y;
+        doc.fillColor('#111827').text(entry.invoiceNumber, 50, y, { width: 110 });
+        doc.text(entry.issueDate, 165, y, { width: 80 });
+        doc.text(entry.dueDate, 250, y, { width: 80 });
+        doc.text(entry.title, 335, y, { width: 130 });
+        doc.text(entry.total.toFixed(2), 470, y, { width: 78, align: 'right' });
+      }
     }
 
     doc.end();

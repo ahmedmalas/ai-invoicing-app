@@ -214,6 +214,30 @@ export interface JobDocumentLinkRecord {
   document: DocumentRecord;
 }
 
+export interface CustomerStatementEntry {
+  invoiceId: string;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string;
+  title: string;
+  total: number;
+}
+
+export interface CustomerStatementReport {
+  customer: Customer;
+  generatedAt: string;
+  period: {
+    from: string | null;
+    to: string | null;
+  };
+  openingBalance: number;
+  periodTotal: number;
+  closingBalance: number;
+  entries: CustomerStatementEntry[];
+  creditsSupported: false;
+  creditsOmittedReason: string;
+}
+
 export interface AppDatabase {
   close(): void;
   createCustomer(input: CreateCustomerInput): Customer;
@@ -257,6 +281,7 @@ export interface AppDatabase {
   listJobs(): Job[];
   linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
   listJobDocuments(jobId: string): JobDocumentLinkRecord[];
+  getCustomerStatement(customerId: string, from?: string | null, to?: string | null): CustomerStatementReport;
   getTimelineForEntity(entityType: string, entityId: string): Array<Record<string, unknown>>;
   search(query: string): SearchResults;
 }
@@ -1696,6 +1721,60 @@ export function createDatabase(dbPath: string): AppDatabase {
           updatedAt: row.document_updated_at,
         },
       }));
+    },
+
+    getCustomerStatement(customerId, from = null, to = null) {
+      const customer = this.getCustomerById(customerId);
+      if (!customer) {
+        throw new Error('Customer not found');
+      }
+
+      const openingRow = db
+        .prepare(
+          `SELECT coalesce(sum(total), 0) AS amount
+           FROM invoices
+           WHERE customer_id = ?
+             AND status = 'Finalised'
+             AND (? IS NOT NULL AND issue_date < ?)`,
+        )
+        .get(customerId, from, from) as { amount: number };
+      const openingBalance = from ? openingRow.amount : 0;
+
+      const entries = db
+        .prepare(
+          `SELECT
+             id AS invoiceId,
+             coalesce(invoice_number, id) AS invoiceNumber,
+             issue_date AS issueDate,
+             due_date AS dueDate,
+             title,
+             total
+           FROM invoices
+           WHERE customer_id = ?
+             AND status = 'Finalised'
+             AND (? IS NULL OR issue_date >= ?)
+             AND (? IS NULL OR issue_date <= ?)
+           ORDER BY issue_date ASC, created_at ASC`,
+        )
+        .all(customerId, from, from, to, to) as CustomerStatementEntry[];
+
+      const periodTotal = entries.reduce((sum, entry) => sum + entry.total, 0);
+      const closingBalance = openingBalance + periodTotal;
+
+      return {
+        customer,
+        generatedAt: nowIso(),
+        period: {
+          from,
+          to,
+        },
+        openingBalance,
+        periodTotal,
+        closingBalance,
+        entries,
+        creditsSupported: false,
+        creditsOmittedReason: 'Credits are not supported in the current invoice architecture.',
+      };
     },
 
     getTimelineForEntity(entityType, entityId) {
