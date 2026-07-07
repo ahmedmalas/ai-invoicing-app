@@ -283,9 +283,20 @@
 - Added end-to-end coverage proving deterministic ordering, deterministic pagination/filter behavior, no duplicate search results, case-insensitive/partial matching, cross-document navigation integrity, and concurrent creation search consistency.
 - Preserved existing timeline taxonomy and document lifecycle models; no taxonomy changes were introduced.
 
+#### Slice 34 — Global Reporting Read Model Integrity
+- Commit: `6ae9f56d029218ea2b65cd3232eac955ca39f4d5`
+- Added a shared reporting read-model endpoint (`GET /reports/read-model`) that derives AR/AP metrics from existing document read models only.
+- Added deterministic report query controls (`from`, `to`, `limit`, `offset`) with stable ordering and pagination over report rows.
+- Added deterministic AR derived reconciliation (`totalInvoiced`, `totalCredited`, `totalPaid`, `outstanding`) and invoice-level derived breakdowns.
+- Added deterministic AP derived reconciliation (`totalOrdered`, `totalBilled`, `totalPaid`, `remainingOrderedValue`, `supplierBillOutstanding`) with PO and supplier-bill row breakdowns.
+- Added derived customer-statement summary rows (`openingBalance`, `activity`, `closingBalance`) computed from existing invoices, credit notes, and customer payments without persistence.
+- Added deterministic snapshot timestamp derivation from source document update timestamps so repeated reads over unchanged data are identical.
+- Added integration coverage proving AR/AP reconciliation, deterministic pagination/order, immutable document reportability, no report-side mutations, and concurrent deterministic reporting reads.
+- Preserved existing lifecycle models, timeline taxonomy, and rendering pipeline behavior; no taxonomy keys or materialized reporting tables were introduced.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-33-global-search-integrity-cross-document-references-19d3`
-- Status at logging: implementation baseline completed through Slice 33 and passing validation gates.
+- Branch: `cursor/slice-34-global-reporting-read-model-integrity-19d3`
+- Status at logging: implementation baseline completed through Slice 34 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
