@@ -274,9 +274,18 @@
 - Added integration coverage proving ordering determinism, pagination/filter stability, failed-operation no-event behavior, duplicate-operation no-duplicate-event behavior, and stable concurrent event counts.
 - Preserved existing timeline taxonomy keys (no new taxonomy events introduced), lifecycle models, and rendering pipelines.
 
+#### Slice 33 — Global Search Integrity & Cross-Document References
+- Commit: `c732ddfcc688510f4ddce885829e8910f70971ef`
+- Hardened global search to consistently include customers, suppliers, invoices, credit notes, customer payments, purchase orders, supplier bills, supplier payments, documents, and jobs through the existing search infrastructure.
+- Added deterministic ordering and stable pagination controls to search queries (`limit`, `offset`) and deterministic filtering controls (`entityTypes`) without introducing a second search engine.
+- Added cross-document reference exposure in search results (`invoice.creditNoteIds`, `invoice.customerPaymentIds`, `purchaseOrder.supplierBillIds`) while preserving existing linked fields on credit notes, payments, supplier bills, and supplier payments.
+- Added deterministic number-search support across document-number-bearing entities and preserved immutable-number discoverability after rejected updates.
+- Added end-to-end coverage proving deterministic ordering, deterministic pagination/filter behavior, no duplicate search results, case-insensitive/partial matching, cross-document navigation integrity, and concurrent creation search consistency.
+- Preserved existing timeline taxonomy and document lifecycle models; no taxonomy changes were introduced.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-32-global-timeline-integrity-ordering-19d3`
-- Status at logging: implementation baseline completed through Slice 32 and passing validation gates.
+- Branch: `cursor/slice-33-global-search-integrity-cross-document-references-19d3`
+- Status at logging: implementation baseline completed through Slice 33 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
