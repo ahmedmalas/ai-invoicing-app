@@ -2988,6 +2988,68 @@ export function createDatabase(dbPath: string): AppDatabase {
           throw new Error('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN');
         }
 
+        if (bill.source_purchase_order_id) {
+          const sourcePurchaseOrder = this.getPurchaseOrderById(bill.source_purchase_order_id);
+          if (!sourcePurchaseOrder) {
+            throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_NOT_FOUND');
+          }
+          if (sourcePurchaseOrder.supplierId !== bill.supplier_id) {
+            throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_SUPPLIER_MISMATCH');
+          }
+
+          const sourcePurchaseOrderLineMap = new Map(
+            sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+          );
+          const billLineRows = db
+            .prepare(
+              `SELECT source_purchase_order_line_item_id, quantity, line_total
+               FROM supplier_bill_line_items
+               WHERE supplier_bill_id = ?`,
+            )
+            .all(allocation.supplierBillId) as Array<{
+            source_purchase_order_line_item_id: string | null;
+            quantity: number;
+            line_total: number;
+          }>;
+
+          for (const billLine of billLineRows) {
+            if (!billLine.source_purchase_order_line_item_id) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_REQUIRED');
+            }
+            const sourceLine = sourcePurchaseOrderLineMap.get(billLine.source_purchase_order_line_item_id);
+            if (!sourceLine) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_INVALID');
+            }
+
+            const otherBillsSummary = db
+              .prepare(
+                `SELECT
+                   coalesce(sum(li.quantity), 0) AS total_quantity,
+                   coalesce(sum(li.line_total), 0) AS total_amount
+                 FROM supplier_bill_line_items li
+                 INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+                 WHERE b.source_purchase_order_id = ?
+                   AND b.id != ?
+                   AND li.source_purchase_order_line_item_id = ?`,
+              )
+              .get(bill.source_purchase_order_id, allocation.supplierBillId, billLine.source_purchase_order_line_item_id) as {
+              total_quantity: number;
+              total_amount: number;
+            };
+
+            const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+            if (billLine.quantity > remainingLineQuantity + 1e-9) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
+            }
+
+            const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+            const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+            if (billLine.line_total > remainingLineAmount + 1e-6) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+            }
+          }
+        }
+
         const existingAllocated = db
           .prepare(
             `SELECT coalesce(sum(spa.amount), 0) AS total

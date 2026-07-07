@@ -21,6 +21,14 @@ const supplierPaymentSchema = z.object({
   ),
 });
 
+const purchaseOrderSchema = z.object({
+  id: z.string().uuid(),
+  billingStatus: z.enum(['unbilled', 'partially_billed', 'fully_billed']),
+  totalBilledAmount: z.number(),
+  remainingUnbilledAmount: z.number(),
+  totals: z.object({ total: z.number() }),
+});
+
 describe('supplier payments e2e', () => {
   it('supports supplier payment allocations without mutating supplier bill totals', async () => {
     const app = await buildApp({ dbPath: ':memory:' });
@@ -142,6 +150,48 @@ describe('supplier payments e2e', () => {
       })
       .parse(billBFinaliseRes.json());
 
+    const poDraftRes = await app.inject({
+      method: 'POST',
+      url: '/purchase-orders',
+      payload: {
+        supplierId: supplierA.id,
+        issueDate: '2026-07-09',
+        expectedDeliveryDate: '2026-07-20',
+        currency: 'AUD',
+        lineItems: [{ description: 'PO-linked payable line', quantity: 1, unitPrice: 80, gstApplicable: true }],
+      },
+    });
+    expect(poDraftRes.statusCode).toBe(201);
+    const poDraft = z.object({ id: z.string().uuid() }).parse(poDraftRes.json());
+    const poApproveRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${poDraft.id}/approve`,
+    });
+    expect(poApproveRes.statusCode).toBe(200);
+    const createLinkedBillRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${poDraft.id}/create-supplier-bill`,
+    });
+    expect(createLinkedBillRes.statusCode).toBe(201);
+    const linkedSupplierBillDraft = z.object({ id: z.string().uuid() }).parse(createLinkedBillRes.json());
+    const linkedSupplierBillFinaliseRes = await app.inject({
+      method: 'POST',
+      url: `/supplier-bills/${linkedSupplierBillDraft.id}/finalise`,
+    });
+    expect(linkedSupplierBillFinaliseRes.statusCode).toBe(200);
+    const linkedSupplierBill = z
+      .object({
+        id: z.string().uuid(),
+        totals: z.object({ total: z.number() }),
+      })
+      .parse(linkedSupplierBillFinaliseRes.json());
+    const poBeforeLinkedPaymentRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${poDraft.id}`,
+    });
+    expect(poBeforeLinkedPaymentRes.statusCode).toBe(200);
+    const poBeforeLinkedPayment = purchaseOrderSchema.parse(poBeforeLinkedPaymentRes.json());
+
     const billBeforePaymentsRes = await app.inject({
       method: 'GET',
       url: `/supplier-bills/${billA1.id}`,
@@ -167,6 +217,29 @@ describe('supplier payments e2e', () => {
       },
     });
     expect(draftBillAllocationRes.statusCode).toBe(409);
+    const paymentsAfterDraftFailureRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-payments?supplierId=${supplierA.id}`,
+    });
+    expect(paymentsAfterDraftFailureRes.statusCode).toBe(200);
+    const paymentsAfterDraftFailure = z.object({ payments: z.array(supplierPaymentSchema) }).parse(
+      paymentsAfterDraftFailureRes.json(),
+    );
+    expect(paymentsAfterDraftFailure.payments).toHaveLength(0);
+
+    const missingBillAllocationRes = await app.inject({
+      method: 'POST',
+      url: '/supplier-payments',
+      payload: {
+        supplierId: supplierA.id,
+        paymentDate: '2026-07-10',
+        paymentMethod: 'Bank Transfer',
+        reference: 'SPAY-MISSING',
+        amount: 10,
+        allocations: [{ supplierBillId: '550e8400-e29b-41d4-a716-446655440099', amount: 10 }],
+      },
+    });
+    expect(missingBillAllocationRes.statusCode).toBe(404);
 
     const wrongSupplierAllocationRes = await app.inject({
       method: 'POST',
@@ -270,6 +343,55 @@ describe('supplier payments e2e', () => {
     expect(billAfterPayments.totals.total).toBe(billBeforePayments.totals.total);
     expect(billAfterPayments.paymentState).toBe('Paid');
 
+    const linkedBillBeforePaymentRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedSupplierBill.id}`,
+    });
+    expect(linkedBillBeforePaymentRes.statusCode).toBe(200);
+    const linkedBillBeforePayment = z
+      .object({
+        id: z.string().uuid(),
+        totals: z.object({ total: z.number() }),
+      })
+      .parse(linkedBillBeforePaymentRes.json());
+
+    const linkedBillPaymentRes = await app.inject({
+      method: 'POST',
+      url: '/supplier-payments',
+      payload: {
+        supplierId: supplierA.id,
+        paymentDate: '2026-07-12',
+        paymentMethod: 'Bank Transfer',
+        reference: 'SPAY-PO-LINKED',
+        amount: linkedSupplierBill.totals.total,
+        allocations: [{ supplierBillId: linkedSupplierBill.id, amount: linkedSupplierBill.totals.total }],
+      },
+    });
+    expect(linkedBillPaymentRes.statusCode).toBe(201);
+
+    const poAfterLinkedPaymentRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${poDraft.id}`,
+    });
+    expect(poAfterLinkedPaymentRes.statusCode).toBe(200);
+    const poAfterLinkedPayment = purchaseOrderSchema.parse(poAfterLinkedPaymentRes.json());
+    expect(poAfterLinkedPayment.billingStatus).toBe(poBeforeLinkedPayment.billingStatus);
+    expect(poAfterLinkedPayment.totalBilledAmount).toBe(poBeforeLinkedPayment.totalBilledAmount);
+    expect(poAfterLinkedPayment.remainingUnbilledAmount).toBe(poBeforeLinkedPayment.remainingUnbilledAmount);
+
+    const linkedBillAfterPaymentRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedSupplierBill.id}`,
+    });
+    expect(linkedBillAfterPaymentRes.statusCode).toBe(200);
+    const linkedBillAfterPayment = z
+      .object({
+        id: z.string().uuid(),
+        totals: z.object({ total: z.number() }),
+      })
+      .parse(linkedBillAfterPaymentRes.json());
+    expect(linkedBillAfterPayment.totals.total).toBe(linkedBillBeforePayment.totals.total);
+
     const getPaymentRes = await app.inject({
       method: 'GET',
       url: `/supplier-payments/${partialPayment.id}`,
@@ -323,9 +445,41 @@ describe('supplier payments e2e', () => {
       url: `/timeline/supplier_payment/${partialPayment.id}`,
     });
     expect(timelineRes.statusCode).toBe(200);
-    const timeline = z.object({ events: z.array(z.object({ eventKey: z.string() })) }).parse(timelineRes.json());
+    const timeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(timelineRes.json());
     expect(timeline.events.some((event) => event.eventKey === 'supplier_payment.created')).toBe(true);
     expect(timeline.events.some((event) => event.eventKey === 'supplier_payment.allocated')).toBe(true);
+    expect(timeline.events.filter((event) => event.eventKey === 'supplier_payment.created')).toHaveLength(1);
+    expect(timeline.events.filter((event) => event.eventKey === 'supplier_payment.allocated')).toHaveLength(1);
+
+    const duplicateInvalidAllocationRes = await app.inject({
+      method: 'POST',
+      url: '/supplier-payments',
+      payload: {
+        supplierId: supplierA.id,
+        paymentDate: '2026-07-12',
+        paymentMethod: 'Cash',
+        reference: 'SPAY-DUP-INVALID',
+        amount: 10,
+        allocations: [{ supplierBillId: billA1.id, amount: 10 }],
+      },
+    });
+    expect(duplicateInvalidAllocationRes.statusCode).toBe(409);
+    const timelineAfterDuplicateAttemptRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/supplier_payment/${partialPayment.id}`,
+    });
+    expect(timelineAfterDuplicateAttemptRes.statusCode).toBe(200);
+    const timelineAfterDuplicateAttempt = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(timelineAfterDuplicateAttemptRes.json());
+    expect(timelineAfterDuplicateAttempt.events.filter((event) => event.eventKey === 'supplier_payment.created')).toHaveLength(
+      1,
+    );
+    expect(
+      timelineAfterDuplicateAttempt.events.filter((event) => event.eventKey === 'supplier_payment.allocated'),
+    ).toHaveLength(1);
 
     const searchRes = await app.inject({
       method: 'GET',
