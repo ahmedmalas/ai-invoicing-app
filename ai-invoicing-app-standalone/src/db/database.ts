@@ -451,7 +451,7 @@ export interface CreateSupplierBillFromPurchaseOrderInput {
   lineItems?: Array<{
     purchaseOrderLineItemId: string;
     quantity: number;
-  }>;
+  }> | undefined;
 }
 
 export interface JobDocumentLinkRecord {
@@ -865,11 +865,7 @@ export function createDatabase(dbPath: string): AppDatabase {
   if (!supplierBillColumnSet.has('source_purchase_order_id')) {
     db.exec('ALTER TABLE supplier_bills ADD COLUMN source_purchase_order_id TEXT;');
   }
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_source_purchase_order_not_null
-     ON supplier_bills(source_purchase_order_id)
-     WHERE source_purchase_order_id IS NOT NULL;`,
-  );
+  db.exec('DROP INDEX IF EXISTS uq_supplier_bills_source_purchase_order_not_null;');
   const supplierBillLineItemColumns = db
     .prepare("SELECT name FROM pragma_table_info('supplier_bill_line_items')")
     .all() as Array<{ name: string }>;
@@ -1099,7 +1095,7 @@ export function createDatabase(dbPath: string): AppDatabase {
     };
   }
 
-  function withPurchaseOrderBillingSummary(purchaseOrder: PurchaseOrder): PurchaseOrder {
+  function withPurchaseOrderBillingSummary<T extends PurchaseOrder>(purchaseOrder: T): T {
     const summary = getPurchaseOrderBillingSummary(purchaseOrder.id, purchaseOrder.totals.total);
     return {
       ...purchaseOrder,

@@ -400,9 +400,6 @@ CREATE INDEX IF NOT EXISTS idx_supplier_bills_due_date ON supplier_bills(due_dat
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null
 ON supplier_bills(supplier_id, supplier_reference)
 WHERE supplier_reference IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_source_purchase_order_not_null
-ON supplier_bills(source_purchase_order_id)
-WHERE source_purchase_order_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line
 ON supplier_bill_line_items(source_purchase_order_line_item_id);

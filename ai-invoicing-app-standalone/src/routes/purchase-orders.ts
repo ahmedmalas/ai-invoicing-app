@@ -41,7 +41,11 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
   app.post('/purchase-orders/:purchaseOrderId/create-supplier-bill', async (request, reply) => {
     const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
     const body = createSupplierBillFromPurchaseOrderSchema.parse(request.body ?? {});
-    const supplierBill = app.db.createSupplierBillDraftFromPurchaseOrder(params.purchaseOrderId, body);
+    const conversionInput: { lineItems?: Array<{ purchaseOrderLineItemId: string; quantity: number }> } = {};
+    if (body.lineItems) {
+      conversionInput.lineItems = body.lineItems;
+    }
+    const supplierBill = app.db.createSupplierBillDraftFromPurchaseOrder(params.purchaseOrderId, conversionInput);
     return reply.code(201).send(supplierBill);
   });
 
@@ -90,7 +94,12 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
     const linkedSupplierBills = app.db.listSupplierBills({ sourcePurchaseOrderId: purchaseOrder.id });
-    const html = renderPurchaseOrderHtml({ purchaseOrder, supplier, linkedSupplierBills });
+    const linkedBillSummary = linkedSupplierBills.map((bill) => ({
+      billNumber: bill.billNumber,
+      status: bill.status,
+      total: bill.totals.total,
+    }));
+    const html = renderPurchaseOrderHtml({ purchaseOrder, supplier, linkedSupplierBills: linkedBillSummary });
     return reply.code(200).header('Content-Type', 'text/html; charset=utf-8').send(html);
   });
 
@@ -106,12 +115,17 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     }
     const businessProfile = app.db.getBusinessProfile();
     const linkedSupplierBills = app.db.listSupplierBills({ sourcePurchaseOrderId: purchaseOrder.id });
+    const linkedBillSummary = linkedSupplierBills.map((bill) => ({
+      billNumber: bill.billNumber,
+      status: bill.status,
+      total: bill.totals.total,
+    }));
     const pdfBuffer = await generatePurchaseOrderPdfBuffer({
       purchaseOrder,
       lineItems: purchaseOrder.lineItems,
       supplier,
       businessProfile,
-      linkedSupplierBills,
+      linkedSupplierBills: linkedBillSummary,
     });
     return reply
       .code(200)

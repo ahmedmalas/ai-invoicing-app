@@ -376,8 +376,16 @@ describe('purchase orders e2e', () => {
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.approved')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.partially_billed')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.fully_billed')).toBe(true);
+    const supplierBillTimelineRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/supplier_bill/${createdBillFromPo.id}`,
+    });
+    expect(supplierBillTimelineRes.statusCode).toBe(200);
+    const supplierBillTimeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string() })) })
+      .parse(supplierBillTimelineRes.json());
     expect(
-      approvedTimeline.events.some((event) => event.eventKey === 'supplier_bill.created_from_purchase_order'),
+      supplierBillTimeline.events.some((event) => event.eventKey === 'supplier_bill.created_from_purchase_order'),
     ).toBe(true);
 
     const cancelledTimelineRes = await app.inject({
