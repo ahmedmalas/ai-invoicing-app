@@ -2,6 +2,7 @@ export type UUID = string;
 
 export type DocumentType =
   | 'invoice'
+  | 'supplier_bill'
   | 'quote'
   | 'receipt'
   | 'purchase_order'
@@ -176,6 +177,42 @@ export interface CustomerPayment {
   amount: number;
   notes: string | null;
   allocations: PaymentAllocation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Supplier {
+  id: UUID;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SupplierBillStatus = 'Draft' | 'Finalised';
+
+export interface SupplierBillLineItemInput {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  gstApplicable: boolean;
+}
+
+export interface SupplierBill {
+  id: UUID;
+  supplierId: UUID;
+  billNumber: string | null;
+  billDate: string;
+  dueDate: string;
+  supplierReference: string | null;
+  currency: string;
+  notes: string | null;
+  status: SupplierBillStatus;
+  totals: InvoiceTotals;
   createdAt: string;
   updatedAt: string;
 }

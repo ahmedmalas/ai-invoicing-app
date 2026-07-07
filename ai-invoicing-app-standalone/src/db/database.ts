@@ -21,6 +21,10 @@ import type {
   PaymentState,
   Role,
   ReminderState,
+  Supplier,
+  SupplierBill,
+  SupplierBillLineItemInput,
+  SupplierBillStatus,
   Team,
   TeamMembershipRole,
   User,
@@ -93,6 +97,42 @@ interface DbCustomerPaymentRow {
   updated_at: string;
 }
 
+interface DbSupplierRow {
+  id: string;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  tax_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbSupplierBillRow {
+  id: string;
+  supplier_id: string;
+  bill_number: string | null;
+  bill_date: string;
+  due_date: string;
+  supplier_reference: string | null;
+  currency: string;
+  notes: string | null;
+  status: SupplierBillStatus;
+  subtotal: number;
+  gst_total: number;
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbSupplierBillLineItemRow {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  gst_applicable: number;
+}
+
 interface DbJobRow {
   id: string;
   job_number: string;
@@ -147,6 +187,15 @@ export interface CreateCustomerInput {
 
 export type UpdateCustomerInput = CreateCustomerInput;
 
+export interface CreateSupplierInput {
+  displayName: string;
+  email?: string | undefined;
+  phone?: string | undefined;
+  address?: string | undefined;
+  taxId?: string | undefined;
+  notes?: string | undefined;
+}
+
 export interface UpsertBusinessProfileInput {
   companyName: string;
   legalName?: string | undefined;
@@ -186,6 +235,25 @@ export interface CreateCustomerPaymentInput {
   amount: number;
   notes?: string | undefined;
   allocations: PaymentAllocation[];
+}
+
+export interface CreateSupplierBillDraftInput {
+  supplierId: string;
+  billDate: string;
+  dueDate: string;
+  supplierReference?: string | undefined;
+  currency: string;
+  notes?: string | undefined;
+  lineItems: SupplierBillLineItemInput[];
+}
+
+export interface UpdateSupplierBillDraftInput {
+  billDate: string;
+  dueDate: string;
+  supplierReference?: string | undefined;
+  currency: string;
+  notes?: string | undefined;
+  lineItems: SupplierBillLineItemInput[];
 }
 
 export interface CreateJobInput {
@@ -270,6 +338,16 @@ export interface ListCustomerPaymentsFilter {
   to?: string;
 }
 
+export interface ListSupplierBillsFilter {
+  supplierId?: string;
+  billNumber?: string;
+  fromBillDate?: string;
+  toBillDate?: string;
+  fromDueDate?: string;
+  toDueDate?: string;
+  status?: SupplierBillStatus;
+}
+
 export interface JobDocumentLinkRecord {
   id: string;
   jobId: string;
@@ -307,6 +385,9 @@ export interface AppDatabase {
   createCustomer(input: CreateCustomerInput): Customer;
   updateCustomer(id: string, input: UpdateCustomerInput): Customer;
   getCustomerById(id: string): Customer | null;
+  createSupplier(input: CreateSupplierInput): Supplier;
+  getSupplierById(id: string): Supplier | null;
+  listSuppliers(): Supplier[];
   upsertBusinessProfile(input: UpsertBusinessProfileInput): BrandingProfile;
   getBusinessProfile(): BrandingProfile | null;
   upsertPreference(key: string, value: unknown): void;
@@ -321,6 +402,11 @@ export interface AppDatabase {
   createCustomerPayment(input: CreateCustomerPaymentInput): CustomerPayment;
   getCustomerPaymentById(id: string): CustomerPayment | null;
   listCustomerPayments(filter?: ListCustomerPaymentsFilter): CustomerPayment[];
+  createSupplierBillDraft(input: CreateSupplierBillDraftInput): SupplierBill;
+  updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
+  getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
+  finaliseSupplierBill(id: string): SupplierBill;
+  listSupplierBills(filter?: ListSupplierBillsFilter): SupplierBill[];
   createRole(input: CreateRoleInput): Role;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
@@ -374,6 +460,20 @@ function mapCustomerRow(row: Record<string, unknown>): Customer {
   };
 }
 
+function mapSupplierRow(row: DbSupplierRow): Supplier {
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    email: row.email,
+    phone: row.phone,
+    address: row.address,
+    taxId: row.tax_id,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapInvoiceRow(row: DbInvoiceRow): InvoiceDraft {
   return {
     id: row.id,
@@ -409,6 +509,27 @@ function mapCreditNoteRow(row: DbCreditNoteRow): CreditNote {
     status: row.status,
     totalCredit: row.total_credit,
     lineItems: JSON.parse(row.line_items_json) as CreditNoteLineItem[],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSupplierBillRow(row: DbSupplierBillRow): SupplierBill {
+  return {
+    id: row.id,
+    supplierId: row.supplier_id,
+    billNumber: row.bill_number,
+    billDate: row.bill_date,
+    dueDate: row.due_date,
+    supplierReference: row.supplier_reference,
+    currency: row.currency,
+    notes: row.notes,
+    status: row.status,
+    totals: {
+      subtotal: row.subtotal,
+      gstTotal: row.gst_total,
+      total: row.total,
+    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -613,6 +734,8 @@ export function createDatabase(dbPath: string): AppDatabase {
       'credit_note.created',
       'payment.created',
       'payment.allocated',
+      'supplier_bill.created',
+      'supplier_bill.finalised',
       'customer.created',
       'customer.updated',
       'business_profile.updated',
@@ -895,6 +1018,39 @@ export function createDatabase(dbPath: string): AppDatabase {
         | Record<string, unknown>
         | undefined;
       return row ? mapCustomerRow(row) : null;
+    },
+
+    createSupplier(input) {
+      const id = randomUUID();
+      const now = nowIso();
+      db.prepare(
+        `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        input.displayName,
+        input.email ?? null,
+        input.phone ?? null,
+        input.address ?? null,
+        input.taxId ?? null,
+        input.notes ?? null,
+        now,
+        now,
+      );
+      const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as DbSupplierRow;
+      return mapSupplierRow(row);
+    },
+
+    getSupplierById(id) {
+      const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as DbSupplierRow | undefined;
+      return row ? mapSupplierRow(row) : null;
+    },
+
+    listSuppliers() {
+      const rows = db
+        .prepare('SELECT * FROM suppliers ORDER BY created_at DESC')
+        .all() as DbSupplierRow[];
+      return rows.map(mapSupplierRow);
     },
 
     upsertBusinessProfile(input) {
@@ -1522,6 +1678,288 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.invoiceId ?? null,
         ) as DbCustomerPaymentRow[];
       return rows.map((row) => mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)));
+    },
+
+    createSupplierBillDraft(input) {
+      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
+      if (!supplier) {
+        throw new Error('Supplier not found');
+      }
+
+      const { totals, calculatedItems } = calculateTotals(input.lineItems);
+      const id = randomUUID();
+      const now = nowIso();
+      try {
+        db.prepare(
+          `INSERT INTO supplier_bills (
+            id,
+            supplier_id,
+            bill_number,
+            bill_date,
+            due_date,
+            supplier_reference,
+            currency,
+            notes,
+            status,
+            subtotal,
+            gst_total,
+            total,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          id,
+          input.supplierId,
+          null,
+          input.billDate,
+          input.dueDate,
+          input.supplierReference ?? null,
+          input.currency,
+          input.notes ?? null,
+          'Draft',
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_supplier_bills_supplier_reference_not_null') ||
+          message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
+        ) {
+          throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
+        }
+        throw error;
+      }
+
+      const insertLine = db.prepare(
+        `INSERT INTO supplier_bill_line_items (
+          id, supplier_bill_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const item of calculatedItems) {
+        insertLine.run(
+          randomUUID(),
+          id,
+          item.description,
+          item.quantity,
+          item.unitPrice,
+          item.gstApplicable ? 1 : 0,
+          item.lineSubtotal,
+          item.lineGst,
+          item.lineTotal,
+        );
+      }
+
+      upsertDocument(
+        id,
+        `Draft Supplier Bill ${input.supplierReference ?? ''}`.trim(),
+        'supplier_bill',
+        `${input.currency} ${input.notes ?? ''} ${input.supplierReference ?? ''}`,
+      );
+      timeline('supplier_bill.created', id, {
+        status: 'Draft',
+        supplierId: input.supplierId,
+        total: totals.total,
+      });
+
+      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
+      return mapSupplierBillRow(row);
+    },
+
+    updateSupplierBillDraft(id, input) {
+      const existing = db.prepare('SELECT status FROM supplier_bills WHERE id = ?').get(id) as
+        | { status: SupplierBillStatus }
+        | undefined;
+      if (!existing) {
+        throw new Error('Supplier bill not found');
+      }
+      if (existing.status !== 'Draft') {
+        throw new Error('Only draft supplier bills can be edited');
+      }
+
+      const { totals, calculatedItems } = calculateTotals(input.lineItems);
+      try {
+        db.prepare(
+          `UPDATE supplier_bills
+           SET bill_date = ?, due_date = ?, supplier_reference = ?, currency = ?, notes = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          input.billDate,
+          input.dueDate,
+          input.supplierReference ?? null,
+          input.currency,
+          input.notes ?? null,
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          nowIso(),
+          id,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_supplier_bills_supplier_reference_not_null') ||
+          message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
+        ) {
+          throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
+        }
+        throw error;
+      }
+
+      db.prepare('DELETE FROM supplier_bill_line_items WHERE supplier_bill_id = ?').run(id);
+      const insertLine = db.prepare(
+        `INSERT INTO supplier_bill_line_items (
+          id, supplier_bill_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const item of calculatedItems) {
+        insertLine.run(
+          randomUUID(),
+          id,
+          item.description,
+          item.quantity,
+          item.unitPrice,
+          item.gstApplicable ? 1 : 0,
+          item.lineSubtotal,
+          item.lineGst,
+          item.lineTotal,
+        );
+      }
+
+      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
+      upsertDocument(
+        id,
+        `${row.bill_number ?? 'Draft'} ${row.supplier_reference ?? ''}`.trim(),
+        'supplier_bill',
+        `${row.currency} ${row.notes ?? ''} ${row.supplier_reference ?? ''}`,
+      );
+      return mapSupplierBillRow(row);
+    },
+
+    getSupplierBillById(id) {
+      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as
+        | DbSupplierBillRow
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      const lineItemsRows = db
+        .prepare(
+          `SELECT description, quantity, unit_price, gst_applicable
+           FROM supplier_bill_line_items
+           WHERE supplier_bill_id = ?`,
+        )
+        .all(id) as DbSupplierBillLineItemRow[];
+      const lineItems: SupplierBillLineItemInput[] = lineItemsRows.map((item) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        gstApplicable: item.gst_applicable === 1,
+      }));
+
+      return {
+        ...mapSupplierBillRow(row),
+        lineItems,
+      };
+    },
+
+    finaliseSupplierBill(id) {
+      const bill = this.getSupplierBillById(id);
+      if (!bill) {
+        throw new Error('Supplier bill not found');
+      }
+      if (bill.status !== 'Draft') {
+        throw new Error('Supplier bill already finalised');
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM supplier_bill_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+
+      let prefix = 'BILL';
+      let sequence = 1;
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO supplier_bill_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE supplier_bill_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE supplier_bill_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
+        }
+      }
+
+      const billNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const now = nowIso();
+      db.prepare(
+        `UPDATE supplier_bills
+         SET status = 'Finalised', bill_number = ?, updated_at = ?
+         WHERE id = ?`,
+      ).run(billNumber, now, id);
+
+      const finalised = this.getSupplierBillById(id);
+      if (!finalised) {
+        throw new Error('Failed to load finalised supplier bill');
+      }
+      upsertDocument(
+        id,
+        `${billNumber} ${finalised.supplierReference ?? ''}`.trim(),
+        'supplier_bill',
+        `${billNumber} ${finalised.currency} ${finalised.notes ?? ''}`,
+      );
+      timeline('supplier_bill.finalised', id, {
+        billNumber,
+        total: finalised.totals.total,
+      });
+
+      return mapSupplierBillRow(db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow);
+    },
+
+    listSupplierBills(filter) {
+      const rowFilter = filter ?? {};
+      const rows = db
+        .prepare(
+          `SELECT *
+           FROM supplier_bills
+           WHERE (? IS NULL OR supplier_id = ?)
+             AND (? IS NULL OR bill_number = ?)
+             AND (? IS NULL OR bill_date >= ?)
+             AND (? IS NULL OR bill_date <= ?)
+             AND (? IS NULL OR due_date >= ?)
+             AND (? IS NULL OR due_date <= ?)
+             AND (? IS NULL OR status = ?)
+           ORDER BY bill_date DESC, created_at DESC`,
+        )
+        .all(
+          rowFilter.supplierId ?? null,
+          rowFilter.supplierId ?? null,
+          rowFilter.billNumber ?? null,
+          rowFilter.billNumber ?? null,
+          rowFilter.fromBillDate ?? null,
+          rowFilter.fromBillDate ?? null,
+          rowFilter.toBillDate ?? null,
+          rowFilter.toBillDate ?? null,
+          rowFilter.fromDueDate ?? null,
+          rowFilter.fromDueDate ?? null,
+          rowFilter.toDueDate ?? null,
+          rowFilter.toDueDate ?? null,
+          rowFilter.status ?? null,
+          rowFilter.status ?? null,
+        ) as DbSupplierBillRow[];
+      return rows.map(mapSupplierBillRow);
     },
 
     createRole(input) {

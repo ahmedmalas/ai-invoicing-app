@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS customers (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS suppliers (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  address TEXT,
+  tax_id TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -149,6 +161,37 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   FOREIGN KEY (invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS supplier_bills (
+  id TEXT PRIMARY KEY,
+  supplier_id TEXT NOT NULL,
+  bill_number TEXT,
+  bill_date TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  supplier_reference TEXT,
+  currency TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL,
+  subtotal REAL NOT NULL,
+  gst_total REAL NOT NULL,
+  total REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE IF NOT EXISTS supplier_bill_line_items (
+  id TEXT PRIMARY KEY,
+  supplier_bill_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_price REAL NOT NULL,
+  gst_applicable INTEGER NOT NULL,
+  line_subtotal REAL NOT NULL,
+  line_gst REAL NOT NULL,
+  line_total REAL NOT NULL,
+  FOREIGN KEY (supplier_bill_id) REFERENCES supplier_bills(id)
+);
+
 CREATE TABLE IF NOT EXISTS invoice_snapshots (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL,
@@ -219,6 +262,13 @@ CREATE TABLE IF NOT EXISTS payment_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS supplier_bill_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
@@ -251,6 +301,7 @@ CREATE TABLE IF NOT EXISTS reminder_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
+CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(display_name);
 CREATE INDEX IF NOT EXISTS idx_roles_name ON roles(name);
 CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_not_null
@@ -267,6 +318,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user
 ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_number ON supplier_bills(bill_number);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_supplier ON supplier_bills(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_status ON supplier_bills(status);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_bill_date ON supplier_bills(bill_date);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_due_date ON supplier_bills(due_date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null
+ON supplier_bills(supplier_id, supplier_reference)
+WHERE supplier_reference IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(linked_invoice_id);
@@ -292,6 +352,9 @@ ON job_document_links(job_id, document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_number_not_null
+ON supplier_bills(bill_number)
+WHERE bill_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);
@@ -354,6 +417,67 @@ WHEN EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_bills_finalised_immutable_update
+BEFORE UPDATE ON supplier_bills
+WHEN OLD.status = 'Finalised'
+AND (
+  NEW.supplier_id <> OLD.supplier_id OR
+  ifnull(NEW.bill_number, '') <> ifnull(OLD.bill_number, '') OR
+  NEW.bill_date <> OLD.bill_date OR
+  NEW.due_date <> OLD.due_date OR
+  ifnull(NEW.supplier_reference, '') <> ifnull(OLD.supplier_reference, '') OR
+  NEW.currency <> OLD.currency OR
+  ifnull(NEW.notes, '') <> ifnull(OLD.notes, '') OR
+  NEW.subtotal <> OLD.subtotal OR
+  NEW.gst_total <> OLD.gst_total OR
+  NEW.total <> OLD.total OR
+  NEW.status <> OLD.status
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_bills_finalised_immutable_delete
+BEFORE DELETE ON supplier_bills
+WHEN OLD.status = 'Finalised'
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_bill_line_items_finalised_insert
+BEFORE INSERT ON supplier_bill_line_items
+WHEN EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = NEW.supplier_bill_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_bill_line_items_finalised_update
+BEFORE UPDATE ON supplier_bill_line_items
+WHEN EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = OLD.supplier_bill_id AND b.status = 'Finalised'
+)
+OR EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = NEW.supplier_bill_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_bill_line_items_finalised_delete
+BEFORE DELETE ON supplier_bill_line_items
+WHEN EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = OLD.supplier_bill_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_only_finalised_insert
@@ -419,5 +543,38 @@ AND EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_INVOICE_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_supplier_bill_update
+BEFORE UPDATE ON documents
+WHEN OLD.document_type = 'supplier_bill'
+AND EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = OLD.entity_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_supplier_bill_insert
+BEFORE INSERT ON documents
+WHEN NEW.document_type = 'supplier_bill'
+AND EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = NEW.entity_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_finalised_supplier_bill_delete
+BEFORE DELETE ON documents
+WHEN OLD.document_type = 'supplier_bill'
+AND EXISTS (
+  SELECT 1 FROM supplier_bills b
+  WHERE b.id = OLD.entity_id AND b.status = 'Finalised'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT');
 END;
 

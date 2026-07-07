@@ -16,6 +16,8 @@ import { timelineRoutes } from './routes/timeline.js';
 import { statementRoutes } from './routes/statements.js';
 import { creditNoteRoutes } from './routes/credit-notes.js';
 import { paymentRoutes } from './routes/payments.js';
+import { supplierRoutes } from './routes/suppliers.js';
+import { supplierBillRoutes } from './routes/supplier-bills.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -82,6 +84,12 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH') ||
       errorMessage.includes('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
       errorMessage.includes('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
+      errorMessage.includes('SUPPLIER_BILL_REFERENCE_EXISTS') ||
+      errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
+      errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||
+      errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT') ||
+      errorMessage.includes('Only draft supplier bills can be edited') ||
+      errorMessage.includes('Supplier bill already finalised') ||
       errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
       errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
       errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
@@ -118,6 +126,8 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(statementRoutes);
   await app.register(creditNoteRoutes);
   await app.register(paymentRoutes);
+  await app.register(supplierRoutes);
+  await app.register(supplierBillRoutes);
 
   return app;
 }
