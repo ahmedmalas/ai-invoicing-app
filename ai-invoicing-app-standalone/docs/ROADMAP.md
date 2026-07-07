@@ -4,8 +4,8 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 15 — Final Invoice Audit Trail + Query Readiness**
-- Baseline commit: `ca2e8491ad5ef32284af6eb0ec774b9de48e944b`
+- Current implemented slice: **Slice 17 — Statement Audit & Export Hardening**
+- Baseline commit: `dbd1d71b967c6fd4da84fae60298116025de5817`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)
@@ -24,15 +24,17 @@ This roadmap is the canonical planning index for implementation slices in this r
 13. **Slice 13 — Team Role Authorization Foundation** (implemented)
 14. **Slice 14 — Final Invoice Search/Filtering Baseline** (implemented)
 15. **Slice 15 — Final Invoice Audit Trail + Query Readiness** (implemented)
+16. **Slice 16 — Customer Statement Engine (Read-Only)** (implemented)
+17. **Slice 17 — Statement Audit & Export Hardening** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 16 — TBD (placeholder only)
-- Slice 17 — TBD (placeholder only)
 - Slice 18 — TBD (placeholder only)
+- Slice 19 — TBD (placeholder only)
+- Slice 20 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

@@ -133,9 +133,19 @@
 - Added focused end-to-end proof coverage that finalised invoices remain immutable for update routes, `invoice.finalised` is queryable via existing timeline endpoint, and missing/invalid timeline lookups are deterministic under current endpoint behavior.
 - Preserved current architecture decisions: no read/list timeline events and no organizationId scoping changes.
 
+#### Slice 17 — Statement Audit & Export Hardening
+- Commit: `dbd1d71b967c6fd4da84fae60298116025de5817`
+- Added read-only customer statement endpoints for JSON, printable HTML, and PDF export using existing invoice/finalisation data only.
+- Reused the existing PDF infrastructure (`src/services/pdf-service.ts` with PDFKit) and kept a single PDF pipeline.
+- Enforced deterministic statement validation for invalid customer IDs, missing customers, invalid date formats, and invalid date ranges.
+- Confirmed statement selection rules: finalised invoices included, draft invoices excluded, period and customer filters enforced, opening/closing balances derived at read time only.
+- Added hardening proof that HTML and PDF exports use the same statement source data via shared source-signature headers.
+- Intentionally omitted statement timeline event emission to align with current architecture (read/report queries do not emit timeline events).
+- Added regression test proof that statement generation performs no statement/audit writes to persistence.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 15 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 17 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
