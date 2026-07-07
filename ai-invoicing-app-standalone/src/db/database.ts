@@ -2026,7 +2026,11 @@ export function createDatabase(dbPath: string): AppDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const [index, item] of calculatedItems.entries()) {
-        const sourcePurchaseOrderLineItemId = input.lineItems[index].sourcePurchaseOrderLineItemId;
+        const inputLine = input.lineItems[index];
+        if (!inputLine) {
+          throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
+        }
+        const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,
@@ -2313,7 +2317,11 @@ export function createDatabase(dbPath: string): AppDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const [index, item] of calculatedItems.entries()) {
-        const sourcePurchaseOrderLineItemId = input.lineItems[index].sourcePurchaseOrderLineItemId;
+        const inputLine = input.lineItems[index];
+        if (!inputLine) {
+          throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
+        }
+        const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,

@@ -113,6 +113,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('SUPPLIER_BILL_SOURCE_PO_SUPPLIER_MISMATCH') ||
       errorMessage.includes('SUPPLIER_BILL_LINKED_LINE_SOURCE_REQUIRED') ||
       errorMessage.includes('SUPPLIER_BILL_SOURCE_PO_LINE_MISMATCH') ||
+      errorMessage.includes('SUPPLIER_BILL_LINE_ITEM_MISMATCH') ||
       errorMessage.includes('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE') ||
       errorMessage.includes('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE') ||
       errorMessage.includes('PURCHASE_ORDER_ALREADY_CLOSED') ||

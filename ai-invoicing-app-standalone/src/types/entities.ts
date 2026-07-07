@@ -196,8 +196,8 @@ export interface Supplier {
 export type SupplierBillStatus = 'Draft' | 'Finalised';
 
 export interface SupplierBillLineItemInput {
-  id?: UUID;
-  sourcePurchaseOrderLineItemId?: UUID;
+  id?: UUID | undefined;
+  sourcePurchaseOrderLineItemId?: UUID | undefined;
   description: string;
   quantity: number;
   unitPrice: number;

@@ -65,9 +65,15 @@ describe('supplier bill po-link guardrails e2e', () => {
       },
     });
     expect(poDraftRes.statusCode).toBe(201);
-    const poDraft = purchaseOrderSchema.parse(poDraftRes.json());
-    const poLineAId = poDraft.lineItems[0]?.id;
-    const poLineBId = poDraft.lineItems[1]?.id;
+    const poDraft = z.object({ id: z.string().uuid() }).parse(poDraftRes.json());
+    const poDraftDetailsRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${poDraft.id}`,
+    });
+    expect(poDraftDetailsRes.statusCode).toBe(200);
+    const poDraftDetails = purchaseOrderSchema.parse(poDraftDetailsRes.json());
+    const poLineAId = poDraftDetails.lineItems[0]?.id;
+    const poLineBId = poDraftDetails.lineItems[1]?.id;
     if (!poLineAId || !poLineBId) {
       throw new Error('Expected purchase order line item ids');
     }
