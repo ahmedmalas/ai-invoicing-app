@@ -4241,9 +4241,24 @@ export function createDatabase(dbPath: string): AppDatabase {
           .get(row.id) as { amount: number };
         return sum + (row.total - Number(billedRow.amount ?? 0));
       }, 0);
+      const generatedAtRow = db
+        .prepare(
+          `SELECT max(ts) AS ts
+           FROM (
+             SELECT max(updated_at) AS ts FROM customers
+             UNION ALL SELECT max(updated_at) AS ts FROM suppliers
+             UNION ALL SELECT max(updated_at) AS ts FROM invoices
+             UNION ALL SELECT max(updated_at) AS ts FROM credit_notes
+             UNION ALL SELECT max(updated_at) AS ts FROM customer_payments
+             UNION ALL SELECT max(updated_at) AS ts FROM purchase_orders
+             UNION ALL SELECT max(updated_at) AS ts FROM supplier_bills
+             UNION ALL SELECT max(updated_at) AS ts FROM supplier_payments
+           )`,
+        )
+        .get() as { ts: string | null };
 
       return {
-        generatedAt: nowIso(),
+        generatedAt: generatedAtRow.ts ?? nowIso(),
         filters: { from, to, limit, offset },
         accountsReceivable: {
           totals: {
