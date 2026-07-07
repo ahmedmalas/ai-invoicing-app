@@ -48,8 +48,24 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/purchase-orders', async (request) => {
     const query = listPurchaseOrdersQuerySchema.parse(request.query);
+    const filter: {
+      supplierId?: string;
+      purchaseOrderNumber?: string;
+      status?: 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
+      fromIssueDate?: string;
+      toIssueDate?: string;
+      fromExpectedDeliveryDate?: string;
+      toExpectedDeliveryDate?: string;
+    } = {};
+    if (query.supplierId) filter.supplierId = query.supplierId;
+    if (query.purchaseOrderNumber) filter.purchaseOrderNumber = query.purchaseOrderNumber;
+    if (query.status) filter.status = query.status;
+    if (query.fromIssueDate) filter.fromIssueDate = query.fromIssueDate;
+    if (query.toIssueDate) filter.toIssueDate = query.toIssueDate;
+    if (query.fromExpectedDeliveryDate) filter.fromExpectedDeliveryDate = query.fromExpectedDeliveryDate;
+    if (query.toExpectedDeliveryDate) filter.toExpectedDeliveryDate = query.toExpectedDeliveryDate;
     return {
-      purchaseOrders: app.db.listPurchaseOrders(query),
+      purchaseOrders: app.db.listPurchaseOrders(filter),
     };
   });
 
