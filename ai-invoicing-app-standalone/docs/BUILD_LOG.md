@@ -189,9 +189,17 @@
 - Added `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, and `purchase_order.cancelled` taxonomy events and timeline emissions through existing audit infrastructure.
 - Added focused unit and end-to-end coverage for lifecycle transitions, immutability enforcement, validation rejection paths, retrieval/filtering, timeline emissions, and search participation.
 
+#### Slice 23 — Supplier Bill Creation from Purchase Orders
+- Commit: `49fafcc8371f5194ec2aa1cbf0b67f9f097f6f14`
+- Added deterministic conversion endpoint `POST /purchase-orders/:purchaseOrderId/create-supplier-bill` to create draft supplier bills directly from approved purchase orders.
+- Added strict conversion guards for approved-only purchase orders and single-bill-per-purchase-order behavior via deterministic errors (`PURCHASE_ORDER_REQUIRES_APPROVED_STATUS`, `PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED`).
+- Added source linkage from supplier bills back to purchase orders (`source_purchase_order_id`) with migration-safe schema evolution and uniqueness enforcement.
+- Extended supplier bill read filters to support `sourcePurchaseOrderId`, preserving existing filtering patterns and search/document architecture.
+- Added focused end-to-end coverage proving conversion success, duplicate-conversion blocking, draft-order rejection, and linkage/query correctness without introducing inventory, goods receipts, stock movements, or ledgers.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 22 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 23 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
