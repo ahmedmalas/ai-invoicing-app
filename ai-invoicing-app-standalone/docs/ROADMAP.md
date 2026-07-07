@@ -4,8 +4,8 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 21 — Supplier Bill Payments (Accounts Payable Payments)**
-- Baseline commit: `72d476319a0339c38bf9bd3e07fef639a41a7ad9`
+- Current implemented slice: **Slice 22 — Purchase Orders (Procurement Foundation)**
+- Baseline commit: `7db0030f059d3739fdf42634fad6ce8943dba7e4`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)
@@ -30,15 +30,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 19. **Slice 19 — Customer Payments (Allocation Without Ledger)** (implemented)
 20. **Slice 20 — Supplier Bills (Accounts Payable Foundation)** (implemented)
 21. **Slice 21 — Supplier Bill Payments (Accounts Payable Payments)** (implemented)
+22. **Slice 22 — Purchase Orders (Procurement Foundation)** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 22 — TBD (placeholder only)
 - Slice 23 — TBD (placeholder only)
 - Slice 24 — TBD (placeholder only)
+- Slice 25 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

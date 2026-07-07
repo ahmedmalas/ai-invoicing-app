@@ -180,9 +180,18 @@
 - Added `supplier_payment.created` and `supplier_payment.allocated` timeline taxonomy events and emissions via existing audit architecture.
 - Added focused unit and end-to-end coverage for full/partial/multi-bill allocations, rejection paths, retrieval/filtering, rendering, timeline events, search participation, and bill-total immutability proof.
 
+#### Slice 22 — Purchase Orders (Procurement Foundation)
+- Commit: `7db0030f059d3739fdf42634fad6ce8943dba7e4`
+- Added first-class purchase order persistence with line items, sequence-based PO numbering, and deterministic read-model filters.
+- Added purchase order lifecycle support (`Draft`, `Approved`, `Closed`, `Cancelled`) with explicit transition validation and terminal-state protections.
+- Added immutable non-draft safeguards for purchase orders, line items, and linked document records at both application and persistence levels.
+- Added purchase order HTML and PDF rendering through the existing PDF service pipeline (`src/services/pdf-service.ts`) and route conventions.
+- Added `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, and `purchase_order.cancelled` taxonomy events and timeline emissions through existing audit infrastructure.
+- Added focused unit and end-to-end coverage for lifecycle transitions, immutability enforcement, validation rejection paths, retrieval/filtering, timeline emissions, and search participation.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 21 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 22 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
