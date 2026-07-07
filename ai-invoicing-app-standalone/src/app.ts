@@ -101,6 +101,8 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT') ||
+      errorMessage.includes('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS') ||
+      errorMessage.includes('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED') ||
       errorMessage.includes('Only draft purchase orders can be edited') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||

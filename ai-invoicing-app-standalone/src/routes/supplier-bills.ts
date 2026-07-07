@@ -40,6 +40,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     const query = listSupplierBillsQuerySchema.parse(request.query);
     const filter: {
       supplierId?: string;
+      sourcePurchaseOrderId?: string;
       billNumber?: string;
       fromBillDate?: string;
       toBillDate?: string;
@@ -49,6 +50,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
       paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
     } = {};
     if (query.supplierId) filter.supplierId = query.supplierId;
+    if (query.sourcePurchaseOrderId) filter.sourcePurchaseOrderId = query.sourcePurchaseOrderId;
     if (query.billNumber) filter.billNumber = query.billNumber;
     if (query.fromBillDate) filter.fromBillDate = query.fromBillDate;
     if (query.toBillDate) filter.toBillDate = query.toBillDate;

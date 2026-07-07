@@ -205,6 +205,7 @@ export interface SupplierBillLineItemInput {
 export interface SupplierBill {
   id: UUID;
   supplierId: UUID;
+  sourcePurchaseOrderId: UUID | null;
   billNumber: string | null;
   billDate: string;
   dueDate: string;

@@ -37,6 +37,12 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     return app.db.cancelPurchaseOrder(params.purchaseOrderId);
   });
 
+  app.post('/purchase-orders/:purchaseOrderId/create-supplier-bill', async (request, reply) => {
+    const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
+    const supplierBill = app.db.createSupplierBillDraftFromPurchaseOrder(params.purchaseOrderId);
+    return reply.code(201).send(supplierBill);
+  });
+
   app.get('/purchase-orders/:purchaseOrderId', async (request, reply) => {
     const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
     const purchaseOrder = app.db.getPurchaseOrderById(params.purchaseOrderId);

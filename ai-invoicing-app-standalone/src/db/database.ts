@@ -118,6 +118,7 @@ interface DbSupplierRow {
 interface DbSupplierBillRow {
   id: string;
   supplier_id: string;
+  source_purchase_order_id: string | null;
   bill_number: string | null;
   bill_date: string;
   due_date: string;
@@ -413,6 +414,7 @@ export interface ListCustomerPaymentsFilter {
 
 export interface ListSupplierBillsFilter {
   supplierId?: string;
+  sourcePurchaseOrderId?: string;
   billNumber?: string;
   fromBillDate?: string;
   toBillDate?: string;
@@ -494,6 +496,7 @@ export interface AppDatabase {
   getCustomerPaymentById(id: string): CustomerPayment | null;
   listCustomerPayments(filter?: ListCustomerPaymentsFilter): CustomerPayment[];
   createSupplierBillDraft(input: CreateSupplierBillDraftInput): SupplierBill;
+  createSupplierBillDraftFromPurchaseOrder(purchaseOrderId: string): SupplierBill;
   updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
   getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
   finaliseSupplierBill(id: string): SupplierBill;
@@ -619,6 +622,7 @@ function mapSupplierBillRow(row: DbSupplierBillRow): SupplierBill {
   return {
     id: row.id,
     supplierId: row.supplier_id,
+    sourcePurchaseOrderId: row.source_purchase_order_id,
     billNumber: row.bill_number,
     billDate: row.bill_date,
     dueDate: row.due_date,
@@ -838,6 +842,14 @@ export function createDatabase(dbPath: string): AppDatabase {
     .prepare("SELECT name FROM pragma_table_info('supplier_bills')")
     .all() as Array<{ name: string }>;
   const supplierBillColumnSet = new Set(supplierBillColumns.map((column) => column.name));
+  if (!supplierBillColumnSet.has('source_purchase_order_id')) {
+    db.exec('ALTER TABLE supplier_bills ADD COLUMN source_purchase_order_id TEXT;');
+  }
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_source_purchase_order_not_null
+     ON supplier_bills(source_purchase_order_id)
+     WHERE source_purchase_order_id IS NOT NULL;`,
+  );
   if (!supplierBillColumnSet.has('payment_state')) {
     db.exec("ALTER TABLE supplier_bills ADD COLUMN payment_state TEXT NOT NULL DEFAULT 'Draft';");
   }
@@ -1873,6 +1885,7 @@ export function createDatabase(dbPath: string): AppDatabase {
           `INSERT INTO supplier_bills (
             id,
             supplier_id,
+            source_purchase_order_id,
             bill_number,
             bill_date,
             due_date,
@@ -1886,10 +1899,11 @@ export function createDatabase(dbPath: string): AppDatabase {
             total,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           id,
           input.supplierId,
+          null,
           null,
           input.billDate,
           input.dueDate,
@@ -1948,6 +1962,52 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
       return mapSupplierBillRow(row);
+    },
+
+    createSupplierBillDraftFromPurchaseOrder(purchaseOrderId) {
+      const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
+      if (!purchaseOrder) {
+        throw new Error('PURCHASE_ORDER_NOT_FOUND');
+      }
+      if (purchaseOrder.status !== 'Approved') {
+        throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
+      }
+
+      const existingBill = db
+        .prepare('SELECT id FROM supplier_bills WHERE source_purchase_order_id = ?')
+        .get(purchaseOrderId) as { id: string } | undefined;
+      if (existingBill) {
+        throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
+      }
+
+      const created = this.createSupplierBillDraft({
+        supplierId: purchaseOrder.supplierId,
+        billDate: purchaseOrder.issueDate,
+        dueDate: purchaseOrder.expectedDeliveryDate ?? purchaseOrder.issueDate,
+        supplierReference: `PO-${purchaseOrder.purchaseOrderNumber}`,
+        currency: purchaseOrder.currency,
+        notes: purchaseOrder.notes ?? undefined,
+        lineItems: purchaseOrder.lineItems,
+      });
+
+      try {
+        db.prepare('UPDATE supplier_bills SET source_purchase_order_id = ?, updated_at = ? WHERE id = ?').run(
+          purchaseOrderId,
+          nowIso(),
+          created.id,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_supplier_bills_source_purchase_order_not_null') ||
+          message.includes('UNIQUE constraint failed: supplier_bills.source_purchase_order_id')
+        ) {
+          throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
+        }
+        throw error;
+      }
+
+      return mapSupplierBillRow(db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(created.id) as DbSupplierBillRow);
     },
 
     updateSupplierBillDraft(id, input) {
@@ -2116,6 +2176,7 @@ export function createDatabase(dbPath: string): AppDatabase {
           `SELECT *
            FROM supplier_bills
            WHERE (? IS NULL OR supplier_id = ?)
+             AND (? IS NULL OR source_purchase_order_id = ?)
              AND (? IS NULL OR bill_number = ?)
              AND (? IS NULL OR bill_date >= ?)
              AND (? IS NULL OR bill_date <= ?)
@@ -2128,6 +2189,8 @@ export function createDatabase(dbPath: string): AppDatabase {
         .all(
           rowFilter.supplierId ?? null,
           rowFilter.supplierId ?? null,
+          rowFilter.sourcePurchaseOrderId ?? null,
+          rowFilter.sourcePurchaseOrderId ?? null,
           rowFilter.billNumber ?? null,
           rowFilter.billNumber ?? null,
           rowFilter.fromBillDate ?? null,

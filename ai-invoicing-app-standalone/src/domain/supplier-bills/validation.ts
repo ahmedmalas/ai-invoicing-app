@@ -40,6 +40,7 @@ export const updateSupplierBillDraftSchema = supplierBillDraftBaseSchema.omit({ 
 export const listSupplierBillsQuerySchema = z
   .object({
     supplierId: z.string().uuid().optional(),
+    sourcePurchaseOrderId: z.string().uuid().optional(),
     billNumber: z.string().min(1).optional(),
     fromBillDate: isoDateSchema.refine(isValidIsoCalendarDate, 'fromBillDate must be a valid ISO date').optional(),
     toBillDate: isoDateSchema.refine(isValidIsoCalendarDate, 'toBillDate must be a valid ISO date').optional(),

@@ -17,6 +17,14 @@ const purchaseOrderSchema = z.object({
   totals: z.object({ total: z.number() }),
 });
 
+const supplierBillSchema = z.object({
+  id: z.string().uuid(),
+  supplierId: z.string().uuid(),
+  sourcePurchaseOrderId: z.string().uuid().nullable(),
+  status: z.enum(['Draft', 'Finalised']),
+  totals: z.object({ total: z.number() }),
+});
+
 describe('purchase orders e2e', () => {
   it('supports purchase order lifecycle with immutable non-draft behavior', async () => {
     const app = await buildApp({ dbPath: ':memory:' });
@@ -109,6 +117,34 @@ describe('purchase orders e2e', () => {
     const approvedPo = purchaseOrderSchema.parse(approveRes.json());
     expect(approvedPo.status).toBe('Approved');
 
+    const createBillFromApprovedRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${draftPo.id}/create-supplier-bill`,
+    });
+    expect(createBillFromApprovedRes.statusCode).toBe(201);
+    const createdBillFromPo = supplierBillSchema.parse(createBillFromApprovedRes.json());
+    expect(createdBillFromPo.supplierId).toBe(supplier.id);
+    expect(createdBillFromPo.sourcePurchaseOrderId).toBe(draftPo.id);
+    expect(createdBillFromPo.status).toBe('Draft');
+    expect(createdBillFromPo.totals.total).toBe(approvedPo.totals.total);
+
+    const duplicateCreateBillRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${draftPo.id}/create-supplier-bill`,
+    });
+    expect(duplicateCreateBillRes.statusCode).toBe(409);
+    expect(duplicateCreateBillRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED',
+    });
+
+    const bySourcePoRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills?sourcePurchaseOrderId=${draftPo.id}`,
+    });
+    expect(bySourcePoRes.statusCode).toBe(200);
+    const bySourcePo = z.object({ bills: z.array(supplierBillSchema) }).parse(bySourcePoRes.json());
+    expect(bySourcePo.bills.map((bill) => bill.id)).toContain(createdBillFromPo.id);
+
     const immutableAfterApproveRes = await app.inject({
       method: 'PUT',
       url: `/purchase-orders/${draftPo.id}`,
@@ -156,6 +192,15 @@ describe('purchase orders e2e', () => {
     });
     expect(cancellablePoRes.statusCode).toBe(201);
     const cancellablePo = purchaseOrderSchema.parse(cancellablePoRes.json());
+
+    const createBillFromDraftPoRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo.id}/create-supplier-bill`,
+    });
+    expect(createBillFromDraftPoRes.statusCode).toBe(409);
+    expect(createBillFromDraftPoRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_REQUIRES_APPROVED_STATUS',
+    });
 
     const cancelRes = await app.inject({
       method: 'POST',

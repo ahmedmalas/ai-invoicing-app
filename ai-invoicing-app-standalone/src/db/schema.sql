@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
 CREATE TABLE IF NOT EXISTS supplier_bills (
   id TEXT PRIMARY KEY,
   supplier_id TEXT NOT NULL,
+  source_purchase_order_id TEXT,
   bill_number TEXT,
   bill_date TEXT NOT NULL,
   due_date TEXT NOT NULL,
@@ -177,7 +178,8 @@ CREATE TABLE IF NOT EXISTS supplier_bills (
   total REAL NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (source_purchase_order_id) REFERENCES purchase_orders(id)
 );
 
 CREATE TABLE IF NOT EXISTS supplier_bill_line_items (
