@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 29 — Supplier Bill Finalisation Timeline & Regression Hardening**
-- Baseline commit: `a8f08203fa50f98f3166644ce8ef7fe99b5e70fc`
-- Active branch at roadmap update: `cursor/slice-29-supplier-bill-finalisation-audit-hardening-19d3`
+- Current implemented slice: **Slice 30 — Supplier Bill Payment Readiness & Linkage Guardrails**
+- Baseline commit: `de602f2d98a7f0c9c0f9b3de605eec95f4bb4c18`
+- Active branch at roadmap update: `cursor/slice-30-supplier-bill-payment-readiness-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -38,15 +38,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 27. **Slice 27 — Supplier Bill Amendments (Draft-Only Revision Safety)** (implemented)
 28. **Slice 28 — Supplier Bill Finalisation Readiness** (implemented)
 29. **Slice 29 — Supplier Bill Finalisation Timeline & Regression Hardening** (implemented)
+30. **Slice 30 — Supplier Bill Payment Readiness & Linkage Guardrails** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 30 — TBD (placeholder only)
 - Slice 31 — TBD (placeholder only)
 - Slice 32 — TBD (placeholder only)
+- Slice 33 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

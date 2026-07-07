@@ -249,9 +249,18 @@
 - Strengthened timeline payload verification for standalone and PO-linked finalisation metadata without adding taxonomy keys.
 - Reconfirmed finalised supplier bill immutability, PO billing calculated behavior, and unchanged HTML/PDF rendering pipeline through existing tests.
 
+#### Slice 30 — Supplier Bill Payment Readiness & Linkage Guardrails
+- Commit: `de602f2d98a7f0c9c0f9b3de605eec95f4bb4c18`
+- Hardened supplier payment allocation readiness checks so allocations only proceed against valid finalised supplier bills with deterministic validation failures.
+- Added PO-linked supplier bill revalidation at allocation time (source PO existence, supplier consistency, source-line reference validity, remaining quantity/value constraints) without introducing any new lifecycle states.
+- Preserved Supplier Bill totals and Purchase Order billing semantics during payment allocations; PO billing remains calculated from linked supplier bills and is not affected by payments.
+- Added/updated tests proving draft/non-existent/wrong-supplier/duplicate/over-allocation rejection, no payment artifacts on failed allocation paths, and PO billing invariance after linked-bill payment allocation.
+- Confirmed supplier payment receipt HTML/PDF rendering continues through the existing PDF pipeline.
+- Preserved timeline taxonomy keys and existing `supplier_payment.created` / `supplier_payment.allocated` behavior; failed allocations emit no new payment timeline records.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-29-supplier-bill-finalisation-audit-hardening-19d3`
-- Status at logging: implementation baseline completed through Slice 29 and passing validation gates.
+- Branch: `cursor/slice-30-supplier-bill-payment-readiness-19d3`
+- Status at logging: implementation baseline completed through Slice 30 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
