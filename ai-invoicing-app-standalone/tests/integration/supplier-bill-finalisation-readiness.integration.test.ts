@@ -84,15 +84,17 @@ describe('supplier bill finalisation readiness integration', () => {
     const { dir, dbPath } = createTempDbPath('sb-finalise-supplier');
     const { billId } = await seedLinkedDraftBill(dbPath);
     const db = new Database(dbPath);
+    db.exec('PRAGMA foreign_keys = OFF;');
     db.prepare('UPDATE supplier_bills SET supplier_id = ? WHERE id = ?').run(
       '550e8400-e29b-41d4-a716-446655440999',
       billId,
     );
+    db.exec('PRAGMA foreign_keys = ON;');
     db.close();
 
     const app = await buildApp({ dbPath });
     const finaliseRes = await app.inject({ method: 'POST', url: `/supplier-bills/${billId}/finalise` });
-    expect(finaliseRes.statusCode).toBe(409);
+    expect(finaliseRes.statusCode).toBe(404);
     expect(finaliseRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SUPPLIER_NOT_FOUND' });
     await app.close();
     rmSync(dir, { recursive: true, force: true });
@@ -128,8 +130,8 @@ describe('supplier bill finalisation readiness integration', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('rejects finalisation for supplier mismatch or orphaned PO linkage', async () => {
-    const { dir, dbPath } = createTempDbPath('sb-finalise-linkage');
+  it('rejects finalisation for supplier mismatch on linked purchase order', async () => {
+    const { dir, dbPath } = createTempDbPath('sb-finalise-supplier-mismatch');
     const seed = await seedLinkedDraftBill(dbPath);
     const db = new Database(dbPath);
     const secondSupplierId = '550e8400-e29b-41d4-a716-446655440777';
@@ -137,7 +139,7 @@ describe('supplier bill finalisation readiness integration', () => {
       `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
        VALUES (?, 'Other Supplier', NULL, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     ).run(secondSupplierId);
-    db.prepare('UPDATE purchase_orders SET supplier_id = ? WHERE id = ?').run(secondSupplierId, seed.purchaseOrderId);
+    db.prepare('UPDATE supplier_bills SET supplier_id = ? WHERE id = ?').run(secondSupplierId, seed.billId);
     db.close();
 
     const app = await buildApp({ dbPath });
@@ -145,14 +147,24 @@ describe('supplier bill finalisation readiness integration', () => {
     expect(supplierMismatchRes.statusCode).toBe(409);
     expect(supplierMismatchRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_SUPPLIER_MISMATCH' });
     await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
+  it('rejects finalisation for orphaned purchase order linkage', async () => {
+    const { dir, dbPath } = createTempDbPath('sb-finalise-orphan-po');
+    const seed = await seedLinkedDraftBill(dbPath);
     const db2 = new Database(dbPath);
-    db2.prepare('DELETE FROM purchase_orders WHERE id = ?').run(seed.purchaseOrderId);
+    db2.exec('PRAGMA foreign_keys = OFF;');
+    db2.prepare('UPDATE supplier_bills SET source_purchase_order_id = ? WHERE id = ?').run(
+      '550e8400-e29b-41d4-a716-446655440666',
+      seed.billId,
+    );
+    db2.exec('PRAGMA foreign_keys = ON;');
     db2.close();
 
     const app2 = await buildApp({ dbPath });
     const orphanedPoRes = await app2.inject({ method: 'POST', url: `/supplier-bills/${seed.billId}/finalise` });
-    expect(orphanedPoRes.statusCode).toBe(409);
+    expect(orphanedPoRes.statusCode).toBe(404);
     expect(orphanedPoRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_FINALISE_SOURCE_PO_NOT_FOUND' });
     await app2.close();
     rmSync(dir, { recursive: true, force: true });
@@ -163,10 +175,12 @@ describe('supplier bill finalisation readiness integration', () => {
     const seed = await seedLinkedDraftBill(dbPath);
 
     const db = new Database(dbPath);
+    db.exec('PRAGMA foreign_keys = OFF;');
     db.prepare('UPDATE supplier_bill_line_items SET source_purchase_order_line_item_id = ? WHERE supplier_bill_id = ?').run(
       '550e8400-e29b-41d4-a716-446655440555',
       seed.billId,
     );
+    db.exec('PRAGMA foreign_keys = ON;');
     db.close();
 
     const app = await buildApp({ dbPath });
