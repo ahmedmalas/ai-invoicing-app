@@ -4,8 +4,8 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/ai-invoicing-foundation-19d3`
-- Current commit (Slice 13 implementation): `651ae8c84ec697de665f997a4f636a9d6cb9f16b`
-- Current implemented slice: **Slice 13 — Team Role Authorization Foundation**
+- Current commit (Slice 15 implementation): `ca2e8491ad5ef32284af6eb0ec774b9de48e944b`
+- Current implemented slice: **Slice 15 — Final Invoice Audit Trail + Query Readiness**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
@@ -22,11 +22,11 @@ This matrix tracks implementation readiness at module level without prescribing 
 ## Matrix
 | Module | Status | Current Implemented Slice | Dependencies | Next Planned Work | Risks | Notes |
 |---|---|---|---|---|---|---|
-| Foundation | Implemented | Slice 1-13 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
+| Foundation | Implemented | Slice 1-15 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
 | Jobs | Partial | Slice 4-13 | Customers, Documents, Timeline, Search, Users/Roles, Teams | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, assignment integrity, team-scope assignment controls, membership lifecycle safeguards, team role authorization, and team deletion safeguards exist. |
 | Customers | Partial | Slice 1 | Foundation, Timeline, Search | TBD | Data model expansion without governance | Core customer lifecycle exists. |
 | Quotes | Not Started | N/A | Customers, Documents, Timeline, Numbering, PDF | TBD | Contract drift with invoice model | Placeholder only. |
-| Invoices | Partial | Slice 1-2 | Customers, Documents, Timeline, Numbering, PDF | TBD | Regulatory/rules expansion risk | Draft/finalise/immutability baseline exists. |
+| Invoices | Partial | Slice 1-2,14-15 | Customers, Documents, Timeline, Numbering, PDF | TBD | Regulatory/rules expansion risk | Draft/finalise/immutability baseline exists; finalisation audit-readiness coverage is strengthened via existing `invoice.finalised` timeline semantics and deterministic timeline lookup tests. |
 | Payments | Not Started | N/A | Invoices, Timeline, Integrations | TBD | External dependency risk | Placeholder only. |
 | Scheduling | Partial | Slice 6 | Jobs, Timeline | TBD | Transition rule complexity | Start/end scheduling exists for jobs. |
 | Calendar | Not Started | N/A | Scheduling, Users/Roles, Notifications | TBD | Integration coupling risk | Placeholder only. |
@@ -40,7 +40,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Dashboard | Not Started | N/A | Reporting, Jobs, Invoices | TBD | UX scope creep risk | Placeholder only. |
 | Settings | Partial | Slice 1 | Business profile, Preferences, Validation | TBD | Configuration sprawl risk | Branding/preferences baseline exists. |
 | Integrations | Not Started | N/A | Security, Audit, Payments, Calendar | TBD | Third-party contract volatility | Placeholder only. |
-| Audit | Partial | Slice 1-13 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including team lifecycle, membership lifecycle, and assignment scope events. |
+| Audit | Partial | Slice 1-15 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including invoice finalisation audit visibility via existing timeline endpoint and deterministic lookup coverage. |
 | Administration | Not Started | N/A | Users/Roles, Audit, Settings | TBD | Privilege escalation risk | Placeholder only. |
 
 ## Cross-References

@@ -126,9 +126,16 @@
 - Preserved team/job assignment integrity and team deletion safeguards against linked jobs (`TEAM_HAS_JOBS`) while requiring owner authorization for team deletion when memberships exist.
 - Added unit, integration, and e2e coverage for authorization paths, role updates, and regressions.
 
+#### Slice 15 — Final Invoice Audit Trail + Query Readiness
+- Commit: `ca2e8491ad5ef32284af6eb0ec774b9de48e944b`
+- Executed as strict test/docs scope with no new final invoice entity, no new timeline taxonomy keys, and no new API endpoints.
+- Confirmed existing `invoice.finalised` lifecycle event is the canonical audit event for final invoice state readiness.
+- Added focused end-to-end proof coverage that finalised invoices remain immutable for update routes, `invoice.finalised` is queryable via existing timeline endpoint, and missing/invalid timeline lookups are deterministic under current endpoint behavior.
+- Preserved current architecture decisions: no read/list timeline events and no organizationId scoping changes.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 13 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 15 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
