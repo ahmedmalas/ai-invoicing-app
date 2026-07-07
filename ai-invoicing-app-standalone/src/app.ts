@@ -20,6 +20,7 @@ import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
+import { reportRoutes } from './routes/reports.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -185,6 +186,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(searchRoutes);
   await app.register(timelineRoutes);
   await app.register(statementRoutes);
+  await app.register(reportRoutes);
   await app.register(creditNoteRoutes);
   await app.register(paymentRoutes);
   await app.register(supplierRoutes);

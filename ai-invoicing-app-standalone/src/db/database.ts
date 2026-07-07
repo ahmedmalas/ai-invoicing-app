@@ -519,6 +519,84 @@ export interface CustomerStatementReport {
   creditsOmittedReason: string;
 }
 
+export interface ReportingInvoiceRow {
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  issueDate: string;
+  totalInvoiced: number;
+  totalCredited: number;
+  totalPaid: number;
+  outstanding: number;
+}
+
+export interface ReportingCustomerStatementRow {
+  customerId: string;
+  customerName: string;
+  openingBalance: number;
+  activity: number;
+  closingBalance: number;
+}
+
+export interface ReportingPurchaseOrderRow {
+  purchaseOrderId: string;
+  purchaseOrderNumber: string;
+  supplierId: string;
+  issueDate: string;
+  totalOrdered: number;
+  totalBilled: number;
+  remainingValue: number;
+}
+
+export interface ReportingSupplierBillRow {
+  supplierBillId: string;
+  supplierId: string;
+  billNumber: string | null;
+  billDate: string;
+  status: SupplierBillStatus;
+  totalBilled: number;
+  totalPaid: number;
+  outstanding: number;
+}
+
+export interface ReportingReadModel {
+  generatedAt: string;
+  filters: {
+    from: string | null;
+    to: string | null;
+    limit: number;
+    offset: number;
+  };
+  accountsReceivable: {
+    totals: {
+      totalInvoiced: number;
+      totalCredited: number;
+      totalPaid: number;
+      outstanding: number;
+    };
+    invoices: ReportingInvoiceRow[];
+    customerStatements: ReportingCustomerStatementRow[];
+  };
+  accountsPayable: {
+    totals: {
+      totalOrdered: number;
+      totalBilled: number;
+      totalPaid: number;
+      remainingOrderedValue: number;
+      supplierBillOutstanding: number;
+    };
+    purchaseOrders: ReportingPurchaseOrderRow[];
+    supplierBills: ReportingSupplierBillRow[];
+  };
+}
+
+export interface ReportingReadModelQueryOptions {
+  from?: string | null;
+  to?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
 interface TimelineQueryOptions {
   eventKey?: string;
   limit?: number;
@@ -597,6 +675,7 @@ export interface AppDatabase {
   linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
   listJobDocuments(jobId: string): JobDocumentLinkRecord[];
   getCustomerStatement(customerId: string, from?: string | null, to?: string | null): CustomerStatementReport;
+  getReportingReadModel(options?: ReportingReadModelQueryOptions): ReportingReadModel;
   getTimelineForEntity(
     entityType: string,
     entityId: string,
@@ -3920,6 +3999,273 @@ export function createDatabase(dbPath: string): AppDatabase {
         entries,
         creditsSupported: false,
         creditsOmittedReason: 'Credits are not supported in the current invoice architecture.',
+      };
+    },
+
+    getReportingReadModel(options) {
+      const query = options ?? {};
+      const from = query.from ?? null;
+      const to = query.to ?? null;
+      const limit = query.limit ?? 25;
+      const offset = query.offset ?? 0;
+
+      const invoiceRows = db
+        .prepare(
+          `SELECT *
+           FROM invoices
+           WHERE status = 'Finalised'
+             AND (? IS NULL OR issue_date >= ?)
+             AND (? IS NULL OR issue_date <= ?)
+           ORDER BY issue_date ASC, created_at ASC, id ASC`,
+        )
+        .all(from, from, to, to) as DbInvoiceRow[];
+      const pagedInvoiceRows = invoiceRows.slice(offset, offset + limit);
+      const invoices = pagedInvoiceRows.map((invoiceRow) => {
+        const creditedRow = db
+          .prepare(
+            `SELECT coalesce(sum(total_credit), 0) AS amount
+             FROM credit_notes
+             WHERE linked_invoice_id = ?`,
+          )
+          .get(invoiceRow.id) as { amount: number };
+        const paidRow = db
+          .prepare(
+            `SELECT coalesce(sum(pa.amount), 0) AS amount
+             FROM payment_allocations pa
+             INNER JOIN customer_payments cp ON cp.id = pa.payment_id
+             WHERE pa.invoice_id = ?`,
+          )
+          .get(invoiceRow.id) as { amount: number };
+        const totalCredited = Number(creditedRow.amount ?? 0);
+        const totalPaid = Number(paidRow.amount ?? 0);
+        const outstanding = invoiceRow.total - totalCredited - totalPaid;
+        return {
+          invoiceId: invoiceRow.id,
+          invoiceNumber: invoiceRow.invoice_number ?? invoiceRow.id,
+          customerId: invoiceRow.customer_id,
+          issueDate: invoiceRow.issue_date,
+          totalInvoiced: invoiceRow.total,
+          totalCredited,
+          totalPaid,
+          outstanding,
+        };
+      });
+      const arTotalInvoiced = invoiceRows.reduce((sum, row) => sum + row.total, 0);
+      const arTotalCredited = invoiceRows.reduce((sum, row) => {
+        const creditedRow = db
+          .prepare(
+            `SELECT coalesce(sum(total_credit), 0) AS amount
+             FROM credit_notes
+             WHERE linked_invoice_id = ?`,
+          )
+          .get(row.id) as { amount: number };
+        return sum + Number(creditedRow.amount ?? 0);
+      }, 0);
+      const arTotalPaid = invoiceRows.reduce((sum, row) => {
+        const paidRow = db
+          .prepare(
+            `SELECT coalesce(sum(pa.amount), 0) AS amount
+             FROM payment_allocations pa
+             INNER JOIN customer_payments cp ON cp.id = pa.payment_id
+             WHERE pa.invoice_id = ?`,
+          )
+          .get(row.id) as { amount: number };
+        return sum + Number(paidRow.amount ?? 0);
+      }, 0);
+
+      const customers = db
+        .prepare(
+          `SELECT id, display_name
+           FROM customers
+           ORDER BY display_name ASC, id ASC`,
+        )
+        .all() as Array<{ id: string; display_name: string }>;
+      const pagedCustomers = customers.slice(offset, offset + limit);
+      const customerStatements = pagedCustomers.map((customerRow) => {
+        const openingInvoices = from
+          ? (db
+              .prepare(
+                `SELECT coalesce(sum(total), 0) AS amount
+                 FROM invoices
+                 WHERE customer_id = ?
+                   AND status = 'Finalised'
+                   AND issue_date < ?`,
+              )
+              .get(customerRow.id, from) as { amount: number }).amount
+          : 0;
+        const openingCredits = from
+          ? (db
+              .prepare(
+                `SELECT coalesce(sum(cn.total_credit), 0) AS amount
+                 FROM credit_notes cn
+                 INNER JOIN invoices i ON i.id = cn.linked_invoice_id
+                 WHERE i.customer_id = ?
+                   AND cn.issue_date < ?`,
+              )
+              .get(customerRow.id, from) as { amount: number }).amount
+          : 0;
+        const openingPayments = from
+          ? (db
+              .prepare(
+                `SELECT coalesce(sum(cp.amount), 0) AS amount
+                 FROM customer_payments cp
+                 WHERE cp.customer_id = ?
+                   AND cp.payment_date < ?`,
+              )
+              .get(customerRow.id, from) as { amount: number }).amount
+          : 0;
+        const activityInvoices = (db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM invoices
+             WHERE customer_id = ?
+               AND status = 'Finalised'
+               AND (? IS NULL OR issue_date >= ?)
+               AND (? IS NULL OR issue_date <= ?)`,
+          )
+          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
+        const activityCredits = (db
+          .prepare(
+            `SELECT coalesce(sum(cn.total_credit), 0) AS amount
+             FROM credit_notes cn
+             INNER JOIN invoices i ON i.id = cn.linked_invoice_id
+             WHERE i.customer_id = ?
+               AND (? IS NULL OR cn.issue_date >= ?)
+               AND (? IS NULL OR cn.issue_date <= ?)`,
+          )
+          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
+        const activityPayments = (db
+          .prepare(
+            `SELECT coalesce(sum(amount), 0) AS amount
+             FROM customer_payments
+             WHERE customer_id = ?
+               AND (? IS NULL OR payment_date >= ?)
+               AND (? IS NULL OR payment_date <= ?)`,
+          )
+          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
+
+        const openingBalance = openingInvoices - openingCredits - openingPayments;
+        const activity = activityInvoices - activityCredits - activityPayments;
+        const closingBalance = openingBalance + activity;
+        return {
+          customerId: customerRow.id,
+          customerName: customerRow.display_name,
+          openingBalance,
+          activity,
+          closingBalance,
+        };
+      });
+
+      const purchaseOrderRows = db
+        .prepare(
+          `SELECT *
+           FROM purchase_orders
+           WHERE (? IS NULL OR issue_date >= ?)
+             AND (? IS NULL OR issue_date <= ?)
+           ORDER BY issue_date ASC, created_at ASC, id ASC`,
+        )
+        .all(from, from, to, to) as DbPurchaseOrderRow[];
+      const pagedPurchaseOrderRows = purchaseOrderRows.slice(offset, offset + limit);
+      const purchaseOrders = pagedPurchaseOrderRows.map((purchaseOrderRow) => {
+        const billedRow = db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM supplier_bills
+             WHERE source_purchase_order_id = ?`,
+          )
+          .get(purchaseOrderRow.id) as { amount: number };
+        const totalBilled = Number(billedRow.amount ?? 0);
+        const remainingValue = purchaseOrderRow.total - totalBilled;
+        return {
+          purchaseOrderId: purchaseOrderRow.id,
+          purchaseOrderNumber: purchaseOrderRow.purchase_order_number,
+          supplierId: purchaseOrderRow.supplier_id,
+          issueDate: purchaseOrderRow.issue_date,
+          totalOrdered: purchaseOrderRow.total,
+          totalBilled,
+          remainingValue,
+        };
+      });
+
+      const supplierBillRows = db
+        .prepare(
+          `SELECT *
+           FROM supplier_bills
+           WHERE (? IS NULL OR bill_date >= ?)
+             AND (? IS NULL OR bill_date <= ?)
+           ORDER BY bill_date ASC, created_at ASC, id ASC`,
+        )
+        .all(from, from, to, to) as DbSupplierBillRow[];
+      const pagedSupplierBillRows = supplierBillRows.slice(offset, offset + limit);
+      const supplierBills = pagedSupplierBillRows.map((supplierBillRow) => {
+        const paidRow = db
+          .prepare(
+            `SELECT coalesce(sum(spa.amount), 0) AS amount
+             FROM supplier_payment_allocations spa
+             INNER JOIN supplier_payments sp ON sp.id = spa.supplier_payment_id
+             WHERE spa.supplier_bill_id = ?`,
+          )
+          .get(supplierBillRow.id) as { amount: number };
+        const totalPaid = Number(paidRow.amount ?? 0);
+        const outstanding = supplierBillRow.total - totalPaid;
+        return {
+          supplierBillId: supplierBillRow.id,
+          supplierId: supplierBillRow.supplier_id,
+          billNumber: supplierBillRow.bill_number,
+          billDate: supplierBillRow.bill_date,
+          status: supplierBillRow.status,
+          totalBilled: supplierBillRow.total,
+          totalPaid,
+          outstanding,
+        };
+      });
+
+      const apTotalOrdered = purchaseOrderRows.reduce((sum, row) => sum + row.total, 0);
+      const apTotalBilled = supplierBillRows.reduce((sum, row) => sum + row.total, 0);
+      const apTotalPaid = (db
+        .prepare(
+          `SELECT coalesce(sum(spa.amount), 0) AS amount
+           FROM supplier_payment_allocations spa
+           INNER JOIN supplier_payments sp ON sp.id = spa.supplier_payment_id
+           WHERE (? IS NULL OR sp.payment_date >= ?)
+             AND (? IS NULL OR sp.payment_date <= ?)`,
+        )
+        .get(from, from, to, to) as { amount: number }).amount;
+      const apRemainingOrderedValue = purchaseOrderRows.reduce((sum, row) => {
+        const billedRow = db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM supplier_bills
+             WHERE source_purchase_order_id = ?`,
+          )
+          .get(row.id) as { amount: number };
+        return sum + (row.total - Number(billedRow.amount ?? 0));
+      }, 0);
+
+      return {
+        generatedAt: nowIso(),
+        filters: { from, to, limit, offset },
+        accountsReceivable: {
+          totals: {
+            totalInvoiced: arTotalInvoiced,
+            totalCredited: arTotalCredited,
+            totalPaid: arTotalPaid,
+            outstanding: arTotalInvoiced - arTotalCredited - arTotalPaid,
+          },
+          invoices,
+          customerStatements,
+        },
+        accountsPayable: {
+          totals: {
+            totalOrdered: apTotalOrdered,
+            totalBilled: apTotalBilled,
+            totalPaid: Number(apTotalPaid ?? 0),
+            remainingOrderedValue: apRemainingOrderedValue,
+            supplierBillOutstanding: apTotalBilled - Number(apTotalPaid ?? 0),
+          },
+          purchaseOrders,
+          supplierBills,
+        },
       };
     },
 
