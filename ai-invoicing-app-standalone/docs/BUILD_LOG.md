@@ -197,9 +197,18 @@
 - Extended supplier bill read filters to support `sourcePurchaseOrderId`, preserving existing filtering patterns and search/document architecture.
 - Added focused end-to-end coverage proving conversion success, duplicate-conversion blocking, draft-order rejection, and linkage/query correctness without introducing inventory, goods receipts, stock movements, or ledgers.
 
+#### Slice 24 — Purchase Order Billing Status & Partial Conversion
+- Commit: `846ce07dd10b717f8f9f7d9c2d3f5fdb0b2611e4`
+- Extended PO-to-supplier-bill conversion to support partial line-item and partial-quantity billing across multiple supplier bills.
+- Added calculated (non-persisted) purchase-order billing status and amounts: `unbilled`, `partially_billed`, `fully_billed`, plus total billed and remaining unbilled.
+- Enforced deterministic over-billing guardrails for line quantities and remaining PO amount, with approved-only billing behavior preserved.
+- Added PO/Supplier-Bill linkage rendering in HTML/PDF outputs while reusing existing PDF infrastructure.
+- Added timeline emissions for billing progression and PO-origin supplier bill creation (`purchase_order.partially_billed`, `purchase_order.fully_billed`, `supplier_bill.created_from_purchase_order`).
+- Added focused validation and e2e coverage for partial conversion progression, over-billing rejection, linkage retrieval, and calculated-status behavior without inventory, goods receipts, stock movement, or ledger additions.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 23 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 24 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
