@@ -164,7 +164,9 @@ describe('supplier bill po-link guardrails e2e', () => {
       },
     });
     expect(missingSourceLineRes.statusCode).toBe(409);
-    expect(missingSourceLineRes.json()).toMatchObject({ message: 'SUPPLIER_BILL_LINKED_LINE_SOURCE_REQUIRED' });
+    expect(missingSourceLineRes.json()).toMatchObject({
+      message: 'SUPPLIER_BILL_SOURCE_PO_LINE_REFERENCE_IMMUTABLE',
+    });
 
     const changeSourceLineReferenceRes = await app.inject({
       method: 'PUT',
@@ -291,8 +293,14 @@ describe('supplier bill po-link guardrails e2e', () => {
     expect(validPriceAndNotesAmend.notes).toBe('Draft amendment note');
     expect(validPriceAndNotesAmend.dueDate).toBe('2026-08-11');
     expect(validPriceAndNotesAmend.supplierReference).toBe('PO-AMEND-1');
-    expect(validPriceAndNotesAmend.lineItems?.[0]?.description).toBe('Line A amended');
-    expect(validPriceAndNotesAmend.lineItems?.[0]?.unitPrice).toBe(45);
+    const validPriceAndNotesDetailsRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedBill1.id}`,
+    });
+    expect(validPriceAndNotesDetailsRes.statusCode).toBe(200);
+    const validPriceAndNotesDetails = supplierBillSchema.parse(validPriceAndNotesDetailsRes.json());
+    expect(validPriceAndNotesDetails.lineItems?.[0]?.description).toBe('Line A amended');
+    expect(validPriceAndNotesDetails.lineItems?.[0]?.unitPrice).toBe(45);
 
     const validLinkedEditRes = await app.inject({
       method: 'PUT',
@@ -318,7 +326,13 @@ describe('supplier bill po-link guardrails e2e', () => {
     const validLinkedEdit = supplierBillSchema.parse(validLinkedEditRes.json());
     expect(validLinkedEdit.sourcePurchaseOrderId).toBe(poDraft.id);
     expect(validLinkedEdit.notes).toBe('Draft final amendment note');
-    expect(validLinkedEdit.lineItems?.[0]?.sourcePurchaseOrderLineItemId).toBe(poLineAId);
+    const validLinkedEditDetailsRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${linkedBill1.id}`,
+    });
+    expect(validLinkedEditDetailsRes.statusCode).toBe(200);
+    const validLinkedEditDetails = supplierBillSchema.parse(validLinkedEditDetailsRes.json());
+    expect(validLinkedEditDetails.lineItems?.[0]?.sourcePurchaseOrderLineItemId).toBe(poLineAId);
 
     const poAfterDraftEditRes = await app.inject({
       method: 'GET',
