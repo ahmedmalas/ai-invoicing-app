@@ -171,9 +171,18 @@
 - Added immutable behavior protections for finalised supplier bills and line items at both application and persistence levels.
 - Added focused unit and end-to-end coverage proving lifecycle, validation rejection paths, timeline emissions, search participation, and finalised immutability.
 
+#### Slice 21 — Supplier Bill Payments (Accounts Payable Payments)
+- Commit: `72d476319a0339c38bf9bd3e07fef639a41a7ad9`
+- Added first-class supplier payment persistence with allocation records linked to finalised supplier bills.
+- Added lifecycle-safe allocation validation for bill existence/finalised state/supplier match, duplicate allocations, positive amounts, payment amount caps, and per-bill outstanding caps.
+- Added deterministic read model filters for supplier, supplier bill, and payment date ranges.
+- Added supplier payment receipt HTML and PDF rendering through the existing PDF service pipeline (`src/services/pdf-service.ts`) and route conventions.
+- Added `supplier_payment.created` and `supplier_payment.allocated` timeline taxonomy events and emissions via existing audit architecture.
+- Added focused unit and end-to-end coverage for full/partial/multi-bill allocations, rejection paths, retrieval/filtering, rendering, timeline events, search participation, and bill-total immutability proof.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 20 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 21 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
