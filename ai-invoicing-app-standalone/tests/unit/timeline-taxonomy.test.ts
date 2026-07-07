@@ -8,6 +8,7 @@ import {
 describe('timeline taxonomy validator', () => {
   it('accepts canonical event keys at version 1', () => {
     expect(isValidTimelineEventKey('invoice.finalised')).toBe(true);
+    expect(isValidTimelineEventKey('credit_note.created')).toBe(true);
     expect(isValidTimelineEventKey('job.created')).toBe(true);
     expect(isValidTimelineEventKey('job.document_linked')).toBe(true);
     expect(isValidTimelineEventKey('document.linked_to_job')).toBe(true);
@@ -20,6 +21,7 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('team.deleted')).toBe(true);
     expect(isValidTimelineEventKey('job.assignment_scope_set')).toBe(true);
     expect(() => assertValidTimelineEventOrThrow('invoice.finalised', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('credit_note.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.document_linked', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('document.linked_to_job', 1)).not.toThrow();

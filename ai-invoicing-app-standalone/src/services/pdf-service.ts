@@ -1,6 +1,12 @@
 import PDFDocument from 'pdfkit';
 
-import type { BrandingProfile, Customer, InvoiceDraft, LineItemInput } from '../types/entities.js';
+import type {
+  BrandingProfile,
+  CreditNote,
+  Customer,
+  InvoiceDraft,
+  LineItemInput,
+} from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
 
 export function generateInvoicePdfBuffer(input: {
@@ -165,6 +171,73 @@ export function generateCustomerStatementPdfBuffer(input: {
         doc.text(entry.total.toFixed(2), 470, y, { width: 78, align: 'right' });
       }
     }
+
+    doc.end();
+  });
+}
+
+export function generateCreditNotePdfBuffer(input: {
+  creditNote: CreditNote;
+  customer: Customer;
+  businessProfile: BrandingProfile | null;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: 'A4' });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', (err) => reject(err));
+
+    const profile = input.businessProfile;
+    const brandPrimary = profile?.primaryColor ?? '#0f172a';
+
+    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    doc.moveDown(0.2);
+    doc.fillColor('#111827').fontSize(16).text('Credit Note', { align: 'right' });
+    doc.fontSize(11).text(`Credit Note #: ${input.creditNote.creditNoteNumber}`, { align: 'right' });
+    doc.text(`Issue Date: ${input.creditNote.issueDate}`, { align: 'right' });
+    doc.text(`Linked Invoice: ${input.creditNote.linkedInvoiceId}`, { align: 'right' });
+
+    doc.moveDown(1);
+    doc.fontSize(12).fillColor('#111827').text('Customer');
+    doc.fontSize(11).text(input.customer.displayName);
+    if (input.customer.address) {
+      doc.text(input.customer.address);
+    }
+    if (input.customer.email) {
+      doc.text(input.customer.email);
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(12).text('Reason');
+    doc.fontSize(11).text(input.creditNote.reason);
+
+    doc.moveDown(1);
+    doc.fontSize(12).text('Credited Items');
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#6b7280').text('Description', 50, doc.y, { width: 370 });
+    doc.text('Amount', 430, doc.y - 12, { width: 118, align: 'right' });
+    doc.moveDown(0.4);
+    doc.strokeColor('#d1d5db').lineWidth(1).moveTo(48, doc.y).lineTo(548, doc.y).stroke();
+
+    for (const item of input.creditNote.lineItems) {
+      doc.moveDown(0.6);
+      const y = doc.y;
+      doc.fillColor('#111827').fontSize(10).text(item.description, 50, y, { width: 370 });
+      doc.text(item.amount.toFixed(2), 430, y, { width: 118, align: 'right' });
+    }
+
+    doc.moveDown(1.2);
+    doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(330, doc.y).lineTo(548, doc.y).stroke();
+    doc.moveDown(0.5);
+    doc
+      .fontSize(13)
+      .fillColor(brandPrimary)
+      .text(`Total Credit: ${input.creditNote.totalCredit.toFixed(2)}`, 380, doc.y, {
+        width: 168,
+        align: 'right',
+      });
 
     doc.end();
   });

@@ -6,6 +6,9 @@ import { readFileSync } from 'node:fs';
 
 import type {
   BrandingProfile,
+  CreditNote,
+  CreditNoteLineItem,
+  CreditNoteType,
   Customer,
   DocumentRecord,
   InvoiceDraft,
@@ -56,6 +59,21 @@ interface DbInvoiceRow {
   subtotal: number;
   gst_total: number;
   total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbCreditNoteRow {
+  id: string;
+  credit_note_number: string;
+  linked_invoice_id: string;
+  customer_id: string;
+  issue_date: string;
+  reason: string;
+  type: CreditNoteType;
+  status: 'Issued';
+  total_credit: number;
+  line_items_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -136,6 +154,15 @@ export interface CreateInvoiceDraftInput {
   lineItems: LineItemInput[];
 }
 
+export interface CreateCreditNoteInput {
+  linkedInvoiceId: string;
+  issueDate: string;
+  reason: string;
+  type: CreditNoteType;
+  lineItems?: CreditNoteLineItem[] | undefined;
+  adjustmentAmount?: number | undefined;
+}
+
 export interface CreateJobInput {
   title: string;
   description?: string | undefined;
@@ -206,6 +233,11 @@ export interface SearchResults {
   jobs: Job[];
 }
 
+export interface ListCreditNotesFilter {
+  customerId?: string;
+  linkedInvoiceId?: string;
+}
+
 export interface JobDocumentLinkRecord {
   id: string;
   jobId: string;
@@ -251,6 +283,9 @@ export interface AppDatabase {
   updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): InvoiceDraft;
   getInvoiceById(id: string): (InvoiceDraft & { lineItems: LineItemInput[] }) | null;
   finaliseInvoice(id: string): InvoiceDraft;
+  createCreditNote(input: CreateCreditNoteInput): CreditNote;
+  getCreditNoteById(id: string): CreditNote | null;
+  listCreditNotes(filter?: ListCreditNotesFilter): CreditNote[];
   createRole(input: CreateRoleInput): Role;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
@@ -322,6 +357,23 @@ function mapInvoiceRow(row: DbInvoiceRow): InvoiceDraft {
       gstTotal: row.gst_total,
       total: row.total,
     },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCreditNoteRow(row: DbCreditNoteRow): CreditNote {
+  return {
+    id: row.id,
+    creditNoteNumber: row.credit_note_number,
+    linkedInvoiceId: row.linked_invoice_id,
+    customerId: row.customer_id,
+    issueDate: row.issue_date,
+    reason: row.reason,
+    type: row.type,
+    status: row.status,
+    totalCredit: row.total_credit,
+    lineItems: JSON.parse(row.line_items_json) as CreditNoteLineItem[],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -504,6 +556,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       'invoice.draft_created',
       'invoice.draft_updated',
       'invoice.finalised',
+      'credit_note.created',
       'customer.created',
       'customer.updated',
       'business_profile.updated',
@@ -1044,6 +1097,162 @@ export function createDatabase(dbPath: string): AppDatabase {
       });
 
       return finalised;
+    },
+
+    createCreditNote(input) {
+      const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(input.linkedInvoiceId) as
+        | DbInvoiceRow
+        | undefined;
+      if (!invoice) {
+        throw new Error('Invoice not found');
+      }
+      if (invoice.status !== 'Finalised') {
+        throw new Error('CREDIT_NOTE_REQUIRES_FINALISED_INVOICE');
+      }
+      if (invoice.payment_state === 'Cancelled') {
+        throw new Error('CREDIT_NOTE_FOR_CANCELLED_INVOICE_FORBIDDEN');
+      }
+
+      let lineItems: CreditNoteLineItem[] = [];
+      let totalCredit = 0;
+
+      if (input.type === 'Full') {
+        const existingFullCredit = db
+          .prepare(
+            `SELECT COUNT(1) AS total
+             FROM credit_notes
+             WHERE linked_invoice_id = ? AND type = 'Full' AND status = 'Issued'`,
+          )
+          .get(input.linkedInvoiceId) as { total: number };
+        if (existingFullCredit.total > 0) {
+          throw new Error('CREDIT_NOTE_FULL_ALREADY_EXISTS');
+        }
+        totalCredit = invoice.total;
+        lineItems = [
+          {
+            description: `Full credit for ${invoice.invoice_number ?? invoice.id}`,
+            amount: invoice.total,
+          },
+        ];
+      } else {
+        if (input.lineItems && input.lineItems.length > 0) {
+          lineItems = input.lineItems;
+        } else if (input.adjustmentAmount && input.adjustmentAmount > 0) {
+          lineItems = [
+            {
+              description: 'Partial credit adjustment',
+              amount: input.adjustmentAmount,
+            },
+          ];
+        } else {
+          throw new Error('CREDIT_NOTE_PARTIAL_AMOUNT_REQUIRED');
+        }
+        totalCredit = lineItems.reduce((sum, item) => sum + item.amount, 0);
+      }
+
+      if (totalCredit <= 0) {
+        throw new Error('CREDIT_NOTE_AMOUNT_INVALID');
+      }
+      if (totalCredit > invoice.total) {
+        throw new Error('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL');
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM credit_note_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+      let prefix = 'CRN';
+      let sequence = 1;
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO credit_note_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE credit_note_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE credit_note_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
+        }
+      }
+
+      const id = randomUUID();
+      const creditNoteNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const now = nowIso();
+      db.prepare(
+        `INSERT INTO credit_notes (
+          id,
+          credit_note_number,
+          linked_invoice_id,
+          customer_id,
+          issue_date,
+          reason,
+          type,
+          status,
+          total_credit,
+          line_items_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        creditNoteNumber,
+        input.linkedInvoiceId,
+        invoice.customer_id,
+        input.issueDate,
+        input.reason,
+        input.type,
+        'Issued',
+        totalCredit,
+        JSON.stringify(lineItems),
+        now,
+        now,
+      );
+
+      upsertDocument(
+        id,
+        `${creditNoteNumber} ${input.reason}`,
+        'custom',
+        `${creditNoteNumber} ${input.reason} ${invoice.invoice_number ?? input.linkedInvoiceId}`,
+      );
+      timeline('credit_note.created', id, {
+        linkedInvoiceId: input.linkedInvoiceId,
+        type: input.type,
+        totalCredit,
+      });
+
+      const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow;
+      return mapCreditNoteRow(row);
+    },
+
+    getCreditNoteById(id) {
+      const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow | undefined;
+      return row ? mapCreditNoteRow(row) : null;
+    },
+
+    listCreditNotes(filter) {
+      const rowFilter = filter ?? {};
+      const rows = db
+        .prepare(
+          `SELECT * FROM credit_notes
+           WHERE (? IS NULL OR customer_id = ?)
+             AND (? IS NULL OR linked_invoice_id = ?)
+           ORDER BY issue_date DESC, created_at DESC`,
+        )
+        .all(
+          rowFilter.customerId ?? null,
+          rowFilter.customerId ?? null,
+          rowFilter.linkedInvoiceId ?? null,
+          rowFilter.linkedInvoiceId ?? null,
+        ) as DbCreditNoteRow[];
+      return rows.map(mapCreditNoteRow);
     },
 
     createRole(input) {

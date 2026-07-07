@@ -164,6 +164,30 @@ CREATE TABLE IF NOT EXISTS invoice_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS credit_notes (
+  id TEXT PRIMARY KEY,
+  credit_note_number TEXT NOT NULL UNIQUE,
+  linked_invoice_id TEXT NOT NULL,
+  customer_id TEXT NOT NULL,
+  issue_date TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  total_credit REAL NOT NULL,
+  line_items_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (linked_invoice_id) REFERENCES invoices(id),
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE IF NOT EXISTS credit_note_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
@@ -212,6 +236,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user
 ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number);
+CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
+CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(linked_invoice_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

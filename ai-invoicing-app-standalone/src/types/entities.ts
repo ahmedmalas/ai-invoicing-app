@@ -137,3 +137,26 @@ export interface Job {
   createdAt: string;
   updatedAt: string;
 }
+
+export type CreditNoteType = 'Full' | 'Partial';
+export type CreditNoteStatus = 'Issued';
+
+export interface CreditNoteLineItem {
+  description: string;
+  amount: number;
+}
+
+export interface CreditNote {
+  id: UUID;
+  creditNoteNumber: string;
+  linkedInvoiceId: UUID;
+  customerId: UUID;
+  issueDate: string;
+  reason: string;
+  type: CreditNoteType;
+  status: CreditNoteStatus;
+  totalCredit: number;
+  lineItems: CreditNoteLineItem[];
+  createdAt: string;
+  updatedAt: string;
+}

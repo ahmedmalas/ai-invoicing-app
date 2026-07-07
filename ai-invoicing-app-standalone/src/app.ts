@@ -14,6 +14,7 @@ import { preferenceRoutes } from './routes/preferences.js';
 import { searchRoutes } from './routes/search.js';
 import { timelineRoutes } from './routes/timeline.js';
 import { statementRoutes } from './routes/statements.js';
+import { creditNoteRoutes } from './routes/credit-notes.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -66,6 +67,12 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS') ||
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||
+      errorMessage.includes('CREDIT_NOTE_REQUIRES_FINALISED_INVOICE') ||
+      errorMessage.includes('CREDIT_NOTE_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
+      errorMessage.includes('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL') ||
+      errorMessage.includes('CREDIT_NOTE_FULL_ALREADY_EXISTS') ||
+      errorMessage.includes('CREDIT_NOTE_PARTIAL_AMOUNT_REQUIRED') ||
+      errorMessage.includes('CREDIT_NOTE_AMOUNT_INVALID') ||
       errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
       errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
       errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
@@ -100,6 +107,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(searchRoutes);
   await app.register(timelineRoutes);
   await app.register(statementRoutes);
+  await app.register(creditNoteRoutes);
 
   return app;
 }
