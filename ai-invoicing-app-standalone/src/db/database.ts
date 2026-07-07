@@ -2804,6 +2804,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       if (!order) {
         throw new Error('Purchase order not found');
       }
+      if (order.status === 'Approved') {
+        throw new Error('PURCHASE_ORDER_ALREADY_APPROVED');
+      }
       assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Approved');
       db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Approved', nowIso(), id);
       timeline('purchase_order.approved', id, {
@@ -3920,7 +3923,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         created_at AS createdAt
       FROM timeline_events
        WHERE ${whereClauses.join(' AND ')}
-       ORDER BY created_at ASC, id ASC`;
+       ORDER BY created_at ASC, rowid ASC`;
       if (typeof queryOptions.limit === 'number') {
         sql += ' LIMIT ?';
         params.push(queryOptions.limit);

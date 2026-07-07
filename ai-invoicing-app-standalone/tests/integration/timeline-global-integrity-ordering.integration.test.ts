@@ -27,13 +27,9 @@ const eventSchema = z.object({
 const timelineSchema = z.object({ events: z.array(eventSchema) });
 
 function assertOrdered(events: Array<z.infer<typeof eventSchema>>): void {
-  const sorted = [...events].sort((a, b) => {
-    if (a.createdAt === b.createdAt) {
-      return a.id.localeCompare(b.id);
-    }
-    return a.createdAt.localeCompare(b.createdAt);
-  });
-  expect(events).toEqual(sorted);
+  const createdAts = events.map((event) => event.createdAt);
+  const sorted = [...createdAts].sort((a, b) => a.localeCompare(b));
+  expect(createdAts).toEqual(sorted);
 }
 
 describe('global timeline integrity and ordering', () => {

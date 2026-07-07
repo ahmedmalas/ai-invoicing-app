@@ -141,6 +141,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING') ||
       errorMessage.includes('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE') ||
       errorMessage.includes('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE') ||
+      errorMessage.includes('PURCHASE_ORDER_ALREADY_APPROVED') ||
       errorMessage.includes('PURCHASE_ORDER_ALREADY_CLOSED') ||
       errorMessage.includes('PURCHASE_ORDER_CLOSE_REASON_REQUIRED') ||
       errorMessage.includes('PURCHASE_ORDER_CLOSE_DATE_REQUIRED') ||

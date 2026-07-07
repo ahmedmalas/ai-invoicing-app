@@ -17,9 +17,14 @@ export const timelineRoutes: FastifyPluginAsync = async (app) => {
         offset: z.coerce.number().int().min(0).optional(),
       })
       .parse(request.query);
+    const options = {
+      ...(query.eventKey !== undefined ? { eventKey: query.eventKey } : {}),
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(query.offset !== undefined ? { offset: query.offset } : {}),
+    };
 
     return {
-      events: app.db.getTimelineForEntity(params.entityType, params.entityId, query),
+      events: app.db.getTimelineForEntity(params.entityType, params.entityId, options),
     };
   });
 };
