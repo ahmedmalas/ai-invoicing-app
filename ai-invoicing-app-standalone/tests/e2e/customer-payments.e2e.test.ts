@@ -226,7 +226,7 @@ describe('customer payments e2e', () => {
         paymentDate: '2026-07-11',
         paymentMethod: 'Card',
         reference: 'PAY-MULTI-1',
-        amount: 220,
+        amount: 230,
         allocations: [
           { invoiceId: invoiceA1.id, amount: invoiceA1.totals.total - 100 },
           { invoiceId: invoiceA2.id, amount: invoiceA2.totals.total },
