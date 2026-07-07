@@ -19,6 +19,7 @@ import { paymentRoutes } from './routes/payments.js';
 import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
+import { purchaseOrderRoutes } from './routes/purchase-orders.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -94,6 +95,13 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_SUPPLIER_MISMATCH') ||
       errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN') ||
       errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
+      errorMessage.includes('PURCHASE_ORDER_REFERENCE_EXISTS') ||
+      errorMessage.includes('INVALID_PURCHASE_ORDER_STATUS_TRANSITION') ||
+      errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
+      errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
+      errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||
+      errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT') ||
+      errorMessage.includes('Only draft purchase orders can be edited') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT') ||
@@ -138,6 +146,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(supplierRoutes);
   await app.register(supplierBillRoutes);
   await app.register(supplierPaymentRoutes);
+  await app.register(purchaseOrderRoutes);
 
   return app;
 }

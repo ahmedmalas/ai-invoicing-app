@@ -1,0 +1,27 @@
+import { describe, expect, it } from 'vitest';
+
+import { createPurchaseOrderDraftSchema } from '../../src/domain/purchase-orders/validation.js';
+
+describe('purchase order validation', () => {
+  it('accepts valid purchase order draft payload', () => {
+    const parsed = createPurchaseOrderDraftSchema.parse({
+      supplierId: '550e8400-e29b-41d4-a716-446655440000',
+      issueDate: '2026-07-07',
+      expectedDeliveryDate: '2026-07-14',
+      currency: 'AUD',
+      lineItems: [{ description: 'Material', quantity: 1, unitPrice: 10, gstApplicable: true }],
+    });
+    expect(parsed.lineItems.length).toBe(1);
+  });
+
+  it('rejects empty line items', () => {
+    expect(() =>
+      createPurchaseOrderDraftSchema.parse({
+        supplierId: '550e8400-e29b-41d4-a716-446655440000',
+        issueDate: '2026-07-07',
+        currency: 'AUD',
+        lineItems: [],
+      }),
+    ).toThrow();
+  });
+});

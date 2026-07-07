@@ -15,6 +15,10 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('supplier_bill.finalised')).toBe(true);
     expect(isValidTimelineEventKey('supplier_payment.created')).toBe(true);
     expect(isValidTimelineEventKey('supplier_payment.allocated')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.created')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.approved')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.closed')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.cancelled')).toBe(true);
     expect(isValidTimelineEventKey('job.created')).toBe(true);
     expect(isValidTimelineEventKey('job.document_linked')).toBe(true);
     expect(isValidTimelineEventKey('document.linked_to_job')).toBe(true);
@@ -34,6 +38,10 @@ describe('timeline taxonomy validator', () => {
     expect(() => assertValidTimelineEventOrThrow('supplier_bill.finalised', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('supplier_payment.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('supplier_payment.allocated', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.created', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.approved', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.closed', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.cancelled', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.document_linked', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('document.linked_to_job', 1)).not.toThrow();

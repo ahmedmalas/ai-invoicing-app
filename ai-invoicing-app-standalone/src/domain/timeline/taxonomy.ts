@@ -11,6 +11,10 @@ export const TIMELINE_EVENT_KEYS = [
   'supplier_bill.finalised',
   'supplier_payment.created',
   'supplier_payment.allocated',
+  'purchase_order.created',
+  'purchase_order.approved',
+  'purchase_order.closed',
+  'purchase_order.cancelled',
   'customer.created',
   'customer.updated',
   'business_profile.updated',
@@ -38,6 +42,7 @@ export type TimelineCategory =
   | 'payment'
   | 'supplier_bill'
   | 'supplier_payment'
+  | 'purchase_order'
   | 'customer'
   | 'business_profile'
   | 'preferences'
@@ -193,6 +198,46 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.supplier_payment.allocated.v1',
     legacyEventType: 'Supplier Payment Allocated',
+  },
+  'purchase_order.created': {
+    key: 'purchase_order.created',
+    version: 1,
+    category: 'purchase_order',
+    entityType: 'purchase_order',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.purchase_order.created.v1',
+    legacyEventType: 'Purchase Order Created',
+  },
+  'purchase_order.approved': {
+    key: 'purchase_order.approved',
+    version: 1,
+    category: 'purchase_order',
+    entityType: 'purchase_order',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.purchase_order.approved.v1',
+    legacyEventType: 'Purchase Order Approved',
+  },
+  'purchase_order.closed': {
+    key: 'purchase_order.closed',
+    version: 1,
+    category: 'purchase_order',
+    entityType: 'purchase_order',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.purchase_order.closed.v1',
+    legacyEventType: 'Purchase Order Closed',
+  },
+  'purchase_order.cancelled': {
+    key: 'purchase_order.cancelled',
+    version: 1,
+    category: 'purchase_order',
+    entityType: 'purchase_order',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.purchase_order.cancelled.v1',
+    legacyEventType: 'Purchase Order Cancelled',
   },
   'customer.created': {
     key: 'customer.created',

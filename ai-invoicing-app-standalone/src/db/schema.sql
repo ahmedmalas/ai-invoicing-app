@@ -193,6 +193,37 @@ CREATE TABLE IF NOT EXISTS supplier_bill_line_items (
   FOREIGN KEY (supplier_bill_id) REFERENCES supplier_bills(id)
 );
 
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id TEXT PRIMARY KEY,
+  purchase_order_number TEXT NOT NULL UNIQUE,
+  supplier_id TEXT NOT NULL,
+  issue_date TEXT NOT NULL,
+  expected_delivery_date TEXT,
+  supplier_reference TEXT,
+  currency TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL,
+  subtotal REAL NOT NULL,
+  gst_total REAL NOT NULL,
+  total REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_line_items (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_price REAL NOT NULL,
+  gst_applicable INTEGER NOT NULL,
+  line_subtotal REAL NOT NULL,
+  line_gst REAL NOT NULL,
+  line_total REAL NOT NULL,
+  FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+);
+
 CREATE TABLE IF NOT EXISTS invoice_snapshots (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL,
@@ -301,6 +332,13 @@ CREATE TABLE IF NOT EXISTS supplier_payment_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS purchase_order_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
@@ -359,6 +397,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null
 ON supplier_bills(supplier_id, supplier_reference)
 WHERE supplier_reference IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_number ON purchase_orders(purchase_order_number);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_issue_date ON purchase_orders(issue_date);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_expected_delivery_date ON purchase_orders(expected_delivery_date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_supplier_reference_not_null
+ON purchase_orders(supplier_id, supplier_reference)
+WHERE supplier_reference IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_purchase_order_line_items_order ON purchase_order_line_items(purchase_order_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(linked_invoice_id);
@@ -519,6 +566,113 @@ WHEN EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_orders_approved_immutable_update
+BEFORE UPDATE ON purchase_orders
+WHEN OLD.status = 'Approved'
+AND (
+  NEW.purchase_order_number <> OLD.purchase_order_number OR
+  NEW.supplier_id <> OLD.supplier_id OR
+  NEW.issue_date <> OLD.issue_date OR
+  ifnull(NEW.expected_delivery_date, '') <> ifnull(OLD.expected_delivery_date, '') OR
+  ifnull(NEW.supplier_reference, '') <> ifnull(OLD.supplier_reference, '') OR
+  NEW.currency <> OLD.currency OR
+  ifnull(NEW.notes, '') <> ifnull(OLD.notes, '') OR
+  NEW.subtotal <> OLD.subtotal OR
+  NEW.gst_total <> OLD.gst_total OR
+  NEW.total <> OLD.total OR
+  NEW.status NOT IN ('Approved', 'Closed', 'Cancelled')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_APPROVED_PURCHASE_ORDER');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_orders_terminal_immutable_update
+BEFORE UPDATE ON purchase_orders
+WHEN OLD.status IN ('Closed', 'Cancelled')
+AND (
+  NEW.purchase_order_number <> OLD.purchase_order_number OR
+  NEW.supplier_id <> OLD.supplier_id OR
+  NEW.issue_date <> OLD.issue_date OR
+  ifnull(NEW.expected_delivery_date, '') <> ifnull(OLD.expected_delivery_date, '') OR
+  ifnull(NEW.supplier_reference, '') <> ifnull(OLD.supplier_reference, '') OR
+  NEW.currency <> OLD.currency OR
+  ifnull(NEW.notes, '') <> ifnull(OLD.notes, '') OR
+  NEW.subtotal <> OLD.subtotal OR
+  NEW.gst_total <> OLD.gst_total OR
+  NEW.total <> OLD.total OR
+  NEW.status <> OLD.status
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_TERMINAL_PURCHASE_ORDER');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_insert
+BEFORE INSERT ON purchase_order_line_items
+WHEN EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_update
+BEFORE UPDATE ON purchase_order_line_items
+WHEN EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft'
+)
+OR EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_delete
+BEFORE DELETE ON purchase_order_line_items
+WHEN EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_non_draft_purchase_order_update
+BEFORE UPDATE ON documents
+WHEN OLD.document_type = 'purchase_order'
+AND EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = OLD.entity_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_non_draft_purchase_order_insert
+BEFORE INSERT ON documents
+WHEN NEW.document_type = 'purchase_order'
+AND EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = NEW.entity_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_documents_non_draft_purchase_order_delete
+BEFORE DELETE ON documents
+WHEN OLD.document_type = 'purchase_order'
+AND EXISTS (
+  SELECT 1 FROM purchase_orders p
+  WHERE p.id = OLD.entity_id AND p.status <> 'Draft'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_invoice_snapshots_only_finalised_insert

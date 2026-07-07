@@ -11,6 +11,9 @@ import type {
   CreditNoteType,
   CustomerPayment,
   PaymentAllocation,
+  PurchaseOrder,
+  PurchaseOrderLineItemInput,
+  PurchaseOrderStatus,
   SupplierBillPayment,
   SupplierPaymentAllocation,
   Customer,
@@ -40,6 +43,7 @@ import {
   type TimelineEventKey,
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
+import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
@@ -143,6 +147,30 @@ interface DbSupplierPaymentRow {
 }
 
 interface DbSupplierBillLineItemRow {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  gst_applicable: number;
+}
+
+interface DbPurchaseOrderRow {
+  id: string;
+  purchase_order_number: string;
+  supplier_id: string;
+  issue_date: string;
+  expected_delivery_date: string | null;
+  supplier_reference: string | null;
+  currency: string;
+  notes: string | null;
+  status: PurchaseOrderStatus;
+  subtotal: number;
+  gst_total: number;
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbPurchaseOrderLineItemRow {
   description: string;
   quantity: number;
   unit_price: number;
@@ -282,6 +310,25 @@ export interface CreateSupplierPaymentInput {
   allocations: SupplierPaymentAllocation[];
 }
 
+export interface CreatePurchaseOrderDraftInput {
+  supplierId: string;
+  issueDate: string;
+  expectedDeliveryDate?: string | undefined;
+  supplierReference?: string | undefined;
+  currency: string;
+  notes?: string | undefined;
+  lineItems: PurchaseOrderLineItemInput[];
+}
+
+export interface UpdatePurchaseOrderDraftInput {
+  issueDate: string;
+  expectedDeliveryDate?: string | undefined;
+  supplierReference?: string | undefined;
+  currency: string;
+  notes?: string | undefined;
+  lineItems: PurchaseOrderLineItemInput[];
+}
+
 export interface CreateJobInput {
   title: string;
   description?: string | undefined;
@@ -382,6 +429,16 @@ export interface ListSupplierPaymentsFilter {
   to?: string;
 }
 
+export interface ListPurchaseOrdersFilter {
+  supplierId?: string;
+  purchaseOrderNumber?: string;
+  status?: PurchaseOrderStatus;
+  fromIssueDate?: string;
+  toIssueDate?: string;
+  fromExpectedDeliveryDate?: string;
+  toExpectedDeliveryDate?: string;
+}
+
 export interface JobDocumentLinkRecord {
   id: string;
   jobId: string;
@@ -444,6 +501,13 @@ export interface AppDatabase {
   createSupplierPayment(input: CreateSupplierPaymentInput): SupplierBillPayment;
   getSupplierPaymentById(id: string): SupplierBillPayment | null;
   listSupplierPayments(filter?: ListSupplierPaymentsFilter): SupplierBillPayment[];
+  createPurchaseOrderDraft(input: CreatePurchaseOrderDraftInput): PurchaseOrder;
+  updatePurchaseOrderDraft(id: string, input: UpdatePurchaseOrderDraftInput): PurchaseOrder;
+  getPurchaseOrderById(id: string): (PurchaseOrder & { lineItems: PurchaseOrderLineItemInput[] }) | null;
+  approvePurchaseOrder(id: string): PurchaseOrder;
+  closePurchaseOrder(id: string): PurchaseOrder;
+  cancelPurchaseOrder(id: string): PurchaseOrder;
+  listPurchaseOrders(filter?: ListPurchaseOrdersFilter): PurchaseOrder[];
   createRole(input: CreateRoleInput): Role;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
@@ -587,6 +651,27 @@ function mapSupplierPaymentRow(
     amount: row.amount,
     notes: row.notes,
     allocations,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapPurchaseOrderRow(row: DbPurchaseOrderRow): PurchaseOrder {
+  return {
+    id: row.id,
+    purchaseOrderNumber: row.purchase_order_number,
+    supplierId: row.supplier_id,
+    issueDate: row.issue_date,
+    expectedDeliveryDate: row.expected_delivery_date,
+    supplierReference: row.supplier_reference,
+    currency: row.currency,
+    notes: row.notes,
+    status: row.status,
+    totals: {
+      subtotal: row.subtotal,
+      gstTotal: row.gst_total,
+      total: row.total,
+    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -809,6 +894,10 @@ export function createDatabase(dbPath: string): AppDatabase {
       'payment.allocated',
       'supplier_payment.created',
       'supplier_payment.allocated',
+      'purchase_order.created',
+      'purchase_order.approved',
+      'purchase_order.closed',
+      'purchase_order.cancelled',
       'supplier_bill.created',
       'supplier_bill.finalised',
       'customer.created',
@@ -2055,6 +2144,291 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.paymentState ?? null,
         ) as DbSupplierBillRow[];
       return rows.map(mapSupplierBillRow);
+    },
+
+    createPurchaseOrderDraft(input) {
+      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
+      if (!supplier) {
+        throw new Error('Supplier not found');
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM purchase_order_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+      let prefix = 'PO';
+      let sequence = 1;
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO purchase_order_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE purchase_order_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE purchase_order_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
+        }
+      }
+
+      const { totals, calculatedItems } = calculateTotals(input.lineItems);
+      const id = randomUUID();
+      const now = nowIso();
+      const purchaseOrderNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      try {
+        db.prepare(
+          `INSERT INTO purchase_orders (
+            id,
+            purchase_order_number,
+            supplier_id,
+            issue_date,
+            expected_delivery_date,
+            supplier_reference,
+            currency,
+            notes,
+            status,
+            subtotal,
+            gst_total,
+            total,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          id,
+          purchaseOrderNumber,
+          input.supplierId,
+          input.issueDate,
+          input.expectedDeliveryDate ?? null,
+          input.supplierReference ?? null,
+          input.currency,
+          input.notes ?? null,
+          'Draft',
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_purchase_orders_supplier_reference_not_null') ||
+          message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+        ) {
+          throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+        }
+        throw error;
+      }
+
+      const insertLine = db.prepare(
+        `INSERT INTO purchase_order_line_items (
+          id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const item of calculatedItems) {
+        insertLine.run(
+          randomUUID(),
+          id,
+          item.description,
+          item.quantity,
+          item.unitPrice,
+          item.gstApplicable ? 1 : 0,
+          item.lineSubtotal,
+          item.lineGst,
+          item.lineTotal,
+        );
+      }
+
+      upsertDocument(
+        id,
+        `${purchaseOrderNumber} ${input.supplierReference ?? ''}`.trim(),
+        'purchase_order',
+        `${purchaseOrderNumber} ${input.currency} ${input.notes ?? ''} ${input.supplierReference ?? ''}`,
+      );
+      timeline('purchase_order.created', id, {
+        purchaseOrderNumber,
+        supplierId: input.supplierId,
+        total: totals.total,
+      });
+
+      const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
+      return mapPurchaseOrderRow(row);
+    },
+
+    updatePurchaseOrderDraft(id, input) {
+      const existing = db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(id) as
+        | { status: PurchaseOrderStatus }
+        | undefined;
+      if (!existing) {
+        throw new Error('Purchase order not found');
+      }
+      if (existing.status !== 'Draft') {
+        throw new Error('Only draft purchase orders can be edited');
+      }
+
+      const { totals, calculatedItems } = calculateTotals(input.lineItems);
+      try {
+        db.prepare(
+          `UPDATE purchase_orders
+           SET issue_date = ?, expected_delivery_date = ?, supplier_reference = ?, currency = ?, notes = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          input.issueDate,
+          input.expectedDeliveryDate ?? null,
+          input.supplierReference ?? null,
+          input.currency,
+          input.notes ?? null,
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          nowIso(),
+          id,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_purchase_orders_supplier_reference_not_null') ||
+          message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+        ) {
+          throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+        }
+        throw error;
+      }
+
+      db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(id);
+      const insertLine = db.prepare(
+        `INSERT INTO purchase_order_line_items (
+          id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const item of calculatedItems) {
+        insertLine.run(
+          randomUUID(),
+          id,
+          item.description,
+          item.quantity,
+          item.unitPrice,
+          item.gstApplicable ? 1 : 0,
+          item.lineSubtotal,
+          item.lineGst,
+          item.lineTotal,
+        );
+      }
+
+      const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
+      upsertDocument(
+        id,
+        `${row.purchase_order_number} ${row.supplier_reference ?? ''}`.trim(),
+        'purchase_order',
+        `${row.purchase_order_number} ${row.currency} ${row.notes ?? ''} ${row.supplier_reference ?? ''}`,
+      );
+      return mapPurchaseOrderRow(row);
+    },
+
+    getPurchaseOrderById(id) {
+      const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as
+        | DbPurchaseOrderRow
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      const lineItemsRows = db
+        .prepare(
+          `SELECT description, quantity, unit_price, gst_applicable
+           FROM purchase_order_line_items
+           WHERE purchase_order_id = ?`,
+        )
+        .all(id) as DbPurchaseOrderLineItemRow[];
+      const lineItems: PurchaseOrderLineItemInput[] = lineItemsRows.map((item) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        gstApplicable: item.gst_applicable === 1,
+      }));
+      return {
+        ...mapPurchaseOrderRow(row),
+        lineItems,
+      };
+    },
+
+    approvePurchaseOrder(id) {
+      const order = this.getPurchaseOrderById(id);
+      if (!order) {
+        throw new Error('Purchase order not found');
+      }
+      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Approved');
+      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Approved', nowIso(), id);
+      timeline('purchase_order.approved', id, {
+        purchaseOrderNumber: order.purchaseOrderNumber,
+      });
+      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+    },
+
+    closePurchaseOrder(id) {
+      const order = this.getPurchaseOrderById(id);
+      if (!order) {
+        throw new Error('Purchase order not found');
+      }
+      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Closed');
+      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Closed', nowIso(), id);
+      timeline('purchase_order.closed', id, {
+        purchaseOrderNumber: order.purchaseOrderNumber,
+      });
+      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+    },
+
+    cancelPurchaseOrder(id) {
+      const order = this.getPurchaseOrderById(id);
+      if (!order) {
+        throw new Error('Purchase order not found');
+      }
+      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Cancelled');
+      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Cancelled', nowIso(), id);
+      timeline('purchase_order.cancelled', id, {
+        purchaseOrderNumber: order.purchaseOrderNumber,
+      });
+      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+    },
+
+    listPurchaseOrders(filter) {
+      const rowFilter = filter ?? {};
+      const rows = db
+        .prepare(
+          `SELECT *
+           FROM purchase_orders
+           WHERE (? IS NULL OR supplier_id = ?)
+             AND (? IS NULL OR purchase_order_number = ?)
+             AND (? IS NULL OR status = ?)
+             AND (? IS NULL OR issue_date >= ?)
+             AND (? IS NULL OR issue_date <= ?)
+             AND (? IS NULL OR expected_delivery_date >= ?)
+             AND (? IS NULL OR expected_delivery_date <= ?)
+           ORDER BY issue_date DESC, created_at DESC`,
+        )
+        .all(
+          rowFilter.supplierId ?? null,
+          rowFilter.supplierId ?? null,
+          rowFilter.purchaseOrderNumber ?? null,
+          rowFilter.purchaseOrderNumber ?? null,
+          rowFilter.status ?? null,
+          rowFilter.status ?? null,
+          rowFilter.fromIssueDate ?? null,
+          rowFilter.fromIssueDate ?? null,
+          rowFilter.toIssueDate ?? null,
+          rowFilter.toIssueDate ?? null,
+          rowFilter.fromExpectedDeliveryDate ?? null,
+          rowFilter.fromExpectedDeliveryDate ?? null,
+          rowFilter.toExpectedDeliveryDate ?? null,
+          rowFilter.toExpectedDeliveryDate ?? null,
+        ) as DbPurchaseOrderRow[];
+      return rows.map(mapPurchaseOrderRow);
     },
 
     createSupplierPayment(input) {

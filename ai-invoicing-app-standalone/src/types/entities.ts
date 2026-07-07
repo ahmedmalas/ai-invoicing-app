@@ -236,3 +236,27 @@ export interface SupplierBillPayment {
   createdAt: string;
   updatedAt: string;
 }
+
+export type PurchaseOrderStatus = 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
+
+export interface PurchaseOrderLineItemInput {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  gstApplicable: boolean;
+}
+
+export interface PurchaseOrder {
+  id: UUID;
+  purchaseOrderNumber: string;
+  supplierId: UUID;
+  issueDate: string;
+  expectedDeliveryDate: string | null;
+  supplierReference: string | null;
+  currency: string;
+  notes: string | null;
+  status: PurchaseOrderStatus;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
