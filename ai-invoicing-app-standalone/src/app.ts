@@ -15,6 +15,7 @@ import { searchRoutes } from './routes/search.js';
 import { timelineRoutes } from './routes/timeline.js';
 import { statementRoutes } from './routes/statements.js';
 import { creditNoteRoutes } from './routes/credit-notes.js';
+import { paymentRoutes } from './routes/payments.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -73,6 +74,14 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('CREDIT_NOTE_FULL_ALREADY_EXISTS') ||
       errorMessage.includes('CREDIT_NOTE_PARTIAL_AMOUNT_REQUIRED') ||
       errorMessage.includes('CREDIT_NOTE_AMOUNT_INVALID') ||
+      errorMessage.includes('PAYMENT_ALLOCATIONS_REQUIRED') ||
+      errorMessage.includes('PAYMENT_DUPLICATE_ALLOCATION_INVOICE') ||
+      errorMessage.includes('PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT') ||
+      errorMessage.includes('PAYMENT_ALLOCATION_AMOUNT_INVALID') ||
+      errorMessage.includes('PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE') ||
+      errorMessage.includes('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH') ||
+      errorMessage.includes('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
+      errorMessage.includes('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
       errorMessage.includes('ASSIGNED_USER_REQUIRES_ID') ||
       errorMessage.includes('ASSIGNED_USER_NAME_MISMATCH') ||
       errorMessage.includes('ASSIGNED_USER_ROLE_REQUIRED') ||
@@ -108,6 +117,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(timelineRoutes);
   await app.register(statementRoutes);
   await app.register(creditNoteRoutes);
+  await app.register(paymentRoutes);
 
   return app;
 }

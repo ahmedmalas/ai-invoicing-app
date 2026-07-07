@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 
 import type {
   BrandingProfile,
+  CustomerPayment,
   CreditNote,
   Customer,
   InvoiceDraft,
@@ -235,6 +236,78 @@ export function generateCreditNotePdfBuffer(input: {
       .fontSize(13)
       .fillColor(brandPrimary)
       .text(`Total Credit: ${input.creditNote.totalCredit.toFixed(2)}`, 380, doc.y, {
+        width: 168,
+        align: 'right',
+      });
+
+    doc.end();
+  });
+}
+
+export function generatePaymentReceiptPdfBuffer(input: {
+  payment: CustomerPayment;
+  customer: Customer;
+  businessProfile: BrandingProfile | null;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: 'A4' });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', (err) => reject(err));
+
+    const profile = input.businessProfile;
+    const brandPrimary = profile?.primaryColor ?? '#0f172a';
+
+    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    doc.moveDown(0.2);
+    doc.fillColor('#111827').fontSize(16).text('Payment Receipt', { align: 'right' });
+    doc.fontSize(11).text(`Payment #: ${input.payment.paymentNumber}`, { align: 'right' });
+    doc.text(`Payment Date: ${input.payment.paymentDate}`, { align: 'right' });
+    doc.text(`Method: ${input.payment.paymentMethod}`, { align: 'right' });
+
+    doc.moveDown(1);
+    doc.fontSize(12).fillColor('#111827').text('Customer');
+    doc.fontSize(11).text(input.customer.displayName);
+    if (input.customer.address) {
+      doc.text(input.customer.address);
+    }
+    if (input.customer.email) {
+      doc.text(input.customer.email);
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(12).text('Reference');
+    doc.fontSize(11).text(input.payment.reference);
+    if (input.payment.notes) {
+      doc.moveDown(0.6);
+      doc.fontSize(12).text('Notes');
+      doc.fontSize(11).text(input.payment.notes);
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(12).text('Allocations');
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#6b7280').text('Invoice ID', 50, doc.y, { width: 390 });
+    doc.text('Allocated', 430, doc.y - 12, { width: 118, align: 'right' });
+    doc.moveDown(0.4);
+    doc.strokeColor('#d1d5db').lineWidth(1).moveTo(48, doc.y).lineTo(548, doc.y).stroke();
+
+    for (const allocation of input.payment.allocations) {
+      doc.moveDown(0.6);
+      const y = doc.y;
+      doc.fillColor('#111827').fontSize(10).text(allocation.invoiceId, 50, y, { width: 390 });
+      doc.text(allocation.amount.toFixed(2), 430, y, { width: 118, align: 'right' });
+    }
+
+    doc.moveDown(1.2);
+    doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(330, doc.y).lineTo(548, doc.y).stroke();
+    doc.moveDown(0.5);
+    doc
+      .fontSize(13)
+      .fillColor(brandPrimary)
+      .text(`Total Payment: ${input.payment.amount.toFixed(2)}`, 380, doc.y, {
         width: 168,
         align: 'right',
       });

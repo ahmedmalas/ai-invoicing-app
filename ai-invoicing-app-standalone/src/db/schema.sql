@@ -188,6 +188,37 @@ CREATE TABLE IF NOT EXISTS credit_note_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS customer_payments (
+  id TEXT PRIMARY KEY,
+  payment_number TEXT NOT NULL UNIQUE,
+  customer_id TEXT NOT NULL,
+  payment_date TEXT NOT NULL,
+  payment_method TEXT NOT NULL,
+  reference TEXT NOT NULL,
+  amount REAL NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE IF NOT EXISTS payment_allocations (
+  id TEXT PRIMARY KEY,
+  payment_id TEXT NOT NULL,
+  invoice_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (payment_id) REFERENCES customer_payments(id),
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
+CREATE TABLE IF NOT EXISTS payment_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
@@ -239,6 +270,13 @@ CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(linked_invoice_id);
+CREATE INDEX IF NOT EXISTS idx_customer_payments_number ON customer_payments(payment_number);
+CREATE INDEX IF NOT EXISTS idx_customer_payments_customer ON customer_payments(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_payments_date ON customer_payments(payment_date);
+CREATE INDEX IF NOT EXISTS idx_payment_allocations_payment ON payment_allocations(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payment_allocations_invoice ON payment_allocations(invoice_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_allocations_payment_invoice
+ON payment_allocations(payment_id, invoice_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

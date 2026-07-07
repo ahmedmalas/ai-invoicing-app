@@ -5,6 +5,8 @@ export const TIMELINE_EVENT_KEYS = [
   'invoice.draft_updated',
   'invoice.finalised',
   'credit_note.created',
+  'payment.created',
+  'payment.allocated',
   'customer.created',
   'customer.updated',
   'business_profile.updated',
@@ -29,6 +31,7 @@ export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
 export type TimelineCategory =
   | 'document'
   | 'invoice'
+  | 'payment'
   | 'customer'
   | 'business_profile'
   | 'preferences'
@@ -124,6 +127,26 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.credit_note.created.v1',
     legacyEventType: 'Credit Note Created',
+  },
+  'payment.created': {
+    key: 'payment.created',
+    version: 1,
+    category: 'payment',
+    entityType: 'payment',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.payment.created.v1',
+    legacyEventType: 'Payment Created',
+  },
+  'payment.allocated': {
+    key: 'payment.allocated',
+    version: 1,
+    category: 'payment',
+    entityType: 'payment',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.payment.allocated.v1',
+    legacyEventType: 'Payment Allocated',
   },
   'customer.created': {
     key: 'customer.created',

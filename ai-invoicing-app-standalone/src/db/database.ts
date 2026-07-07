@@ -9,6 +9,8 @@ import type {
   CreditNote,
   CreditNoteLineItem,
   CreditNoteType,
+  CustomerPayment,
+  PaymentAllocation,
   Customer,
   DocumentRecord,
   InvoiceDraft,
@@ -74,6 +76,19 @@ interface DbCreditNoteRow {
   status: 'Issued';
   total_credit: number;
   line_items_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbCustomerPaymentRow {
+  id: string;
+  payment_number: string;
+  customer_id: string;
+  payment_date: string;
+  payment_method: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -163,6 +178,16 @@ export interface CreateCreditNoteInput {
   adjustmentAmount?: number | undefined;
 }
 
+export interface CreateCustomerPaymentInput {
+  customerId: string;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes?: string | undefined;
+  allocations: PaymentAllocation[];
+}
+
 export interface CreateJobInput {
   title: string;
   description?: string | undefined;
@@ -238,6 +263,13 @@ export interface ListCreditNotesFilter {
   linkedInvoiceId?: string;
 }
 
+export interface ListCustomerPaymentsFilter {
+  customerId?: string;
+  invoiceId?: string;
+  from?: string;
+  to?: string;
+}
+
 export interface JobDocumentLinkRecord {
   id: string;
   jobId: string;
@@ -286,6 +318,9 @@ export interface AppDatabase {
   createCreditNote(input: CreateCreditNoteInput): CreditNote;
   getCreditNoteById(id: string): CreditNote | null;
   listCreditNotes(filter?: ListCreditNotesFilter): CreditNote[];
+  createCustomerPayment(input: CreateCustomerPaymentInput): CustomerPayment;
+  getCustomerPaymentById(id: string): CustomerPayment | null;
+  listCustomerPayments(filter?: ListCustomerPaymentsFilter): CustomerPayment[];
   createRole(input: CreateRoleInput): Role;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
@@ -374,6 +409,25 @@ function mapCreditNoteRow(row: DbCreditNoteRow): CreditNote {
     status: row.status,
     totalCredit: row.total_credit,
     lineItems: JSON.parse(row.line_items_json) as CreditNoteLineItem[],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCustomerPaymentRow(
+  row: DbCustomerPaymentRow,
+  allocations: PaymentAllocation[],
+): CustomerPayment {
+  return {
+    id: row.id,
+    paymentNumber: row.payment_number,
+    customerId: row.customer_id,
+    paymentDate: row.payment_date,
+    paymentMethod: row.payment_method,
+    reference: row.reference,
+    amount: row.amount,
+    notes: row.notes,
+    allocations,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -557,6 +611,8 @@ export function createDatabase(dbPath: string): AppDatabase {
       'invoice.draft_updated',
       'invoice.finalised',
       'credit_note.created',
+      'payment.created',
+      'payment.allocated',
       'customer.created',
       'customer.updated',
       'business_profile.updated',
@@ -651,6 +707,21 @@ export function createDatabase(dbPath: string): AppDatabase {
   function getRoleIdsForUser(userId: string): string[] {
     const rows = listRoleIdsForUser.all(userId) as Array<{ role_id: string }>;
     return rows.map((row) => row.role_id);
+  }
+
+  function getAllocationsForPayment(paymentId: string): PaymentAllocation[] {
+    const rows = db
+      .prepare(
+        `SELECT invoice_id, amount
+         FROM payment_allocations
+         WHERE payment_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(paymentId) as Array<{ invoice_id: string; amount: number }>;
+    return rows.map((row) => ({
+      invoiceId: row.invoice_id,
+      amount: row.amount,
+    }));
   }
 
   function loadAssignableUserOrThrow(
@@ -1253,6 +1324,204 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.linkedInvoiceId ?? null,
         ) as DbCreditNoteRow[];
       return rows.map(mapCreditNoteRow);
+    },
+
+    createCustomerPayment(input) {
+      const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
+      if (!customer) {
+        throw new Error('Customer not found');
+      }
+      if (input.allocations.length === 0) {
+        throw new Error('PAYMENT_ALLOCATIONS_REQUIRED');
+      }
+
+      const allocationInvoiceSet = new Set(input.allocations.map((allocation) => allocation.invoiceId));
+      if (allocationInvoiceSet.size !== input.allocations.length) {
+        throw new Error('PAYMENT_DUPLICATE_ALLOCATION_INVOICE');
+      }
+
+      const allocationTotal = input.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+      if (allocationTotal > input.amount) {
+        throw new Error('PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
+      }
+
+      for (const allocation of input.allocations) {
+        if (allocation.amount <= 0) {
+          throw new Error('PAYMENT_ALLOCATION_AMOUNT_INVALID');
+        }
+
+        const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as
+          | DbInvoiceRow
+          | undefined;
+        if (!invoice) {
+          throw new Error('Invoice not found');
+        }
+        if (invoice.status !== 'Finalised') {
+          throw new Error('PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE');
+        }
+        if (invoice.customer_id !== input.customerId) {
+          throw new Error('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH');
+        }
+        if (invoice.payment_state === 'Cancelled') {
+          throw new Error('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN');
+        }
+
+        const existingAllocated = db
+          .prepare(
+            `SELECT coalesce(sum(pa.amount), 0) AS total
+             FROM payment_allocations pa
+             WHERE pa.invoice_id = ?`,
+          )
+          .get(allocation.invoiceId) as { total: number };
+
+        const outstanding = invoice.total - existingAllocated.total;
+        if (allocation.amount > outstanding) {
+          throw new Error('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
+        }
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM payment_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+
+      let prefix = 'PAY';
+      let sequence = 1;
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO payment_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE payment_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE payment_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
+        }
+      }
+
+      const id = randomUUID();
+      const paymentNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const now = nowIso();
+
+      db.prepare(
+        `INSERT INTO customer_payments (
+          id,
+          payment_number,
+          customer_id,
+          payment_date,
+          payment_method,
+          reference,
+          amount,
+          notes,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        paymentNumber,
+        input.customerId,
+        input.paymentDate,
+        input.paymentMethod,
+        input.reference,
+        input.amount,
+        input.notes ?? null,
+        now,
+        now,
+      );
+
+      const insertAllocation = db.prepare(
+        `INSERT INTO payment_allocations (id, payment_id, invoice_id, amount, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const allocation of input.allocations) {
+        insertAllocation.run(randomUUID(), id, allocation.invoiceId, allocation.amount, now);
+      }
+
+      for (const allocation of input.allocations) {
+        const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as DbInvoiceRow;
+        const totalAllocated = db
+          .prepare(
+            `SELECT coalesce(sum(pa.amount), 0) AS total
+             FROM payment_allocations pa
+             WHERE pa.invoice_id = ?`,
+          )
+          .get(allocation.invoiceId) as { total: number };
+        const nextState: PaymentState = totalAllocated.total >= invoice.total ? 'Paid' : 'Awaiting Payment';
+        db.prepare('UPDATE invoices SET payment_state = ?, updated_at = ? WHERE id = ?').run(
+          nextState,
+          nowIso(),
+          allocation.invoiceId,
+        );
+      }
+
+      upsertDocument(
+        id,
+        `${paymentNumber} ${input.reference}`,
+        'receipt',
+        `${paymentNumber} ${input.paymentMethod} ${input.reference} ${input.notes ?? ''}`,
+      );
+      timeline('payment.created', id, {
+        customerId: input.customerId,
+        paymentNumber,
+        amount: input.amount,
+      });
+      timeline('payment.allocated', id, {
+        allocations: input.allocations,
+        allocationTotal,
+      });
+
+      const paymentRow = db
+        .prepare('SELECT * FROM customer_payments WHERE id = ?')
+        .get(id) as DbCustomerPaymentRow;
+      return mapCustomerPaymentRow(paymentRow, getAllocationsForPayment(id));
+    },
+
+    getCustomerPaymentById(id) {
+      const row = db.prepare('SELECT * FROM customer_payments WHERE id = ?').get(id) as
+        | DbCustomerPaymentRow
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      return mapCustomerPaymentRow(row, getAllocationsForPayment(id));
+    },
+
+    listCustomerPayments(filter) {
+      const rowFilter = filter ?? {};
+      const rows = db
+        .prepare(
+          `SELECT cp.*
+           FROM customer_payments cp
+           WHERE (? IS NULL OR cp.customer_id = ?)
+             AND (? IS NULL OR cp.payment_date >= ?)
+             AND (? IS NULL OR cp.payment_date <= ?)
+             AND (
+               ? IS NULL OR EXISTS (
+                 SELECT 1 FROM payment_allocations pa
+                 WHERE pa.payment_id = cp.id AND pa.invoice_id = ?
+               )
+             )
+           ORDER BY cp.payment_date DESC, cp.created_at DESC`,
+        )
+        .all(
+          rowFilter.customerId ?? null,
+          rowFilter.customerId ?? null,
+          rowFilter.from ?? null,
+          rowFilter.from ?? null,
+          rowFilter.to ?? null,
+          rowFilter.to ?? null,
+          rowFilter.invoiceId ?? null,
+          rowFilter.invoiceId ?? null,
+        ) as DbCustomerPaymentRow[];
+      return rows.map((row) => mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)));
     },
 
     createRole(input) {

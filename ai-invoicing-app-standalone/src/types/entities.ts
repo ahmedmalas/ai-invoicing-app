@@ -160,3 +160,22 @@ export interface CreditNote {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface PaymentAllocation {
+  invoiceId: UUID;
+  amount: number;
+}
+
+export interface CustomerPayment {
+  id: UUID;
+  paymentNumber: string;
+  customerId: UUID;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
+  allocations: PaymentAllocation[];
+  createdAt: string;
+  updatedAt: string;
+}
