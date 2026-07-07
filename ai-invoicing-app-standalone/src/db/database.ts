@@ -1055,6 +1055,53 @@ export function createDatabase(dbPath: string): AppDatabase {
     }
   }
 
+  type DocumentSequenceTable =
+    | 'invoice_sequences'
+    | 'credit_note_sequences'
+    | 'payment_sequences'
+    | 'purchase_order_sequences'
+    | 'supplier_bill_sequences'
+    | 'supplier_payment_sequences';
+
+  const getNextDocumentSequence = db.transaction(
+    (table: DocumentSequenceTable, fallbackPrefix: string): { prefix: string; year: number; sequence: number } => {
+      const currentYear = new Date().getUTCFullYear();
+      db.prepare(
+        `INSERT INTO ${table} (id, prefix, year, next_sequence)
+         VALUES (1, ?, ?, 1)
+         ON CONFLICT(id) DO NOTHING`,
+      ).run(fallbackPrefix, currentYear);
+
+      const sequenceRow = db.prepare(`SELECT prefix, year, next_sequence FROM ${table} WHERE id = 1`).get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+      if (!sequenceRow) {
+        throw new Error('DOCUMENT_NUMBER_SEQUENCE_INVALID_STATE');
+      }
+
+      if (!Number.isInteger(sequenceRow.next_sequence) || sequenceRow.next_sequence < 1) {
+        throw new Error('DOCUMENT_NUMBER_SEQUENCE_INVALID_STATE');
+      }
+
+      const prefix = sequenceRow.prefix?.trim() || fallbackPrefix;
+      let sequence = sequenceRow.next_sequence;
+
+      if (sequenceRow.year !== currentYear) {
+        sequence = 1;
+        db.prepare(`UPDATE ${table} SET year = ?, next_sequence = ? WHERE id = 1`).run(currentYear, 2);
+      } else {
+        db.prepare(`UPDATE ${table} SET next_sequence = ? WHERE id = 1`).run(sequence + 1);
+      }
+
+      return { prefix, year: currentYear, sequence };
+    },
+  );
+
+  function allocateDocumentNumber(table: DocumentSequenceTable, fallbackPrefix: string): string {
+    const nextSequence = getNextDocumentSequence(table, fallbackPrefix);
+    return formatInvoiceNumber(nextSequence.prefix, nextSequence.year, nextSequence.sequence);
+  }
+
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC',
   );
@@ -1548,35 +1595,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         throw new Error('Invoice already finalised');
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM invoice_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-
-      let prefix = 'INV';
-      let sequence = 1;
-
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO invoice_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE invoice_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE invoice_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
-        }
-      }
-
-      const invoiceNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const invoiceNumber = allocateDocumentNumber('invoice_sequences', 'INV');
       const now = nowIso();
       upsertDocument(
         id,
@@ -1584,11 +1603,22 @@ export function createDatabase(dbPath: string): AppDatabase {
         'invoice',
         `${invoiceNumber} ${invoice.title} ${invoice.notes ?? ''}`,
       );
-      db.prepare(
-        `UPDATE invoices
-         SET status = 'Finalised', invoice_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
-         WHERE id = ?`,
-      ).run(invoiceNumber, now, id);
+      try {
+        db.prepare(
+          `UPDATE invoices
+           SET status = 'Finalised', invoice_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
+           WHERE id = ?`,
+        ).run(invoiceNumber, now, id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_invoices_number_not_null') ||
+          message.includes('UNIQUE constraint failed: invoices.invoice_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        }
+        throw error;
+      }
 
       const finalised = this.getInvoiceById(id);
       if (!finalised) {
@@ -1666,64 +1696,49 @@ export function createDatabase(dbPath: string): AppDatabase {
         throw new Error('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL');
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM credit_note_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-      let prefix = 'CRN';
-      let sequence = 1;
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO credit_note_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE credit_note_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE credit_note_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
-        }
-      }
-
       const id = randomUUID();
-      const creditNoteNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const creditNoteNumber = allocateDocumentNumber('credit_note_sequences', 'CRN');
       const now = nowIso();
-      db.prepare(
-        `INSERT INTO credit_notes (
+      try {
+        db.prepare(
+          `INSERT INTO credit_notes (
+            id,
+            credit_note_number,
+            linked_invoice_id,
+            customer_id,
+            issue_date,
+            reason,
+            type,
+            status,
+            total_credit,
+            line_items_json,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
           id,
-          credit_note_number,
-          linked_invoice_id,
-          customer_id,
-          issue_date,
-          reason,
-          type,
-          status,
-          total_credit,
-          line_items_json,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        creditNoteNumber,
-        input.linkedInvoiceId,
-        invoice.customer_id,
-        input.issueDate,
-        input.reason,
-        input.type,
-        'Issued',
-        totalCredit,
-        JSON.stringify(lineItems),
-        now,
-        now,
-      );
+          creditNoteNumber,
+          input.linkedInvoiceId,
+          invoice.customer_id,
+          input.issueDate,
+          input.reason,
+          input.type,
+          'Issued',
+          totalCredit,
+          JSON.stringify(lineItems),
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('credit_notes.credit_note_number') ||
+          message.includes('uq_credit_notes_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        }
+        throw error;
+      }
 
       upsertDocument(
         id,
@@ -1818,62 +1833,46 @@ export function createDatabase(dbPath: string): AppDatabase {
         }
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM payment_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-
-      let prefix = 'PAY';
-      let sequence = 1;
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO payment_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE payment_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE payment_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
-        }
-      }
-
       const id = randomUUID();
-      const paymentNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const paymentNumber = allocateDocumentNumber('payment_sequences', 'PAY');
       const now = nowIso();
 
-      db.prepare(
-        `INSERT INTO customer_payments (
+      try {
+        db.prepare(
+          `INSERT INTO customer_payments (
+            id,
+            payment_number,
+            customer_id,
+            payment_date,
+            payment_method,
+            reference,
+            amount,
+            notes,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
           id,
-          payment_number,
-          customer_id,
-          payment_date,
-          payment_method,
-          reference,
-          amount,
-          notes,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        paymentNumber,
-        input.customerId,
-        input.paymentDate,
-        input.paymentMethod,
-        input.reference,
-        input.amount,
-        input.notes ?? null,
-        now,
-        now,
-      );
+          paymentNumber,
+          input.customerId,
+          input.paymentDate,
+          input.paymentMethod,
+          input.reference,
+          input.amount,
+          input.notes ?? null,
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('customer_payments.payment_number') ||
+          message.includes('uq_customer_payments_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        }
+        throw error;
+      }
 
       const insertAllocation = db.prepare(
         `INSERT INTO payment_allocations (id, payment_id, invoice_id, amount, created_at)
@@ -2508,34 +2507,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         }
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM supplier_bill_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-
-      let prefix = 'BILL';
-      let sequence = 1;
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO supplier_bill_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE supplier_bill_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE supplier_bill_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
-        }
-      }
-
-      const billNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const billNumber = allocateDocumentNumber('supplier_bill_sequences', 'BILL');
       const now = nowIso();
       upsertDocument(
         id,
@@ -2543,11 +2515,22 @@ export function createDatabase(dbPath: string): AppDatabase {
         'supplier_bill',
         `${billNumber} ${bill.currency} ${bill.notes ?? ''}`,
       );
-      db.prepare(
-        `UPDATE supplier_bills
-         SET status = 'Finalised', bill_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
-         WHERE id = ?`,
-      ).run(billNumber, now, id);
+      try {
+        db.prepare(
+          `UPDATE supplier_bills
+           SET status = 'Finalised', bill_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
+           WHERE id = ?`,
+        ).run(billNumber, now, id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('uq_supplier_bills_number_not_null') ||
+          message.includes('UNIQUE constraint failed: supplier_bills.bill_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        }
+        throw error;
+      }
 
       const finalised = this.getSupplierBillById(id);
       if (!finalised) {
@@ -2611,36 +2594,10 @@ export function createDatabase(dbPath: string): AppDatabase {
         throw new Error('Supplier not found');
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM purchase_order_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-      let prefix = 'PO';
-      let sequence = 1;
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO purchase_order_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE purchase_order_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE purchase_order_sequences SET next_sequence = ? WHERE id = 1').run(sequence + 1);
-        }
-      }
-
       const { totals, calculatedItems } = calculateTotals(input.lineItems);
       const id = randomUUID();
       const now = nowIso();
-      const purchaseOrderNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const purchaseOrderNumber = allocateDocumentNumber('purchase_order_sequences', 'PO');
       try {
         db.prepare(
           `INSERT INTO purchase_orders (
@@ -2688,6 +2645,12 @@ export function createDatabase(dbPath: string): AppDatabase {
           message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
         ) {
           throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+        }
+        if (
+          message.includes('purchase_orders.purchase_order_number') ||
+          message.includes('uq_purchase_orders_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
         }
         throw error;
       }
@@ -3063,63 +3026,46 @@ export function createDatabase(dbPath: string): AppDatabase {
         }
       }
 
-      const currentYear = new Date().getUTCFullYear();
-      const sequenceRow = db.prepare('SELECT * FROM supplier_payment_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
-      let prefix = 'SPAY';
-      let sequence = 1;
-      if (!sequenceRow) {
-        db.prepare('INSERT INTO supplier_payment_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
-      } else {
-        prefix = sequenceRow.prefix;
-        if (sequenceRow.year !== currentYear) {
-          sequence = 1;
-          db.prepare('UPDATE supplier_payment_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
-            currentYear,
-            2,
-          );
-        } else {
-          sequence = sequenceRow.next_sequence;
-          db.prepare('UPDATE supplier_payment_sequences SET next_sequence = ? WHERE id = 1').run(
-            sequence + 1,
-          );
-        }
-      }
-
       const id = randomUUID();
-      const paymentNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const paymentNumber = allocateDocumentNumber('supplier_payment_sequences', 'SPAY');
       const now = nowIso();
 
-      db.prepare(
-        `INSERT INTO supplier_payments (
+      try {
+        db.prepare(
+          `INSERT INTO supplier_payments (
+            id,
+            payment_number,
+            supplier_id,
+            payment_date,
+            payment_method,
+            reference,
+            amount,
+            notes,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
           id,
-          payment_number,
-          supplier_id,
-          payment_date,
-          payment_method,
-          reference,
-          amount,
-          notes,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        paymentNumber,
-        input.supplierId,
-        input.paymentDate,
-        input.paymentMethod,
-        input.reference,
-        input.amount,
-        input.notes ?? null,
-        now,
-        now,
-      );
+          paymentNumber,
+          input.supplierId,
+          input.paymentDate,
+          input.paymentMethod,
+          input.reference,
+          input.amount,
+          input.notes ?? null,
+          now,
+          now,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('supplier_payments.payment_number') ||
+          message.includes('uq_supplier_payments_number')
+        ) {
+          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        }
+        throw error;
+      }
 
       const insertAllocation = db.prepare(
         `INSERT INTO supplier_payment_allocations (id, supplier_payment_id, supplier_bill_id, amount, created_at)

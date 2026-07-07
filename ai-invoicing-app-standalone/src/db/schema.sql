@@ -617,6 +617,34 @@ BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_TERMINAL_PURCHASE_ORDER');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_purchase_orders_number_immutable_update
+BEFORE UPDATE ON purchase_orders
+WHEN NEW.purchase_order_number <> OLD.purchase_order_number
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_PURCHASE_ORDER_NUMBER');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_credit_notes_number_immutable_update
+BEFORE UPDATE ON credit_notes
+WHEN NEW.credit_note_number <> OLD.credit_note_number
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_CREDIT_NOTE_NUMBER');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_customer_payments_number_immutable_update
+BEFORE UPDATE ON customer_payments
+WHEN NEW.payment_number <> OLD.payment_number
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_CUSTOMER_PAYMENT_NUMBER');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_payments_number_immutable_update
+BEFORE UPDATE ON supplier_payments
+WHEN NEW.payment_number <> OLD.payment_number
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_SUPPLIER_PAYMENT_NUMBER');
+END;
+
 CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_insert
 BEFORE INSERT ON purchase_order_line_items
 WHEN EXISTS (

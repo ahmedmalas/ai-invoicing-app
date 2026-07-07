@@ -86,6 +86,8 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH') ||
       errorMessage.includes('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
       errorMessage.includes('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
+      errorMessage.includes('DOCUMENT_NUMBER_SEQUENCE_INVALID_STATE') ||
+      errorMessage.includes('DOCUMENT_NUMBER_SEQUENCE_CONFLICT') ||
       errorMessage.includes('SUPPLIER_BILL_REFERENCE_EXISTS') ||
       errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED') ||
       errorMessage.includes('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL') ||
@@ -106,6 +108,10 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||
+      errorMessage.includes('IMMUTABLE_PURCHASE_ORDER_NUMBER') ||
+      errorMessage.includes('IMMUTABLE_CREDIT_NOTE_NUMBER') ||
+      errorMessage.includes('IMMUTABLE_CUSTOMER_PAYMENT_NUMBER') ||
+      errorMessage.includes('IMMUTABLE_SUPPLIER_PAYMENT_NUMBER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT') ||
       errorMessage.includes('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS') ||
       errorMessage.includes('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED') ||
