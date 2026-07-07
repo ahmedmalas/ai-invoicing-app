@@ -3,9 +3,9 @@
 This matrix tracks implementation readiness at module level without prescribing unapproved detailed future implementation.
 
 ## Current Project Snapshot
-- Current branch: `cursor/slice-31-document-number-sequence-integrity-19d3`
-- Current commit (Slice 31 implementation): `6494103598038d81a2ef0f9ae7f9f96419f74093`
-- Current implemented slice: **Slice 31 — Document Number Sequence Integrity**
+- Current branch: `cursor/slice-32-global-timeline-integrity-ordering-19d3`
+- Current commit (Slice 32 implementation): `6fc1a3487d091267862ca2f2539f56f727cc657a`
+- Current implemented slice: **Slice 32 — Global Timeline Integrity & Ordering**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
@@ -22,7 +22,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 ## Matrix
 | Module | Status | Current Implemented Slice | Dependencies | Next Planned Work | Risks | Notes |
 |---|---|---|---|---|---|---|
-| Foundation | Implemented | Slice 1-31 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present, including shared transactional document-number sequencing safeguards. |
+| Foundation | Implemented | Slice 1-32 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present, including shared transactional document-number sequencing safeguards and deterministic timeline ordering/pagination hardening. |
 | Jobs | Partial | Slice 4-13 | Customers, Documents, Timeline, Search, Users/Roles, Teams | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, assignment integrity, team-scope assignment controls, membership lifecycle safeguards, team role authorization, and team deletion safeguards exist. |
 | Customers | Partial | Slice 1 | Foundation, Timeline, Search | TBD | Data model expansion without governance | Core customer lifecycle exists. |
 | Quotes | Not Started | N/A | Customers, Documents, Timeline, Numbering, PDF | TBD | Contract drift with invoice model | Placeholder only. |
@@ -32,7 +32,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Calendar | Not Started | N/A | Scheduling, Users/Roles, Notifications | TBD | Integration coupling risk | Placeholder only. |
 | Teams | Partial | Slice 8-13 | Users/Roles, Jobs, Audit | TBD | Scope expansion into org-management/permissions | Team create/list/get/delete, membership add/remove/role-update lifecycle, role authorization rules, membership role scaffolding, and team/job integrity safeguards are implemented. |
 | Users/Roles | Partial | Slice 7 | Foundation, Audit | TBD | Scope expansion into full auth/permissions | Minimal users/roles persistence, role association, and assignment-policy baseline are implemented. |
-| Documents | Partial | Slice 1,5,18-31 | Foundation, Search, Timeline | TBD | Schema breadth risk | Document records, job linkage baseline, credit note documents, customer payment receipts, supplier bill documents (including PO-linked partial conversions, guarded draft amendments, deterministic finalisation readiness checks, and payment-readiness guardrails), supplier payment receipts, and purchase order procurement documents are implemented with sequence-level uniqueness/immutability hardening across all number-assigned document types. |
+| Documents | Partial | Slice 1,5,18-32 | Foundation, Search, Timeline | TBD | Schema breadth risk | Document records, job linkage baseline, credit note documents, customer payment receipts, supplier bill documents (including PO-linked partial conversions, guarded draft amendments, deterministic finalisation readiness checks, and payment-readiness guardrails), supplier payment receipts, and purchase order procurement documents are implemented with sequence-level uniqueness/immutability hardening across all number-assigned document types and timeline metadata consistency hardening for document-number-bearing events. |
 | Accounts Payable | Partial | Slice 20-21,23-30 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into full accounting/ledger behavior | Supplier and supplier bill operational purchasing foundation includes supplier payment allocation workflows with deterministic readiness/linkage guardrails, PO-origin bill creation, draft-only amendment safety, and finalisation readiness validation; no ledger/double-entry behavior is introduced. |
 | Procurement | Partial | Slice 22-30 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into inventory/goods-receipt features | Purchase order lifecycle remains unchanged except closure validation guardrails; billing status/amounts and remaining unbilled values are calculated from linked supplier bills (not persisted), including recalculation through linked draft-bill amendments/finalisation and remaining unaffected by supplier payments. |
 | Attachments | Not Started | N/A | Documents, Storage strategy, Audit | TBD | Storage/security risk | Placeholder only. |
@@ -42,7 +42,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Dashboard | Not Started | N/A | Reporting, Jobs, Invoices | TBD | UX scope creep risk | Placeholder only. |
 | Settings | Partial | Slice 1 | Business profile, Preferences, Validation | TBD | Configuration sprawl risk | Branding/preferences baseline exists. |
 | Integrations | Not Started | N/A | Security, Audit, Payments, Calendar | TBD | Third-party contract volatility | Placeholder only. |
-| Audit | Partial | Slice 1-31 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including invoice finalisation, `credit_note.created`, `payment.created`, `payment.allocated`, `supplier_bill.created`, `supplier_bill.finalised`, `supplier_bill.created_from_purchase_order`, `supplier_payment.created`, `supplier_payment.allocated`, `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, `purchase_order.cancelled`, `purchase_order.partially_billed`, and `purchase_order.fully_billed`; `purchase_order.closed` carries closure-type metadata for fully billed/partially billed/unbilled closures; `supplier_bill.finalised` includes standalone vs PO-linked metadata and is regression-hardened against failed/duplicate finalisation emission; supplier-payment allocation failures create no payment timeline records; statement generation remains read-only and intentionally does not emit read/query audit events; Slice 31 intentionally adds no new taxonomy events. |
+| Audit | Partial | Slice 1-32 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including invoice finalisation, `credit_note.created`, `payment.created`, `payment.allocated`, `supplier_bill.created`, `supplier_bill.finalised`, `supplier_bill.created_from_purchase_order`, `supplier_payment.created`, `supplier_payment.allocated`, `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, `purchase_order.cancelled`, `purchase_order.partially_billed`, and `purchase_order.fully_billed`; `purchase_order.closed` carries closure-type metadata for fully billed/partially billed/unbilled closures; `supplier_bill.finalised` includes standalone vs PO-linked metadata and is regression-hardened against failed/duplicate finalisation emission; supplier-payment allocation failures create no payment timeline records; statement generation remains read-only and intentionally does not emit read/query audit events; Slice 31 and Slice 32 intentionally add no new taxonomy keys while hardening deterministic ordering, filtering/pagination, and duplicate-event safeguards. |
 | Administration | Not Started | N/A | Users/Roles, Audit, Settings | TBD | Privilege escalation risk | Placeholder only. |
 
 ## Cross-References

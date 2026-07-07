@@ -265,9 +265,18 @@
 - Added persistence-level immutability guards preventing direct number mutation for purchase orders, credit notes, customer payments, and supplier payments while preserving existing invoice/supplier bill finalised immutability protections.
 - Added integration coverage proving concurrent sequence creation remains unique/deterministic per document type, numbers stay immutable across all six document classes, duplicate numbering does not occur, and HTML/PDF outputs continue to surface assigned numbers through the existing PDF pipeline.
 
+#### Slice 32 — Global Timeline Integrity & Ordering
+- Commit: `6fc1a3487d091267862ca2f2539f56f727cc657a`
+- Hardened timeline read ordering to deterministic audit ordering with timestamp-first and insertion-stable tie-break semantics, preserving existing timeline API behavior.
+- Added deterministic timeline query controls on the existing endpoint (`eventKey`, `limit`, `offset`) with stable pagination and filtering semantics.
+- Added deterministic duplicate-transition guardrails for purchase order approval (`PURCHASE_ORDER_ALREADY_APPROVED`) to prevent duplicate lifecycle events.
+- Normalized credit note lifecycle metadata to include `creditNoteNumber` in `credit_note.created` payload for cross-document metadata consistency.
+- Added integration coverage proving ordering determinism, pagination/filter stability, failed-operation no-event behavior, duplicate-operation no-duplicate-event behavior, and stable concurrent event counts.
+- Preserved existing timeline taxonomy keys (no new taxonomy events introduced), lifecycle models, and rendering pipelines.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-31-document-number-sequence-integrity-19d3`
-- Status at logging: implementation baseline completed through Slice 31 and passing validation gates.
+- Branch: `cursor/slice-32-global-timeline-integrity-ordering-19d3`
+- Status at logging: implementation baseline completed through Slice 32 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

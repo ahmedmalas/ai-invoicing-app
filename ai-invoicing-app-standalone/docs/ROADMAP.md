@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 31 — Document Number Sequence Integrity**
-- Baseline commit: `6494103598038d81a2ef0f9ae7f9f96419f74093`
-- Active branch at roadmap update: `cursor/slice-31-document-number-sequence-integrity-19d3`
+- Current implemented slice: **Slice 32 — Global Timeline Integrity & Ordering**
+- Baseline commit: `6fc1a3487d091267862ca2f2539f56f727cc657a`
+- Active branch at roadmap update: `cursor/slice-32-global-timeline-integrity-ordering-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -40,15 +40,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 29. **Slice 29 — Supplier Bill Finalisation Timeline & Regression Hardening** (implemented)
 30. **Slice 30 — Supplier Bill Payment Readiness & Linkage Guardrails** (implemented)
 31. **Slice 31 — Document Number Sequence Integrity** (implemented)
+32. **Slice 32 — Global Timeline Integrity & Ordering** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 32 — TBD (placeholder only)
 - Slice 33 — TBD (placeholder only)
 - Slice 34 — TBD (placeholder only)
+- Slice 35 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.
