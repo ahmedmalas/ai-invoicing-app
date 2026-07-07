@@ -46,6 +46,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
       fromDueDate?: string;
       toDueDate?: string;
       status?: 'Draft' | 'Finalised';
+      paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
     } = {};
     if (query.supplierId) filter.supplierId = query.supplierId;
     if (query.billNumber) filter.billNumber = query.billNumber;
@@ -54,6 +55,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     if (query.fromDueDate) filter.fromDueDate = query.fromDueDate;
     if (query.toDueDate) filter.toDueDate = query.toDueDate;
     if (query.status) filter.status = query.status;
+    if (query.paymentState) filter.paymentState = query.paymentState;
     return {
       bills: app.db.listSupplierBills(filter),
     };

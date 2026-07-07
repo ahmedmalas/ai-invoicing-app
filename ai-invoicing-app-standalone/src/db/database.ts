@@ -11,6 +11,8 @@ import type {
   CreditNoteType,
   CustomerPayment,
   PaymentAllocation,
+  SupplierBillPayment,
+  SupplierPaymentAllocation,
   Customer,
   DocumentRecord,
   InvoiceDraft,
@@ -119,9 +121,23 @@ interface DbSupplierBillRow {
   currency: string;
   notes: string | null;
   status: SupplierBillStatus;
+  payment_state: PaymentState;
   subtotal: number;
   gst_total: number;
   total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbSupplierPaymentRow {
+  id: string;
+  payment_number: string;
+  supplier_id: string;
+  payment_date: string;
+  payment_method: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -256,6 +272,16 @@ export interface UpdateSupplierBillDraftInput {
   lineItems: SupplierBillLineItemInput[];
 }
 
+export interface CreateSupplierPaymentInput {
+  supplierId: string;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes?: string | undefined;
+  allocations: SupplierPaymentAllocation[];
+}
+
 export interface CreateJobInput {
   title: string;
   description?: string | undefined;
@@ -346,6 +372,14 @@ export interface ListSupplierBillsFilter {
   fromDueDate?: string;
   toDueDate?: string;
   status?: SupplierBillStatus;
+  paymentState?: PaymentState;
+}
+
+export interface ListSupplierPaymentsFilter {
+  supplierId?: string;
+  supplierBillId?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface JobDocumentLinkRecord {
@@ -407,6 +441,9 @@ export interface AppDatabase {
   getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
   finaliseSupplierBill(id: string): SupplierBill;
   listSupplierBills(filter?: ListSupplierBillsFilter): SupplierBill[];
+  createSupplierPayment(input: CreateSupplierPaymentInput): SupplierBillPayment;
+  getSupplierPaymentById(id: string): SupplierBillPayment | null;
+  listSupplierPayments(filter?: ListSupplierPaymentsFilter): SupplierBillPayment[];
   createRole(input: CreateRoleInput): Role;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
@@ -525,11 +562,31 @@ function mapSupplierBillRow(row: DbSupplierBillRow): SupplierBill {
     currency: row.currency,
     notes: row.notes,
     status: row.status,
+    paymentState: row.payment_state,
     totals: {
       subtotal: row.subtotal,
       gstTotal: row.gst_total,
       total: row.total,
     },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSupplierPaymentRow(
+  row: DbSupplierPaymentRow,
+  allocations: SupplierPaymentAllocation[],
+): SupplierBillPayment {
+  return {
+    id: row.id,
+    paymentNumber: row.payment_number,
+    supplierId: row.supplier_id,
+    paymentDate: row.payment_date,
+    paymentMethod: row.payment_method,
+    reference: row.reference,
+    amount: row.amount,
+    notes: row.notes,
+    allocations,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -692,6 +749,22 @@ export function createDatabase(dbPath: string): AppDatabase {
      );`,
   );
 
+  const supplierBillColumns = db
+    .prepare("SELECT name FROM pragma_table_info('supplier_bills')")
+    .all() as Array<{ name: string }>;
+  const supplierBillColumnSet = new Set(supplierBillColumns.map((column) => column.name));
+  if (!supplierBillColumnSet.has('payment_state')) {
+    db.exec("ALTER TABLE supplier_bills ADD COLUMN payment_state TEXT NOT NULL DEFAULT 'Draft';");
+  }
+  db.exec(
+    `UPDATE supplier_bills
+     SET payment_state = CASE
+       WHEN status = 'Finalised' THEN 'Awaiting Payment'
+       ELSE 'Draft'
+     END
+     WHERE payment_state IS NULL`,
+  );
+
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
     .all() as Array<{ name: string }>;
@@ -734,6 +807,8 @@ export function createDatabase(dbPath: string): AppDatabase {
       'credit_note.created',
       'payment.created',
       'payment.allocated',
+      'supplier_payment.created',
+      'supplier_payment.allocated',
       'supplier_bill.created',
       'supplier_bill.finalised',
       'customer.created',
@@ -843,6 +918,21 @@ export function createDatabase(dbPath: string): AppDatabase {
       .all(paymentId) as Array<{ invoice_id: string; amount: number }>;
     return rows.map((row) => ({
       invoiceId: row.invoice_id,
+      amount: row.amount,
+    }));
+  }
+
+  function getAllocationsForSupplierPayment(supplierPaymentId: string): SupplierPaymentAllocation[] {
+    const rows = db
+      .prepare(
+        `SELECT supplier_bill_id, amount
+         FROM supplier_payment_allocations
+         WHERE supplier_payment_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(supplierPaymentId) as Array<{ supplier_bill_id: string; amount: number }>;
+    return rows.map((row) => ({
+      supplierBillId: row.supplier_bill_id,
       amount: row.amount,
     }));
   }
@@ -1701,12 +1791,13 @@ export function createDatabase(dbPath: string): AppDatabase {
             currency,
             notes,
             status,
+            payment_state,
             subtotal,
             gst_total,
             total,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           id,
           input.supplierId,
@@ -1716,6 +1807,7 @@ export function createDatabase(dbPath: string): AppDatabase {
           input.supplierReference ?? null,
           input.currency,
           input.notes ?? null,
+          'Draft',
           'Draft',
           totals.subtotal,
           totals.gstTotal,
@@ -1912,7 +2004,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       );
       db.prepare(
         `UPDATE supplier_bills
-         SET status = 'Finalised', bill_number = ?, updated_at = ?
+         SET status = 'Finalised', bill_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
          WHERE id = ?`,
       ).run(billNumber, now, id);
 
@@ -1941,6 +2033,7 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR due_date >= ?)
              AND (? IS NULL OR due_date <= ?)
              AND (? IS NULL OR status = ?)
+           AND (? IS NULL OR payment_state = ?)
            ORDER BY bill_date DESC, created_at DESC`,
         )
         .all(
@@ -1958,8 +2051,208 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.toDueDate ?? null,
           rowFilter.status ?? null,
           rowFilter.status ?? null,
+          rowFilter.paymentState ?? null,
+          rowFilter.paymentState ?? null,
         ) as DbSupplierBillRow[];
       return rows.map(mapSupplierBillRow);
+    },
+
+    createSupplierPayment(input) {
+      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
+      if (!supplier) {
+        throw new Error('Supplier not found');
+      }
+      if (input.allocations.length === 0) {
+        throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED');
+      }
+
+      const allocationBillSet = new Set(input.allocations.map((allocation) => allocation.supplierBillId));
+      if (allocationBillSet.size !== input.allocations.length) {
+        throw new Error('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL');
+      }
+
+      const allocationTotal = input.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+      if (allocationTotal > input.amount) {
+        throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
+      }
+
+      for (const allocation of input.allocations) {
+        if (allocation.amount <= 0) {
+          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_AMOUNT_INVALID');
+        }
+
+        const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as
+          | DbSupplierBillRow
+          | undefined;
+        if (!bill) {
+          throw new Error('Supplier bill not found');
+        }
+        if (bill.status !== 'Finalised') {
+          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_REQUIRES_FINALISED_BILL');
+        }
+        if (bill.supplier_id !== input.supplierId) {
+          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SUPPLIER_MISMATCH');
+        }
+        if (bill.payment_state === 'Cancelled') {
+          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN');
+        }
+
+        const existingAllocated = db
+          .prepare(
+            `SELECT coalesce(sum(spa.amount), 0) AS total
+             FROM supplier_payment_allocations spa
+             WHERE spa.supplier_bill_id = ?`,
+          )
+          .get(allocation.supplierBillId) as { total: number };
+        const outstanding = bill.total - existingAllocated.total;
+        if (allocation.amount > outstanding) {
+          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
+        }
+      }
+
+      const currentYear = new Date().getUTCFullYear();
+      const sequenceRow = db.prepare('SELECT * FROM supplier_payment_sequences WHERE id = 1').get() as
+        | { prefix: string; year: number; next_sequence: number }
+        | undefined;
+      let prefix = 'SPAY';
+      let sequence = 1;
+      if (!sequenceRow) {
+        db.prepare('INSERT INTO supplier_payment_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
+          prefix,
+          currentYear,
+          2,
+        );
+      } else {
+        prefix = sequenceRow.prefix;
+        if (sequenceRow.year !== currentYear) {
+          sequence = 1;
+          db.prepare('UPDATE supplier_payment_sequences SET year = ?, next_sequence = ? WHERE id = 1').run(
+            currentYear,
+            2,
+          );
+        } else {
+          sequence = sequenceRow.next_sequence;
+          db.prepare('UPDATE supplier_payment_sequences SET next_sequence = ? WHERE id = 1').run(
+            sequence + 1,
+          );
+        }
+      }
+
+      const id = randomUUID();
+      const paymentNumber = formatInvoiceNumber(prefix, currentYear, sequence);
+      const now = nowIso();
+
+      db.prepare(
+        `INSERT INTO supplier_payments (
+          id,
+          payment_number,
+          supplier_id,
+          payment_date,
+          payment_method,
+          reference,
+          amount,
+          notes,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        paymentNumber,
+        input.supplierId,
+        input.paymentDate,
+        input.paymentMethod,
+        input.reference,
+        input.amount,
+        input.notes ?? null,
+        now,
+        now,
+      );
+
+      const insertAllocation = db.prepare(
+        `INSERT INTO supplier_payment_allocations (id, supplier_payment_id, supplier_bill_id, amount, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const allocation of input.allocations) {
+        insertAllocation.run(randomUUID(), id, allocation.supplierBillId, allocation.amount, now);
+      }
+
+      for (const allocation of input.allocations) {
+        const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as DbSupplierBillRow;
+        const totalAllocated = db
+          .prepare(
+            `SELECT coalesce(sum(spa.amount), 0) AS total
+             FROM supplier_payment_allocations spa
+             WHERE spa.supplier_bill_id = ?`,
+          )
+          .get(allocation.supplierBillId) as { total: number };
+        const nextState: PaymentState = totalAllocated.total >= bill.total ? 'Paid' : 'Awaiting Payment';
+        db.prepare('UPDATE supplier_bills SET payment_state = ?, updated_at = ? WHERE id = ?').run(
+          nextState,
+          nowIso(),
+          allocation.supplierBillId,
+        );
+      }
+
+      upsertDocument(
+        id,
+        `${paymentNumber} ${input.reference}`,
+        'receipt',
+        `${paymentNumber} ${input.paymentMethod} ${input.reference} ${input.notes ?? ''}`,
+      );
+      timeline('supplier_payment.created', id, {
+        supplierId: input.supplierId,
+        paymentNumber,
+        amount: input.amount,
+      });
+      timeline('supplier_payment.allocated', id, {
+        allocations: input.allocations,
+        allocationTotal,
+      });
+
+      const paymentRow = db
+        .prepare('SELECT * FROM supplier_payments WHERE id = ?')
+        .get(id) as DbSupplierPaymentRow;
+      return mapSupplierPaymentRow(paymentRow, getAllocationsForSupplierPayment(id));
+    },
+
+    getSupplierPaymentById(id) {
+      const row = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(id) as
+        | DbSupplierPaymentRow
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      return mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(id));
+    },
+
+    listSupplierPayments(filter) {
+      const rowFilter = filter ?? {};
+      const rows = db
+        .prepare(
+          `SELECT sp.*
+           FROM supplier_payments sp
+           WHERE (? IS NULL OR sp.supplier_id = ?)
+             AND (? IS NULL OR sp.payment_date >= ?)
+             AND (? IS NULL OR sp.payment_date <= ?)
+             AND (
+               ? IS NULL OR EXISTS (
+                 SELECT 1 FROM supplier_payment_allocations spa
+                 WHERE spa.supplier_payment_id = sp.id AND spa.supplier_bill_id = ?
+               )
+             )
+           ORDER BY sp.payment_date DESC, sp.created_at DESC`,
+        )
+        .all(
+          rowFilter.supplierId ?? null,
+          rowFilter.supplierId ?? null,
+          rowFilter.from ?? null,
+          rowFilter.from ?? null,
+          rowFilter.to ?? null,
+          rowFilter.to ?? null,
+          rowFilter.supplierBillId ?? null,
+          rowFilter.supplierBillId ?? null,
+        ) as DbSupplierPaymentRow[];
+      return rows.map((row) => mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(row.id)));
     },
 
     createRole(input) {

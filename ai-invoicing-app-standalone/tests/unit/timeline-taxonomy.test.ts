@@ -13,6 +13,8 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('payment.allocated')).toBe(true);
     expect(isValidTimelineEventKey('supplier_bill.created')).toBe(true);
     expect(isValidTimelineEventKey('supplier_bill.finalised')).toBe(true);
+    expect(isValidTimelineEventKey('supplier_payment.created')).toBe(true);
+    expect(isValidTimelineEventKey('supplier_payment.allocated')).toBe(true);
     expect(isValidTimelineEventKey('job.created')).toBe(true);
     expect(isValidTimelineEventKey('job.document_linked')).toBe(true);
     expect(isValidTimelineEventKey('document.linked_to_job')).toBe(true);
@@ -30,6 +32,8 @@ describe('timeline taxonomy validator', () => {
     expect(() => assertValidTimelineEventOrThrow('payment.allocated', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('supplier_bill.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('supplier_bill.finalised', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('supplier_payment.created', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('supplier_payment.allocated', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.document_linked', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('document.linked_to_job', 1)).not.toThrow();

@@ -212,7 +212,27 @@ export interface SupplierBill {
   currency: string;
   notes: string | null;
   status: SupplierBillStatus;
+  paymentState: PaymentState;
   totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierPaymentAllocation {
+  supplierBillId: UUID;
+  amount: number;
+}
+
+export interface SupplierBillPayment {
+  id: UUID;
+  paymentNumber: string;
+  supplierId: UUID;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
+  allocations: SupplierPaymentAllocation[];
   createdAt: string;
   updatedAt: string;
 }

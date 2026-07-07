@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS supplier_bills (
   currency TEXT NOT NULL,
   notes TEXT,
   status TEXT NOT NULL,
+  payment_state TEXT NOT NULL DEFAULT 'Draft',
   subtotal REAL NOT NULL,
   gst_total REAL NOT NULL,
   total REAL NOT NULL,
@@ -255,6 +256,30 @@ CREATE TABLE IF NOT EXISTS payment_allocations (
   FOREIGN KEY (invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id TEXT PRIMARY KEY,
+  payment_number TEXT NOT NULL UNIQUE,
+  supplier_id TEXT NOT NULL,
+  payment_date TEXT NOT NULL,
+  payment_method TEXT NOT NULL,
+  reference TEXT NOT NULL,
+  amount REAL NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE IF NOT EXISTS supplier_payment_allocations (
+  id TEXT PRIMARY KEY,
+  supplier_payment_id TEXT NOT NULL,
+  supplier_bill_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (supplier_payment_id) REFERENCES supplier_payments(id),
+  FOREIGN KEY (supplier_bill_id) REFERENCES supplier_bills(id)
+);
+
 CREATE TABLE IF NOT EXISTS payment_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
@@ -263,6 +288,13 @@ CREATE TABLE IF NOT EXISTS payment_sequences (
 );
 
 CREATE TABLE IF NOT EXISTS supplier_bill_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS supplier_payment_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
   year INTEGER NOT NULL,
@@ -337,6 +369,15 @@ CREATE INDEX IF NOT EXISTS idx_payment_allocations_payment ON payment_allocation
 CREATE INDEX IF NOT EXISTS idx_payment_allocations_invoice ON payment_allocations(invoice_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_allocations_payment_invoice
 ON payment_allocations(payment_id, invoice_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_number ON supplier_payments(payment_number);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_date ON supplier_payments(payment_date);
+CREATE INDEX IF NOT EXISTS idx_supplier_payment_allocations_payment
+ON supplier_payment_allocations(supplier_payment_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payment_allocations_bill
+ON supplier_payment_allocations(supplier_bill_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_payment_allocations_payment_bill
+ON supplier_payment_allocations(supplier_payment_id, supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

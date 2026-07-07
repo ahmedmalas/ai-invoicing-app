@@ -46,6 +46,7 @@ export const listSupplierBillsQuerySchema = z
     fromDueDate: isoDateSchema.refine(isValidIsoCalendarDate, 'fromDueDate must be a valid ISO date').optional(),
     toDueDate: isoDateSchema.refine(isValidIsoCalendarDate, 'toDueDate must be a valid ISO date').optional(),
     status: z.enum(['Draft', 'Finalised']).optional(),
+    paymentState: z.enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled']).optional(),
   })
   .refine((query) => !query.fromBillDate || !query.toBillDate || query.fromBillDate <= query.toBillDate, {
     message: 'fromBillDate must be less than or equal to toBillDate',

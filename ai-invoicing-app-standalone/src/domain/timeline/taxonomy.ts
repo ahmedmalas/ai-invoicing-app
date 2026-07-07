@@ -9,6 +9,8 @@ export const TIMELINE_EVENT_KEYS = [
   'payment.allocated',
   'supplier_bill.created',
   'supplier_bill.finalised',
+  'supplier_payment.created',
+  'supplier_payment.allocated',
   'customer.created',
   'customer.updated',
   'business_profile.updated',
@@ -35,6 +37,7 @@ export type TimelineCategory =
   | 'invoice'
   | 'payment'
   | 'supplier_bill'
+  | 'supplier_payment'
   | 'customer'
   | 'business_profile'
   | 'preferences'
@@ -170,6 +173,26 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.supplier_bill.finalised.v1',
     legacyEventType: 'Supplier Bill Finalised',
+  },
+  'supplier_payment.created': {
+    key: 'supplier_payment.created',
+    version: 1,
+    category: 'supplier_payment',
+    entityType: 'supplier_payment',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.supplier_payment.created.v1',
+    legacyEventType: 'Supplier Payment Created',
+  },
+  'supplier_payment.allocated': {
+    key: 'supplier_payment.allocated',
+    version: 1,
+    category: 'supplier_payment',
+    entityType: 'supplier_payment',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.supplier_payment.allocated.v1',
+    legacyEventType: 'Supplier Payment Allocated',
   },
   'customer.created': {
     key: 'customer.created',

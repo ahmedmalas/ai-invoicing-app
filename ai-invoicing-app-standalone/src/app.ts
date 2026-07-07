@@ -18,6 +18,7 @@ import { creditNoteRoutes } from './routes/credit-notes.js';
 import { paymentRoutes } from './routes/payments.js';
 import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
+import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -85,6 +86,14 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
       errorMessage.includes('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
       errorMessage.includes('SUPPLIER_BILL_REFERENCE_EXISTS') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_AMOUNT_INVALID') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_REQUIRES_FINALISED_BILL') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_SUPPLIER_MISMATCH') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN') ||
+      errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT') ||
@@ -128,6 +137,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(paymentRoutes);
   await app.register(supplierRoutes);
   await app.register(supplierBillRoutes);
+  await app.register(supplierPaymentRoutes);
 
   return app;
 }
