@@ -215,9 +215,26 @@
 - Updated purchase order HTML/PDF rendering to display closure reason/date and billing context via the existing PDF service pipeline.
 - Added focused unit/e2e coverage proving closure guardrails, closure-type timeline metadata, and calculated billing status behavior without introducing inventory, goods-receipt, stock-movement, or ledger features.
 
+#### Slice 26 — Supplier Bill Linking Guardrails from Purchase Orders
+- Commit: `10304db7dfb12cd20a0de75cbec52f86f511de66`
+- Hardened PO-linked supplier bill draft edits to preserve source PO relationship safety and deterministic over-billing protection during amendment-like updates.
+- Exposed `sourcePurchaseOrderLineItemId` in supplier bill line-item read model to keep PO lineage traceable after linked draft edits.
+- Added deterministic rejection paths for linked bill edit violations (`SUPPLIER_BILL_LINKED_LINE_SOURCE_REQUIRED`, `SUPPLIER_BILL_SOURCE_PO_LINE_MISMATCH`, existing over-billing guards), while keeping finalised supplier bill immutability unchanged.
+- Confirmed PO billing status/amounts continue to be calculated from linked supplier bill line totals and are not persisted as billed balance state.
+- Preserved existing timeline architecture and intentionally omitted new supplier-bill-edit timeline events.
+
+#### Slice 27 — Supplier Bill Amendments (Draft-Only Revision Safety)
+- Commit: `39144ab6e3462cc0aef6731fac3916be8c3f5874`
+- Added draft-only amendment safety for PO-linked supplier bills by enforcing immutable source PO line-reference sets across edits (`SUPPLIER_BILL_SOURCE_PO_LINE_REFERENCE_IMMUTABLE`).
+- Added linked-bill currency immutability against source purchase order currency (`SUPPLIER_BILL_LINKED_CURRENCY_IMMUTABLE`) while keeping permitted draft amendments for quantity/description/price/notes/due date/reference.
+- Preserved finalised supplier bill immutability and existing supplier bill lifecycle states.
+- Added focused e2e coverage proving permitted draft amendments, immutable linkage protections (supplier/PO linkage and PO line references), deterministic over-quantity/over-value rejection, and PO billing recalculation correctness across multi-bill linked edits.
+- Confirmed supplier bill and purchase order HTML/PDF routes continue using existing rendering and PDF pipeline behavior with amended draft values reflected from current data.
+- Preserved existing timeline architecture and intentionally omitted new draft-amendment timeline events.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-25-po-closure-guardrails-19d3`
-- Status at logging: implementation baseline completed through Slice 25 and passing validation gates.
+- Branch: `cursor/slice-27-draft-supplier-bill-amendments-19d3`
+- Status at logging: implementation baseline completed through Slice 27 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
