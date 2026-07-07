@@ -403,9 +403,33 @@ export interface TeamMembershipRecord {
 
 export interface SearchResults {
   customers: Customer[];
-  invoices: InvoiceDraft[];
+  suppliers: Supplier[];
+  invoices: Array<InvoiceDraft & { creditNoteIds: string[]; customerPaymentIds: string[] }>;
+  creditNotes: CreditNote[];
+  customerPayments: CustomerPayment[];
+  purchaseOrders: Array<PurchaseOrder & { supplierBillIds: string[] }>;
+  supplierBills: SupplierBill[];
+  supplierPayments: SupplierBillPayment[];
   documents: DocumentRecord[];
   jobs: Job[];
+}
+
+type SearchEntityType =
+  | 'customers'
+  | 'suppliers'
+  | 'invoices'
+  | 'creditNotes'
+  | 'customerPayments'
+  | 'purchaseOrders'
+  | 'supplierBills'
+  | 'supplierPayments'
+  | 'documents'
+  | 'jobs';
+
+interface SearchQueryOptions {
+  limit?: number;
+  offset?: number;
+  entityTypes?: SearchEntityType[];
 }
 
 export interface ListCreditNotesFilter {
@@ -578,7 +602,7 @@ export interface AppDatabase {
     entityId: string,
     options?: TimelineQueryOptions,
   ): Array<Record<string, unknown>>;
-  search(query: string): SearchResults;
+  search(query: string, options?: SearchQueryOptions): SearchResults;
 }
 
 function nowIso(): string {
@@ -3936,56 +3960,223 @@ export function createDatabase(dbPath: string): AppDatabase {
       return db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
     },
 
-    search(query) {
+    search(query, options) {
       const wildcard = `%${query.toLowerCase()}%`;
+      const limit = options?.limit ?? 25;
+      const offset = options?.offset ?? 0;
+      const requestedEntityTypes = new Set<SearchEntityType>(
+        options?.entityTypes ?? [
+          'customers',
+          'suppliers',
+          'invoices',
+          'creditNotes',
+          'customerPayments',
+          'purchaseOrders',
+          'supplierBills',
+          'supplierPayments',
+          'documents',
+          'jobs',
+        ],
+      );
 
-      const customers = db
-        .prepare(
-          `SELECT * FROM customers
-           WHERE lower(display_name) LIKE ? OR lower(coalesce(email, '')) LIKE ? OR lower(coalesce(notes, '')) LIKE ?
-           ORDER BY updated_at DESC LIMIT 25`,
-        )
-        .all(wildcard, wildcard, wildcard)
-        .map((row: unknown) => mapCustomerRow(row as Record<string, unknown>));
+      const customers = requestedEntityTypes.has('customers')
+        ? db
+            .prepare(
+              `SELECT * FROM customers
+               WHERE lower(display_name) LIKE ?
+                  OR lower(coalesce(email, '')) LIKE ?
+                  OR lower(coalesce(notes, '')) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, limit, offset)
+            .map((row: unknown) => mapCustomerRow(row as Record<string, unknown>))
+        : [];
 
-      const invoices = db
-        .prepare(
-          `SELECT * FROM invoices
-           WHERE lower(title) LIKE ? OR lower(coalesce(invoice_number, '')) LIKE ?
-           ORDER BY updated_at DESC LIMIT 25`,
-        )
-        .all(wildcard, wildcard)
-        .map((row: unknown) => mapInvoiceRow(row as DbInvoiceRow));
+      const suppliers = requestedEntityTypes.has('suppliers')
+        ? db
+            .prepare(
+              `SELECT * FROM suppliers
+               WHERE lower(display_name) LIKE ?
+                  OR lower(coalesce(email, '')) LIKE ?
+                  OR lower(coalesce(notes, '')) LIKE ?
+                  OR lower(coalesce(tax_id, '')) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, wildcard, limit, offset)
+            .map((row: unknown) => mapSupplierRow(row as DbSupplierRow))
+        : [];
 
-      const documents = db
-        .prepare(
-          `SELECT
-             id,
-             document_type AS documentType,
-             title,
-             entity_id AS entityId,
-             searchable_text AS searchableText,
-             created_at AS createdAt,
-             updated_at AS updatedAt
-           FROM documents
-           WHERE lower(title) LIKE ? OR lower(searchable_text) LIKE ?
-           ORDER BY updated_at DESC LIMIT 25`,
-        )
-        .all(wildcard, wildcard) as DocumentRecord[];
+      const invoiceRows = requestedEntityTypes.has('invoices')
+        ? (db
+            .prepare(
+              `SELECT * FROM invoices
+               WHERE lower(title) LIKE ? OR lower(coalesce(invoice_number, '')) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, limit, offset) as DbInvoiceRow[])
+        : [];
+      const invoices = invoiceRows.map((row) => {
+        const creditNoteIds = db
+          .prepare(
+            `SELECT id
+             FROM credit_notes
+             WHERE linked_invoice_id = ?
+             ORDER BY created_at ASC, id ASC`,
+          )
+          .all(row.id) as Array<{ id: string }>;
+        const customerPaymentIds = db
+          .prepare(
+            `SELECT distinct p.id AS id
+             FROM customer_payments p
+             INNER JOIN payment_allocations pa ON pa.payment_id = p.id
+             WHERE pa.invoice_id = ?
+             ORDER BY p.created_at ASC, p.id ASC`,
+          )
+          .all(row.id) as Array<{ id: string }>;
+        return {
+          ...mapInvoiceRow(row),
+          creditNoteIds: creditNoteIds.map((item) => item.id),
+          customerPaymentIds: customerPaymentIds.map((item) => item.id),
+        };
+      });
 
-      const jobs = db
-        .prepare(
-          `SELECT * FROM jobs
-           WHERE lower(title) LIKE ?
-             OR lower(job_number) LIKE ?
-             OR lower(coalesce(description, '')) LIKE ?
-             OR lower(coalesce(assigned_user_name, '')) LIKE ?
-           ORDER BY updated_at DESC LIMIT 25`,
-        )
-        .all(wildcard, wildcard, wildcard, wildcard)
-        .map((row: unknown) => mapJobRow(row as DbJobRow));
+      const creditNotes = requestedEntityTypes.has('creditNotes')
+        ? (db
+            .prepare(
+              `SELECT *
+               FROM credit_notes
+               WHERE lower(reason) LIKE ?
+                  OR lower(credit_note_number) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, limit, offset) as DbCreditNoteRow[]).map(mapCreditNoteRow)
+        : [];
 
-      return { customers, invoices, documents, jobs };
+      const customerPayments = requestedEntityTypes.has('customerPayments')
+        ? (db
+            .prepare(
+              `SELECT *
+               FROM customer_payments
+               WHERE lower(payment_number) LIKE ?
+                  OR lower(reference) LIKE ?
+                  OR lower(payment_method) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbCustomerPaymentRow[]).map((row) =>
+            mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)),
+          )
+        : [];
+
+      const purchaseOrderRows = requestedEntityTypes.has('purchaseOrders')
+        ? (db
+            .prepare(
+              `SELECT *
+               FROM purchase_orders
+               WHERE lower(purchase_order_number) LIKE ?
+                  OR lower(coalesce(supplier_reference, '')) LIKE ?
+                  OR lower(coalesce(notes, '')) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbPurchaseOrderRow[])
+        : [];
+      const purchaseOrders = purchaseOrderRows.map((row) => {
+        const supplierBillIds = db
+          .prepare(
+            `SELECT id
+             FROM supplier_bills
+             WHERE source_purchase_order_id = ?
+             ORDER BY created_at ASC, id ASC`,
+          )
+          .all(row.id) as Array<{ id: string }>;
+        return {
+          ...withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row)),
+          supplierBillIds: supplierBillIds.map((item) => item.id),
+        };
+      });
+
+      const supplierBills = requestedEntityTypes.has('supplierBills')
+        ? (db
+            .prepare(
+              `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+               FROM supplier_bills sb
+               LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
+               WHERE lower(coalesce(sb.bill_number, '')) LIKE ?
+                  OR lower(coalesce(sb.supplier_reference, '')) LIKE ?
+                  OR lower(coalesce(sb.notes, '')) LIKE ?
+               ORDER BY sb.updated_at DESC, sb.id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierBillRow[]).map(mapSupplierBillRow)
+        : [];
+
+      const supplierPayments = requestedEntityTypes.has('supplierPayments')
+        ? (db
+            .prepare(
+              `SELECT *
+               FROM supplier_payments
+               WHERE lower(payment_number) LIKE ?
+                  OR lower(reference) LIKE ?
+                  OR lower(payment_method) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierPaymentRow[]).map((row) =>
+            mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(row.id)),
+          )
+        : [];
+
+      const documents = requestedEntityTypes.has('documents')
+        ? (db
+            .prepare(
+              `SELECT
+                 id,
+                 document_type AS documentType,
+                 title,
+                 entity_id AS entityId,
+                 searchable_text AS searchableText,
+                 created_at AS createdAt,
+                 updated_at AS updatedAt
+               FROM documents
+               WHERE lower(title) LIKE ? OR lower(searchable_text) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, limit, offset) as DocumentRecord[])
+        : [];
+
+      const jobs = requestedEntityTypes.has('jobs')
+        ? db
+            .prepare(
+              `SELECT * FROM jobs
+               WHERE lower(title) LIKE ?
+                 OR lower(job_number) LIKE ?
+                 OR lower(coalesce(description, '')) LIKE ?
+                 OR lower(coalesce(assigned_user_name, '')) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(wildcard, wildcard, wildcard, wildcard, limit, offset)
+            .map((row: unknown) => mapJobRow(row as DbJobRow))
+        : [];
+
+      return {
+        customers,
+        suppliers,
+        invoices,
+        creditNotes,
+        customerPayments,
+        purchaseOrders,
+        supplierBills,
+        supplierPayments,
+        documents,
+        jobs,
+      };
     },
   };
 }
