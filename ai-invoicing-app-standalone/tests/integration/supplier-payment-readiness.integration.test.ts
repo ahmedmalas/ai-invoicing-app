@@ -107,12 +107,24 @@ describe('supplier payment readiness integration', () => {
   it('rejects allocation when linked supplier bill source line reference is invalid', async () => {
     const { dir, dbPath } = createTempDbPath('sp-readiness-line');
     const seeded = await seedFinalisedLinkedSupplierBill(dbPath);
+    const appForSecondPo = await buildApp({ dbPath });
+    const secondPoRes = await appForSecondPo.inject({
+      method: 'POST',
+      url: '/purchase-orders',
+      payload: {
+        supplierId: seeded.supplierId,
+        issueDate: '2026-09-02',
+        expectedDeliveryDate: '2026-09-13',
+        currency: 'AUD',
+        lineItems: [{ description: 'Different line', quantity: 1, unitPrice: 20, gstApplicable: true }],
+      },
+    });
+    const secondPo = idSchema.parse(secondPoRes.json());
+    await appForSecondPo.close();
+
     const db = new Database(dbPath);
     db.exec('PRAGMA foreign_keys = OFF;');
-    db.prepare('UPDATE supplier_bill_line_items SET source_purchase_order_line_item_id = ? WHERE supplier_bill_id = ?').run(
-      '550e8400-e29b-41d4-a716-446655440333',
-      seeded.billId,
-    );
+    db.prepare('UPDATE supplier_bills SET source_purchase_order_id = ? WHERE id = ?').run(secondPo.id, seeded.billId);
     db.exec('PRAGMA foreign_keys = ON;');
     db.close();
 
