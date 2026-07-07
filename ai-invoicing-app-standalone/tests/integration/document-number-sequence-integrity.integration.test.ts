@@ -32,6 +32,15 @@ function assertDeterministicSequence(documentNumbers: string[], expectedPrefix: 
   expect(sorted).toEqual(Array.from({ length: documentNumbers.length }, (_, index) => index + 1));
 }
 
+function getStringField(response: { json(): unknown }, fieldName: string): string {
+  const payload = response.json() as Record<string, unknown>;
+  const value = payload[fieldName];
+  if (typeof value !== 'string') {
+    throw new Error(`Expected string field ${fieldName}`);
+  }
+  return value;
+}
+
 describe('document number sequence integrity', () => {
   it('keeps numbers unique, deterministic, and immutable across all document types', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'ai-business-os-numbering-'));
@@ -45,7 +54,7 @@ describe('document number sequence integrity', () => {
       payload: { displayName: 'Sequence Customer' },
     });
     expect(customerRes.statusCode).toBe(201);
-    const customerId = (customerRes.json() as { id: string }).id;
+    const customerId = getStringField(customerRes, 'id');
 
     const supplierRes = await app.inject({
       method: 'POST',
@@ -53,7 +62,7 @@ describe('document number sequence integrity', () => {
       payload: { displayName: 'Sequence Supplier' },
     });
     expect(supplierRes.statusCode).toBe(201);
-    const supplierId = (supplierRes.json() as { id: string }).id;
+    const supplierId = getStringField(supplierRes, 'id');
 
     const invoiceDraftPayload = (index: number) => ({
       customerId,
@@ -74,7 +83,7 @@ describe('document number sequence integrity', () => {
     for (const response of invoiceDraftResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const invoiceIds = invoiceDraftResponses.map((response) => (response.json() as { id: string }).id);
+    const invoiceIds = invoiceDraftResponses.map((response) => getStringField(response, 'id'));
 
     const invoiceFinaliseResponses = await Promise.all(
       invoiceIds.map((invoiceId) => app.inject({ method: 'POST', url: `/invoices/${invoiceId}/finalise` })),
@@ -82,9 +91,7 @@ describe('document number sequence integrity', () => {
     for (const response of invoiceFinaliseResponses) {
       expect(response.statusCode).toBe(200);
     }
-    const invoiceNumbers = invoiceFinaliseResponses.map(
-      (response) => (response.json() as { invoiceNumber: string }).invoiceNumber,
-    );
+    const invoiceNumbers = invoiceFinaliseResponses.map((response) => getStringField(response, 'invoiceNumber'));
     assertDeterministicSequence(invoiceNumbers, 'INV');
 
     const creditNoteResponses = await Promise.all(
@@ -105,9 +112,7 @@ describe('document number sequence integrity', () => {
     for (const response of creditNoteResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const creditNoteNumbers = creditNoteResponses.map(
-      (response) => (response.json() as { creditNoteNumber: string }).creditNoteNumber,
-    );
+    const creditNoteNumbers = creditNoteResponses.map((response) => getStringField(response, 'creditNoteNumber'));
     assertDeterministicSequence(creditNoteNumbers, 'CRN');
 
     const customerPaymentResponses = await Promise.all(
@@ -129,9 +134,7 @@ describe('document number sequence integrity', () => {
     for (const response of customerPaymentResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const customerPaymentNumbers = customerPaymentResponses.map(
-      (response) => (response.json() as { paymentNumber: string }).paymentNumber,
-    );
+    const customerPaymentNumbers = customerPaymentResponses.map((response) => getStringField(response, 'paymentNumber'));
     assertDeterministicSequence(customerPaymentNumbers, 'PAY');
 
     const purchaseOrderResponses = await Promise.all(
@@ -153,9 +156,9 @@ describe('document number sequence integrity', () => {
     for (const response of purchaseOrderResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const purchaseOrderIds = purchaseOrderResponses.map((response) => (response.json() as { id: string }).id);
-    const purchaseOrderNumbers = purchaseOrderResponses.map(
-      (response) => (response.json() as { purchaseOrderNumber: string }).purchaseOrderNumber,
+    const purchaseOrderIds = purchaseOrderResponses.map((response) => getStringField(response, 'id'));
+    const purchaseOrderNumbers = purchaseOrderResponses.map((response) =>
+      getStringField(response, 'purchaseOrderNumber'),
     );
     assertDeterministicSequence(purchaseOrderNumbers, 'PO');
 
@@ -179,7 +182,7 @@ describe('document number sequence integrity', () => {
     for (const response of supplierBillDraftResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const supplierBillIds = supplierBillDraftResponses.map((response) => (response.json() as { id: string }).id);
+    const supplierBillIds = supplierBillDraftResponses.map((response) => getStringField(response, 'id'));
 
     const supplierBillFinaliseResponses = await Promise.all(
       supplierBillIds.map((billId) => app.inject({ method: 'POST', url: `/supplier-bills/${billId}/finalise` })),
@@ -187,9 +190,7 @@ describe('document number sequence integrity', () => {
     for (const response of supplierBillFinaliseResponses) {
       expect(response.statusCode).toBe(200);
     }
-    const supplierBillNumbers = supplierBillFinaliseResponses.map(
-      (response) => (response.json() as { billNumber: string }).billNumber,
-    );
+    const supplierBillNumbers = supplierBillFinaliseResponses.map((response) => getStringField(response, 'billNumber'));
     assertDeterministicSequence(supplierBillNumbers, 'BILL');
 
     const supplierPaymentResponses = await Promise.all(
@@ -211,24 +212,42 @@ describe('document number sequence integrity', () => {
     for (const response of supplierPaymentResponses) {
       expect(response.statusCode).toBe(201);
     }
-    const supplierPaymentIds = supplierPaymentResponses.map((response) => (response.json() as { id: string }).id);
-    const supplierPaymentNumbers = supplierPaymentResponses.map(
-      (response) => (response.json() as { paymentNumber: string }).paymentNumber,
+    const supplierPaymentIds = supplierPaymentResponses.map((response) => getStringField(response, 'id'));
+    const supplierPaymentNumbers = supplierPaymentResponses.map((response) =>
+      getStringField(response, 'paymentNumber'),
     );
     assertDeterministicSequence(supplierPaymentNumbers, 'SPAY');
 
-    const creditNoteId = (creditNoteResponses[0].json() as { id: string }).id;
-    const customerPaymentId = (customerPaymentResponses[0].json() as { id: string }).id;
-    const purchaseOrderId = purchaseOrderIds[0];
-    const supplierBillId = supplierBillIds[0];
-    const supplierPaymentId = supplierPaymentIds[0];
-    const invoiceId = invoiceIds[0];
-    const invoiceNumber = invoiceNumbers[0];
-    const creditNoteNumber = creditNoteNumbers[0];
-    const customerPaymentNumber = customerPaymentNumbers[0];
-    const purchaseOrderNumber = purchaseOrderNumbers[0];
-    const supplierBillNumber = supplierBillNumbers[0];
-    const supplierPaymentNumber = supplierPaymentNumbers[0];
+    const firstCreditNote = creditNoteResponses.at(0);
+    const firstCustomerPayment = customerPaymentResponses.at(0);
+    const purchaseOrderId = purchaseOrderIds.at(0);
+    const supplierBillId = supplierBillIds.at(0);
+    const supplierPaymentId = supplierPaymentIds.at(0);
+    const invoiceId = invoiceIds.at(0);
+    const invoiceNumber = invoiceNumbers.at(0);
+    const creditNoteNumber = creditNoteNumbers.at(0);
+    const customerPaymentNumber = customerPaymentNumbers.at(0);
+    const purchaseOrderNumber = purchaseOrderNumbers.at(0);
+    const supplierBillNumber = supplierBillNumbers.at(0);
+    const supplierPaymentNumber = supplierPaymentNumbers.at(0);
+    if (
+      !firstCreditNote ||
+      !firstCustomerPayment ||
+      !purchaseOrderId ||
+      !supplierBillId ||
+      !supplierPaymentId ||
+      !invoiceId ||
+      !invoiceNumber ||
+      !creditNoteNumber ||
+      !customerPaymentNumber ||
+      !purchaseOrderNumber ||
+      !supplierBillNumber ||
+      !supplierPaymentNumber
+    ) {
+      throw new Error('Expected generated document ids and numbers');
+    }
+    const creditNoteId = getStringField(firstCreditNote, 'id');
+    const customerPaymentId = getStringField(firstCustomerPayment, 'id');
 
     const invoicePdfRes = await app.inject({ method: 'GET', url: `/invoices/${invoiceId}/pdf` });
     expect(invoicePdfRes.statusCode).toBe(200);
@@ -316,7 +335,7 @@ describe('document number sequence integrity', () => {
       payload: invoiceDraftPayload(99),
     });
     expect(invalidStateDraftRes.statusCode).toBe(201);
-    const invalidStateDraftId = (invalidStateDraftRes.json() as { id: string }).id;
+    const invalidStateDraftId = getStringField(invalidStateDraftRes, 'id');
     const invalidStateFinaliseRes = await app.inject({
       method: 'POST',
       url: `/invoices/${invalidStateDraftId}/finalise`,
