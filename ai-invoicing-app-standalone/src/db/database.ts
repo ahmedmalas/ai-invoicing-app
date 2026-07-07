@@ -1904,6 +1904,12 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const billNumber = formatInvoiceNumber(prefix, currentYear, sequence);
       const now = nowIso();
+      upsertDocument(
+        id,
+        `${billNumber} ${bill.supplierReference ?? ''}`.trim(),
+        'supplier_bill',
+        `${billNumber} ${bill.currency} ${bill.notes ?? ''}`,
+      );
       db.prepare(
         `UPDATE supplier_bills
          SET status = 'Finalised', bill_number = ?, updated_at = ?
@@ -1914,12 +1920,6 @@ export function createDatabase(dbPath: string): AppDatabase {
       if (!finalised) {
         throw new Error('Failed to load finalised supplier bill');
       }
-      upsertDocument(
-        id,
-        `${billNumber} ${finalised.supplierReference ?? ''}`.trim(),
-        'supplier_bill',
-        `${billNumber} ${finalised.currency} ${finalised.notes ?? ''}`,
-      );
       timeline('supplier_bill.finalised', id, {
         billNumber,
         total: finalised.totals.total,
