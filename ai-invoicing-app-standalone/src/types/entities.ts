@@ -196,6 +196,7 @@ export interface Supplier {
 export type SupplierBillStatus = 'Draft' | 'Finalised';
 
 export interface SupplierBillLineItemInput {
+  id?: UUID;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -206,6 +207,7 @@ export interface SupplierBill {
   id: UUID;
   supplierId: UUID;
   sourcePurchaseOrderId: UUID | null;
+  sourcePurchaseOrderNumber: string | null;
   billNumber: string | null;
   billDate: string;
   dueDate: string;
@@ -239,8 +241,10 @@ export interface SupplierBillPayment {
 }
 
 export type PurchaseOrderStatus = 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
+export type PurchaseOrderBillingStatus = 'unbilled' | 'partially_billed' | 'fully_billed';
 
 export interface PurchaseOrderLineItemInput {
+  id?: UUID;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -257,6 +261,9 @@ export interface PurchaseOrder {
   currency: string;
   notes: string | null;
   status: PurchaseOrderStatus;
+  billingStatus: PurchaseOrderBillingStatus;
+  totalBilledAmount: number;
+  remainingUnbilledAmount: number;
   totals: InvoiceTotals;
   createdAt: string;
   updatedAt: string;

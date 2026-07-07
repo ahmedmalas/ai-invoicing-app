@@ -34,6 +34,7 @@ export const listPurchaseOrdersQuerySchema = z
     supplierId: z.string().uuid().optional(),
     purchaseOrderNumber: z.string().min(1).optional(),
     status: z.enum(['Draft', 'Approved', 'Closed', 'Cancelled']).optional(),
+    billingStatus: z.enum(['unbilled', 'partially_billed', 'fully_billed']).optional(),
     fromIssueDate: isoDateSchema.refine(isValidIsoCalendarDate, 'fromIssueDate must be a valid ISO date').optional(),
     toIssueDate: isoDateSchema.refine(isValidIsoCalendarDate, 'toIssueDate must be a valid ISO date').optional(),
     fromExpectedDeliveryDate: isoDateSchema
@@ -57,3 +58,15 @@ export const listPurchaseOrdersQuerySchema = z
       path: ['fromExpectedDeliveryDate'],
     },
   );
+
+export const createSupplierBillFromPurchaseOrderSchema = z.object({
+  lineItems: z
+    .array(
+      z.object({
+        purchaseOrderLineItemId: z.string().uuid(),
+        quantity: z.number().positive(),
+      }),
+    )
+    .min(1)
+    .optional(),
+});

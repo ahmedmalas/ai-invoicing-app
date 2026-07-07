@@ -19,6 +19,9 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('purchase_order.approved')).toBe(true);
     expect(isValidTimelineEventKey('purchase_order.closed')).toBe(true);
     expect(isValidTimelineEventKey('purchase_order.cancelled')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.partially_billed')).toBe(true);
+    expect(isValidTimelineEventKey('purchase_order.fully_billed')).toBe(true);
+    expect(isValidTimelineEventKey('supplier_bill.created_from_purchase_order')).toBe(true);
     expect(isValidTimelineEventKey('job.created')).toBe(true);
     expect(isValidTimelineEventKey('job.document_linked')).toBe(true);
     expect(isValidTimelineEventKey('document.linked_to_job')).toBe(true);
@@ -42,6 +45,9 @@ describe('timeline taxonomy validator', () => {
     expect(() => assertValidTimelineEventOrThrow('purchase_order.approved', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('purchase_order.closed', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('purchase_order.cancelled', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.partially_billed', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('purchase_order.fully_billed', 1)).not.toThrow();
+    expect(() => assertValidTimelineEventOrThrow('supplier_bill.created_from_purchase_order', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.created', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('job.document_linked', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('document.linked_to_job', 1)).not.toThrow();

@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS supplier_bills (
 CREATE TABLE IF NOT EXISTS supplier_bill_line_items (
   id TEXT PRIMARY KEY,
   supplier_bill_id TEXT NOT NULL,
+  source_purchase_order_line_item_id TEXT,
   description TEXT NOT NULL,
   quantity REAL NOT NULL,
   unit_price REAL NOT NULL,
@@ -192,7 +193,8 @@ CREATE TABLE IF NOT EXISTS supplier_bill_line_items (
   line_subtotal REAL NOT NULL,
   line_gst REAL NOT NULL,
   line_total REAL NOT NULL,
-  FOREIGN KEY (supplier_bill_id) REFERENCES supplier_bills(id)
+  FOREIGN KEY (supplier_bill_id) REFERENCES supplier_bills(id),
+  FOREIGN KEY (source_purchase_order_line_item_id) REFERENCES purchase_order_line_items(id)
 );
 
 CREATE TABLE IF NOT EXISTS purchase_orders (
@@ -398,7 +400,12 @@ CREATE INDEX IF NOT EXISTS idx_supplier_bills_due_date ON supplier_bills(due_dat
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null
 ON supplier_bills(supplier_id, supplier_reference)
 WHERE supplier_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_source_purchase_order_not_null
+ON supplier_bills(source_purchase_order_id)
+WHERE source_purchase_order_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line
+ON supplier_bill_line_items(source_purchase_order_line_item_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_number ON purchase_orders(purchase_order_number);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);

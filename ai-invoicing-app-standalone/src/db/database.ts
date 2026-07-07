@@ -12,6 +12,7 @@ import type {
   CustomerPayment,
   PaymentAllocation,
   PurchaseOrder,
+  PurchaseOrderBillingStatus,
   PurchaseOrderLineItemInput,
   PurchaseOrderStatus,
   SupplierBillPayment,
@@ -119,6 +120,7 @@ interface DbSupplierBillRow {
   id: string;
   supplier_id: string;
   source_purchase_order_id: string | null;
+  source_purchase_order_number?: string | null;
   bill_number: string | null;
   bill_date: string;
   due_date: string;
@@ -148,10 +150,12 @@ interface DbSupplierPaymentRow {
 }
 
 interface DbSupplierBillLineItemRow {
+  id: string;
   description: string;
   quantity: number;
   unit_price: number;
   gst_applicable: number;
+  source_purchase_order_line_item_id: string | null;
 }
 
 interface DbPurchaseOrderRow {
@@ -172,6 +176,7 @@ interface DbPurchaseOrderRow {
 }
 
 interface DbPurchaseOrderLineItemRow {
+  id: string;
   description: string;
   quantity: number;
   unit_price: number;
@@ -435,10 +440,18 @@ export interface ListPurchaseOrdersFilter {
   supplierId?: string;
   purchaseOrderNumber?: string;
   status?: PurchaseOrderStatus;
+  billingStatus?: PurchaseOrderBillingStatus;
   fromIssueDate?: string;
   toIssueDate?: string;
   fromExpectedDeliveryDate?: string;
   toExpectedDeliveryDate?: string;
+}
+
+export interface CreateSupplierBillFromPurchaseOrderInput {
+  lineItems?: Array<{
+    purchaseOrderLineItemId: string;
+    quantity: number;
+  }>;
 }
 
 export interface JobDocumentLinkRecord {
@@ -496,7 +509,10 @@ export interface AppDatabase {
   getCustomerPaymentById(id: string): CustomerPayment | null;
   listCustomerPayments(filter?: ListCustomerPaymentsFilter): CustomerPayment[];
   createSupplierBillDraft(input: CreateSupplierBillDraftInput): SupplierBill;
-  createSupplierBillDraftFromPurchaseOrder(purchaseOrderId: string): SupplierBill;
+  createSupplierBillDraftFromPurchaseOrder(
+    purchaseOrderId: string,
+    input?: CreateSupplierBillFromPurchaseOrderInput,
+  ): SupplierBill;
   updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
   getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
   finaliseSupplierBill(id: string): SupplierBill;
@@ -623,6 +639,7 @@ function mapSupplierBillRow(row: DbSupplierBillRow): SupplierBill {
     id: row.id,
     supplierId: row.supplier_id,
     sourcePurchaseOrderId: row.source_purchase_order_id,
+    sourcePurchaseOrderNumber: row.source_purchase_order_number ?? null,
     billNumber: row.bill_number,
     billDate: row.bill_date,
     dueDate: row.due_date,
@@ -671,6 +688,9 @@ function mapPurchaseOrderRow(row: DbPurchaseOrderRow): PurchaseOrder {
     currency: row.currency,
     notes: row.notes,
     status: row.status,
+    billingStatus: 'unbilled',
+    totalBilledAmount: 0,
+    remainingUnbilledAmount: row.total,
     totals: {
       subtotal: row.subtotal,
       gstTotal: row.gst_total,
@@ -850,6 +870,17 @@ export function createDatabase(dbPath: string): AppDatabase {
      ON supplier_bills(source_purchase_order_id)
      WHERE source_purchase_order_id IS NOT NULL;`,
   );
+  const supplierBillLineItemColumns = db
+    .prepare("SELECT name FROM pragma_table_info('supplier_bill_line_items')")
+    .all() as Array<{ name: string }>;
+  const supplierBillLineItemColumnSet = new Set(supplierBillLineItemColumns.map((column) => column.name));
+  if (!supplierBillLineItemColumnSet.has('source_purchase_order_line_item_id')) {
+    db.exec('ALTER TABLE supplier_bill_line_items ADD COLUMN source_purchase_order_line_item_id TEXT;');
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line
+     ON supplier_bill_line_items(source_purchase_order_line_item_id);`,
+  );
   if (!supplierBillColumnSet.has('payment_state')) {
     db.exec("ALTER TABLE supplier_bills ADD COLUMN payment_state TEXT NOT NULL DEFAULT 'Draft';");
   }
@@ -910,6 +941,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       'purchase_order.approved',
       'purchase_order.closed',
       'purchase_order.cancelled',
+      'purchase_order.partially_billed',
+      'purchase_order.fully_billed',
+      'supplier_bill.created_from_purchase_order',
       'supplier_bill.created',
       'supplier_bill.finalised',
       'customer.created',
@@ -1036,6 +1070,41 @@ export function createDatabase(dbPath: string): AppDatabase {
       supplierBillId: row.supplier_bill_id,
       amount: row.amount,
     }));
+  }
+
+  function getPurchaseOrderBillingSummary(purchaseOrderId: string, purchaseOrderTotal: number): {
+    totalBilledAmount: number;
+    remainingUnbilledAmount: number;
+    billingStatus: PurchaseOrderBillingStatus;
+  } {
+    const billedRow = db
+      .prepare(
+        `SELECT coalesce(sum(total), 0) AS total
+         FROM supplier_bills
+         WHERE source_purchase_order_id = ?`,
+      )
+      .get(purchaseOrderId) as { total: number };
+    const totalBilledAmount = Number(billedRow.total ?? 0);
+    const remainingUnbilledAmount = Math.max(purchaseOrderTotal - totalBilledAmount, 0);
+    let billingStatus: PurchaseOrderBillingStatus = 'unbilled';
+    if (totalBilledAmount > 0 && remainingUnbilledAmount > 0) {
+      billingStatus = 'partially_billed';
+    } else if (totalBilledAmount > 0 && remainingUnbilledAmount <= 0) {
+      billingStatus = 'fully_billed';
+    }
+    return {
+      totalBilledAmount,
+      remainingUnbilledAmount,
+      billingStatus,
+    };
+  }
+
+  function withPurchaseOrderBillingSummary(purchaseOrder: PurchaseOrder): PurchaseOrder {
+    const summary = getPurchaseOrderBillingSummary(purchaseOrder.id, purchaseOrder.totals.total);
+    return {
+      ...purchaseOrder,
+      ...summary,
+    };
   }
 
   function loadAssignableUserOrThrow(
@@ -1931,13 +2000,17 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const insertLine = db.prepare(
         `INSERT INTO supplier_bill_line_items (
-          id, supplier_bill_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, supplier_bill_id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-      for (const item of calculatedItems) {
+      for (const [index, item] of calculatedItems.entries()) {
+        const sourcePurchaseOrderLineItemId = (
+          input.lineItems[index] as { sourcePurchaseOrderLineItemId?: string }
+        ).sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,
+          sourcePurchaseOrderLineItemId ?? null,
           item.description,
           item.quantity,
           item.unitPrice,
@@ -1964,7 +2037,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       return mapSupplierBillRow(row);
     },
 
-    createSupplierBillDraftFromPurchaseOrder(purchaseOrderId) {
+    createSupplierBillDraftFromPurchaseOrder(purchaseOrderId, input) {
       const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
       if (!purchaseOrder) {
         throw new Error('PURCHASE_ORDER_NOT_FOUND');
@@ -1972,22 +2045,84 @@ export function createDatabase(dbPath: string): AppDatabase {
       if (purchaseOrder.status !== 'Approved') {
         throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
       }
-
-      const existingBill = db
-        .prepare('SELECT id FROM supplier_bills WHERE source_purchase_order_id = ?')
-        .get(purchaseOrderId) as { id: string } | undefined;
-      if (existingBill) {
+      if (purchaseOrder.billingStatus === 'fully_billed') {
         throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
       }
+
+      const sourceLines =
+        input?.lineItems && input.lineItems.length > 0
+          ? input.lineItems
+          : purchaseOrder.lineItems.map((lineItem) => ({
+              purchaseOrderLineItemId: lineItem.id!,
+              quantity: lineItem.quantity,
+            }));
+
+      const duplicateSourceLines = new Set(sourceLines.map((lineItem) => lineItem.purchaseOrderLineItemId));
+      if (duplicateSourceLines.size !== sourceLines.length) {
+        throw new Error('PURCHASE_ORDER_BILLING_DUPLICATE_LINE_ITEM');
+      }
+
+      const purchaseOrderLineMap = new Map(
+        purchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+      );
+      const selectedSupplierBillLineItems: Array<
+        SupplierBillLineItemInput & { sourcePurchaseOrderLineItemId: string }
+      > = [];
+      let selectedTotal = 0;
+
+      for (const sourceLine of sourceLines) {
+        if (sourceLine.quantity <= 0) {
+          throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_INVALID');
+        }
+        const purchaseOrderLine = purchaseOrderLineMap.get(sourceLine.purchaseOrderLineItemId);
+        if (!purchaseOrderLine) {
+          throw new Error('PURCHASE_ORDER_LINE_ITEM_NOT_FOUND');
+        }
+
+        const billedQtyRow = db
+          .prepare(
+            `SELECT coalesce(sum(li.quantity), 0) AS total
+             FROM supplier_bill_line_items li
+             INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+             WHERE b.source_purchase_order_id = ?
+               AND li.source_purchase_order_line_item_id = ?`,
+          )
+          .get(purchaseOrderId, sourceLine.purchaseOrderLineItemId) as { total: number };
+        const remainingQty = purchaseOrderLine.quantity - billedQtyRow.total;
+        if (sourceLine.quantity > remainingQty + 1e-9) {
+          throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING');
+        }
+
+        selectedSupplierBillLineItems.push({
+          description: purchaseOrderLine.description,
+          quantity: sourceLine.quantity,
+          unitPrice: purchaseOrderLine.unitPrice,
+          gstApplicable: purchaseOrderLine.gstApplicable,
+          sourcePurchaseOrderLineItemId: sourceLine.purchaseOrderLineItemId,
+        });
+        selectedTotal +=
+          sourceLine.quantity * purchaseOrderLine.unitPrice * (purchaseOrderLine.gstApplicable ? 1.1 : 1);
+      }
+
+      if (selectedSupplierBillLineItems.length === 0) {
+        throw new Error('PURCHASE_ORDER_BILLING_LINES_REQUIRED');
+      }
+      if (selectedTotal > purchaseOrder.remainingUnbilledAmount + 1e-6) {
+        throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
+      }
+
+      const existingLinkedBillCount = db
+        .prepare('SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?')
+        .get(purchaseOrderId) as { count: number };
 
       const created = this.createSupplierBillDraft({
         supplierId: purchaseOrder.supplierId,
         billDate: purchaseOrder.issueDate,
         dueDate: purchaseOrder.expectedDeliveryDate ?? purchaseOrder.issueDate,
-        supplierReference: `PO-${purchaseOrder.purchaseOrderNumber}`,
+        supplierReference: `PO-${purchaseOrder.purchaseOrderNumber}-${existingLinkedBillCount.count + 1}`,
         currency: purchaseOrder.currency,
         notes: purchaseOrder.notes ?? undefined,
-        lineItems: purchaseOrder.lineItems,
+        lineItems: selectedSupplierBillLineItems,
       });
 
       try {
@@ -2007,7 +2142,31 @@ export function createDatabase(dbPath: string): AppDatabase {
         throw error;
       }
 
-      return mapSupplierBillRow(db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(created.id) as DbSupplierBillRow);
+      const billingSummaryAfter = getPurchaseOrderBillingSummary(purchaseOrder.id, purchaseOrder.totals.total);
+      timeline('supplier_bill.created_from_purchase_order', created.id, {
+        purchaseOrderId,
+        supplierBillId: created.id,
+      });
+      if (billingSummaryAfter.billingStatus === 'fully_billed') {
+        timeline('purchase_order.fully_billed', purchaseOrder.id, {
+          totalBilledAmount: billingSummaryAfter.totalBilledAmount,
+        });
+      } else if (billingSummaryAfter.billingStatus === 'partially_billed') {
+        timeline('purchase_order.partially_billed', purchaseOrder.id, {
+          totalBilledAmount: billingSummaryAfter.totalBilledAmount,
+          remainingUnbilledAmount: billingSummaryAfter.remainingUnbilledAmount,
+        });
+      }
+
+      const linkedRow = db
+        .prepare(
+          `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+           FROM supplier_bills sb
+           LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
+           WHERE sb.id = ?`,
+        )
+        .get(created.id) as DbSupplierBillRow;
+      return mapSupplierBillRow(linkedRow);
     },
 
     updateSupplierBillDraft(id, input) {
@@ -2053,13 +2212,17 @@ export function createDatabase(dbPath: string): AppDatabase {
       db.prepare('DELETE FROM supplier_bill_line_items WHERE supplier_bill_id = ?').run(id);
       const insertLine = db.prepare(
         `INSERT INTO supplier_bill_line_items (
-          id, supplier_bill_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, supplier_bill_id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-      for (const item of calculatedItems) {
+      for (const [index, item] of calculatedItems.entries()) {
+        const sourcePurchaseOrderLineItemId = (
+          input.lineItems[index] as { sourcePurchaseOrderLineItemId?: string }
+        ).sourcePurchaseOrderLineItemId;
         insertLine.run(
           randomUUID(),
           id,
+          sourcePurchaseOrderLineItemId ?? null,
           item.description,
           item.quantity,
           item.unitPrice,
@@ -2081,7 +2244,14 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     getSupplierBillById(id) {
-      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as
+      const row = db
+        .prepare(
+          `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+           FROM supplier_bills sb
+           LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
+           WHERE sb.id = ?`,
+        )
+        .get(id) as
         | DbSupplierBillRow
         | undefined;
       if (!row) {
@@ -2089,12 +2259,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
       const lineItemsRows = db
         .prepare(
-          `SELECT description, quantity, unit_price, gst_applicable
+          `SELECT id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable
            FROM supplier_bill_line_items
            WHERE supplier_bill_id = ?`,
         )
         .all(id) as DbSupplierBillLineItemRow[];
       const lineItems: SupplierBillLineItemInput[] = lineItemsRows.map((item) => ({
+        id: item.id,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unit_price,
@@ -2173,18 +2344,19 @@ export function createDatabase(dbPath: string): AppDatabase {
       const rowFilter = filter ?? {};
       const rows = db
         .prepare(
-          `SELECT *
-           FROM supplier_bills
-           WHERE (? IS NULL OR supplier_id = ?)
-             AND (? IS NULL OR source_purchase_order_id = ?)
-             AND (? IS NULL OR bill_number = ?)
-             AND (? IS NULL OR bill_date >= ?)
-             AND (? IS NULL OR bill_date <= ?)
-             AND (? IS NULL OR due_date >= ?)
-             AND (? IS NULL OR due_date <= ?)
-             AND (? IS NULL OR status = ?)
-           AND (? IS NULL OR payment_state = ?)
-           ORDER BY bill_date DESC, created_at DESC`,
+          `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+           FROM supplier_bills sb
+           LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
+           WHERE (? IS NULL OR sb.supplier_id = ?)
+             AND (? IS NULL OR sb.source_purchase_order_id = ?)
+             AND (? IS NULL OR sb.bill_number = ?)
+             AND (? IS NULL OR sb.bill_date >= ?)
+             AND (? IS NULL OR sb.bill_date <= ?)
+             AND (? IS NULL OR sb.due_date >= ?)
+             AND (? IS NULL OR sb.due_date <= ?)
+             AND (? IS NULL OR sb.status = ?)
+           AND (? IS NULL OR sb.payment_state = ?)
+           ORDER BY sb.bill_date DESC, sb.created_at DESC`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -2322,7 +2494,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       });
 
       const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
-      return mapPurchaseOrderRow(row);
+      return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
     },
 
     updatePurchaseOrderDraft(id, input) {
@@ -2392,7 +2564,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         'purchase_order',
         `${row.purchase_order_number} ${row.currency} ${row.notes ?? ''} ${row.supplier_reference ?? ''}`,
       );
-      return mapPurchaseOrderRow(row);
+      return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
     },
 
     getPurchaseOrderById(id) {
@@ -2404,21 +2576,23 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
       const lineItemsRows = db
         .prepare(
-          `SELECT description, quantity, unit_price, gst_applicable
+          `SELECT id, description, quantity, unit_price, gst_applicable
            FROM purchase_order_line_items
            WHERE purchase_order_id = ?`,
         )
         .all(id) as DbPurchaseOrderLineItemRow[];
       const lineItems: PurchaseOrderLineItemInput[] = lineItemsRows.map((item) => ({
+        id: item.id,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unit_price,
         gstApplicable: item.gst_applicable === 1,
       }));
-      return {
+      const purchaseOrder = {
         ...mapPurchaseOrderRow(row),
         lineItems,
       };
+      return withPurchaseOrderBillingSummary(purchaseOrder);
     },
 
     approvePurchaseOrder(id) {
@@ -2431,7 +2605,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('purchase_order.approved', id, {
         purchaseOrderNumber: order.purchaseOrderNumber,
       });
-      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+      return withPurchaseOrderBillingSummary(
+        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
+      );
     },
 
     closePurchaseOrder(id) {
@@ -2444,7 +2620,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('purchase_order.closed', id, {
         purchaseOrderNumber: order.purchaseOrderNumber,
       });
-      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+      return withPurchaseOrderBillingSummary(
+        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
+      );
     },
 
     cancelPurchaseOrder(id) {
@@ -2457,7 +2635,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       timeline('purchase_order.cancelled', id, {
         purchaseOrderNumber: order.purchaseOrderNumber,
       });
-      return mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow);
+      return withPurchaseOrderBillingSummary(
+        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
+      );
     },
 
     listPurchaseOrders(filter) {
@@ -2491,7 +2671,11 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.toExpectedDeliveryDate ?? null,
           rowFilter.toExpectedDeliveryDate ?? null,
         ) as DbPurchaseOrderRow[];
-      return rows.map(mapPurchaseOrderRow);
+      const mapped = rows.map((row) => withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row)));
+      if (!rowFilter.billingStatus) {
+        return mapped;
+      }
+      return mapped.filter((order) => order.billingStatus === rowFilter.billingStatus);
     },
 
     createSupplierPayment(input) {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPurchaseOrderDraftSchema } from '../../src/domain/purchase-orders/validation.js';
+import {
+  createPurchaseOrderDraftSchema,
+  createSupplierBillFromPurchaseOrderSchema,
+} from '../../src/domain/purchase-orders/validation.js';
 
 describe('purchase order validation', () => {
   it('accepts valid purchase order draft payload', () => {
@@ -21,6 +24,21 @@ describe('purchase order validation', () => {
         issueDate: '2026-07-07',
         currency: 'AUD',
         lineItems: [],
+      }),
+    ).toThrow();
+  });
+
+  it('accepts valid partial conversion payload', () => {
+    const parsed = createSupplierBillFromPurchaseOrderSchema.parse({
+      lineItems: [{ purchaseOrderLineItemId: '550e8400-e29b-41d4-a716-446655440010', quantity: 1.5 }],
+    });
+    expect(parsed.lineItems?.[0]?.quantity).toBe(1.5);
+  });
+
+  it('rejects non-positive partial conversion quantities', () => {
+    expect(() =>
+      createSupplierBillFromPurchaseOrderSchema.parse({
+        lineItems: [{ purchaseOrderLineItemId: '550e8400-e29b-41d4-a716-446655440010', quantity: 0 }],
       }),
     ).toThrow();
   });

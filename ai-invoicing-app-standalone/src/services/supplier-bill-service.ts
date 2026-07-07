@@ -12,6 +12,7 @@ function escapeHtml(value: string): string {
 export function renderSupplierBillHtml(input: {
   bill: SupplierBill & { lineItems: Array<{ description: string; quantity: number; unitPrice: number }> };
   supplier: Supplier;
+  sourcePurchaseOrderNumber?: string | null;
 }): string {
   const { bill, supplier } = input;
   const rows = bill.lineItems
@@ -43,6 +44,7 @@ export function renderSupplierBillHtml(input: {
   <div><strong>Currency:</strong> ${escapeHtml(bill.currency)}</div>
   <div><strong>Supplier:</strong> ${escapeHtml(supplier.displayName)}</div>
   <div><strong>Supplier Ref:</strong> ${escapeHtml(bill.supplierReference ?? '')}</div>
+  <div><strong>Source PO:</strong> ${escapeHtml(input.sourcePurchaseOrderNumber ?? '')}</div>
   <table>
     <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th></tr></thead>
     <tbody>${rows}</tbody>

@@ -14,13 +14,25 @@ const purchaseOrderSchema = z.object({
   supplierReference: z.string().nullable(),
   currency: z.string(),
   status: z.enum(['Draft', 'Approved', 'Closed', 'Cancelled']),
+  billingStatus: z.enum(['unbilled', 'partially_billed', 'fully_billed']),
+  totalBilledAmount: z.number(),
+  remainingUnbilledAmount: z.number(),
   totals: z.object({ total: z.number() }),
+  lineItems: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        quantity: z.number(),
+      }),
+    )
+    .optional(),
 });
 
 const supplierBillSchema = z.object({
   id: z.string().uuid(),
   supplierId: z.string().uuid(),
   sourcePurchaseOrderId: z.string().uuid().nullable(),
+  sourcePurchaseOrderNumber: z.string().nullable(),
   status: z.enum(['Draft', 'Finalised']),
   totals: z.object({ total: z.number() }),
 });
@@ -108,6 +120,17 @@ describe('purchase orders e2e', () => {
     expect(updatedDraftRes.statusCode).toBe(200);
     const updatedDraft = purchaseOrderSchema.parse(updatedDraftRes.json());
     expect(updatedDraft.status).toBe('Draft');
+    const updatedDraftDetailsRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${draftPo.id}`,
+    });
+    expect(updatedDraftDetailsRes.statusCode).toBe(200);
+    const updatedDraftDetails = purchaseOrderSchema.parse(updatedDraftDetailsRes.json());
+    const poLineAId = updatedDraftDetails.lineItems?.[0]?.id;
+    const poLineBId = updatedDraftDetails.lineItems?.[1]?.id;
+    if (!poLineAId || !poLineBId) {
+      throw new Error('Expected purchase order line item ids');
+    }
 
     const approveRes = await app.inject({
       method: 'POST',
@@ -116,17 +139,69 @@ describe('purchase orders e2e', () => {
     expect(approveRes.statusCode).toBe(200);
     const approvedPo = purchaseOrderSchema.parse(approveRes.json());
     expect(approvedPo.status).toBe('Approved');
+    expect(approvedPo.billingStatus).toBe('unbilled');
+    expect(approvedPo.totalBilledAmount).toBe(0);
+    expect(approvedPo.remainingUnbilledAmount).toBe(approvedPo.totals.total);
 
     const createBillFromApprovedRes = await app.inject({
       method: 'POST',
       url: `/purchase-orders/${draftPo.id}/create-supplier-bill`,
+      payload: {
+        lineItems: [{ purchaseOrderLineItemId: poLineAId, quantity: 1 }],
+      },
     });
     expect(createBillFromApprovedRes.statusCode).toBe(201);
     const createdBillFromPo = supplierBillSchema.parse(createBillFromApprovedRes.json());
     expect(createdBillFromPo.supplierId).toBe(supplier.id);
     expect(createdBillFromPo.sourcePurchaseOrderId).toBe(draftPo.id);
     expect(createdBillFromPo.status).toBe('Draft');
-    expect(createdBillFromPo.totals.total).toBe(approvedPo.totals.total);
+    expect(createdBillFromPo.totals.total).toBeLessThan(approvedPo.totals.total);
+
+    const overQuantityCreateBillRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${draftPo.id}/create-supplier-bill`,
+      payload: {
+        lineItems: [{ purchaseOrderLineItemId: poLineAId, quantity: 99 }],
+      },
+    });
+    expect(overQuantityCreateBillRes.statusCode).toBe(409);
+    expect(overQuantityCreateBillRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING',
+    });
+
+    const poAfterPartialRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${draftPo.id}`,
+    });
+    expect(poAfterPartialRes.statusCode).toBe(200);
+    const poAfterPartial = purchaseOrderSchema.parse(poAfterPartialRes.json());
+    expect(poAfterPartial.billingStatus).toBe('partially_billed');
+    expect(poAfterPartial.totalBilledAmount).toBeGreaterThan(0);
+    expect(poAfterPartial.remainingUnbilledAmount).toBeGreaterThan(0);
+
+    const createSecondBillRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${draftPo.id}/create-supplier-bill`,
+      payload: {
+        lineItems: [
+          { purchaseOrderLineItemId: poLineAId, quantity: 1 },
+          { purchaseOrderLineItemId: poLineBId, quantity: 1 },
+        ],
+      },
+    });
+    expect(createSecondBillRes.statusCode).toBe(201);
+    const secondBillFromPo = supplierBillSchema.parse(createSecondBillRes.json());
+    expect(secondBillFromPo.sourcePurchaseOrderId).toBe(draftPo.id);
+
+    const poAfterFullRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${draftPo.id}`,
+    });
+    expect(poAfterFullRes.statusCode).toBe(200);
+    const poAfterFull = purchaseOrderSchema.parse(poAfterFullRes.json());
+    expect(poAfterFull.billingStatus).toBe('fully_billed');
+    expect(poAfterFull.remainingUnbilledAmount).toBe(0);
+    expect(poAfterFull.totalBilledAmount).toBe(poAfterFull.totals.total);
 
     const duplicateCreateBillRes = await app.inject({
       method: 'POST',
@@ -144,6 +219,15 @@ describe('purchase orders e2e', () => {
     expect(bySourcePoRes.statusCode).toBe(200);
     const bySourcePo = z.object({ bills: z.array(supplierBillSchema) }).parse(bySourcePoRes.json());
     expect(bySourcePo.bills.map((bill) => bill.id)).toContain(createdBillFromPo.id);
+    expect(bySourcePo.bills.map((bill) => bill.id)).toContain(secondBillFromPo.id);
+
+    const linkedBillHtmlRes = await app.inject({
+      method: 'GET',
+      url: `/supplier-bills/${createdBillFromPo.id}/html`,
+    });
+    expect(linkedBillHtmlRes.statusCode).toBe(200);
+    expect(linkedBillHtmlRes.body).toContain('Source PO');
+    expect(linkedBillHtmlRes.body).toContain(approvedPo.purchaseOrderNumber);
 
     const immutableAfterApproveRes = await app.inject({
       method: 'PUT',
@@ -210,6 +294,15 @@ describe('purchase orders e2e', () => {
     const cancelledPo = purchaseOrderSchema.parse(cancelRes.json());
     expect(cancelledPo.status).toBe('Cancelled');
 
+    const createBillFromCancelledPoRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo.id}/create-supplier-bill`,
+    });
+    expect(createBillFromCancelledPoRes.statusCode).toBe(409);
+    expect(createBillFromCancelledPoRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_REQUIRES_APPROVED_STATUS',
+    });
+
     const approveCancelledRes = await app.inject({
       method: 'POST',
       url: `/purchase-orders/${cancellablePo.id}/approve`,
@@ -229,7 +322,7 @@ describe('purchase orders e2e', () => {
 
     const byStatusRes = await app.inject({
       method: 'GET',
-      url: '/purchase-orders?status=Closed',
+      url: '/purchase-orders?billingStatus=fully_billed',
     });
     expect(byStatusRes.statusCode).toBe(200);
     const byStatus = z.object({ purchaseOrders: z.array(purchaseOrderSchema) }).parse(byStatusRes.json());
@@ -260,6 +353,8 @@ describe('purchase orders e2e', () => {
     expect(htmlRes.statusCode).toBe(200);
     expect(htmlRes.headers['content-type']).toContain('text/html');
     expect(htmlRes.body).toContain('Purchase Order');
+    expect(htmlRes.body).toContain('Billing Status');
+    expect(htmlRes.body).toContain('Linked Supplier Bills');
 
     const pdfRes = await app.inject({
       method: 'GET',
@@ -279,7 +374,11 @@ describe('purchase orders e2e', () => {
       .parse(approvedTimelineRes.json());
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.created')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.approved')).toBe(true);
-    expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.closed')).toBe(true);
+    expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.partially_billed')).toBe(true);
+    expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.fully_billed')).toBe(true);
+    expect(
+      approvedTimeline.events.some((event) => event.eventKey === 'supplier_bill.created_from_purchase_order'),
+    ).toBe(true);
 
     const cancelledTimelineRes = await app.inject({
       method: 'GET',
@@ -290,6 +389,39 @@ describe('purchase orders e2e', () => {
       .object({ events: z.array(z.object({ eventKey: z.string() })) })
       .parse(cancelledTimelineRes.json());
     expect(cancelledTimeline.events.some((event) => event.eventKey === 'purchase_order.cancelled')).toBe(true);
+
+    const closablePoRes = await app.inject({
+      method: 'POST',
+      url: '/purchase-orders',
+      payload: {
+        supplierId: supplier.id,
+        issueDate: '2026-07-13',
+        expectedDeliveryDate: '2026-07-26',
+        supplierReference: 'PO-REF-3',
+        currency: 'AUD',
+        lineItems: [{ description: 'Close-only line', quantity: 1, unitPrice: 10, gstApplicable: true }],
+      },
+    });
+    expect(closablePoRes.statusCode).toBe(201);
+    const closablePo = purchaseOrderSchema.parse(closablePoRes.json());
+    const approveClosableRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${closablePo.id}/approve`,
+    });
+    expect(approveClosableRes.statusCode).toBe(200);
+    const closeClosableRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${closablePo.id}/close`,
+    });
+    expect(closeClosableRes.statusCode).toBe(200);
+    const createBillFromClosedPoRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${closablePo.id}/create-supplier-bill`,
+    });
+    expect(createBillFromClosedPoRes.statusCode).toBe(409);
+    expect(createBillFromClosedPoRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_REQUIRES_APPROVED_STATUS',
+    });
 
     const searchRes = await app.inject({
       method: 'GET',

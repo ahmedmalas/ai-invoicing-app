@@ -327,6 +327,7 @@ export function generateSupplierBillPdfBuffer(input: {
   lineItems: SupplierBillLineItemInput[];
   supplier: Supplier;
   businessProfile: BrandingProfile | null;
+  sourcePurchaseOrderNumber?: string | null;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: 'A4' });
@@ -346,6 +347,9 @@ export function generateSupplierBillPdfBuffer(input: {
     doc.text(`Bill Date: ${input.bill.billDate}`, { align: 'right' });
     doc.text(`Due Date: ${input.bill.dueDate}`, { align: 'right' });
     doc.text(`Status: ${input.bill.status}`, { align: 'right' });
+    if (input.sourcePurchaseOrderNumber) {
+      doc.text(`Source PO: ${input.sourcePurchaseOrderNumber}`, { align: 'right' });
+    }
 
     doc.moveDown(1);
     doc.fontSize(12).fillColor('#111827').text('Supplier');
@@ -488,6 +492,7 @@ export function generatePurchaseOrderPdfBuffer(input: {
   lineItems: PurchaseOrderLineItemInput[];
   supplier: Supplier;
   businessProfile: BrandingProfile | null;
+  linkedSupplierBills?: Array<{ billNumber: string | null; status: string; total: number }>;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: 'A4' });
@@ -506,6 +511,9 @@ export function generatePurchaseOrderPdfBuffer(input: {
     doc.fontSize(11).text(`PO Number: ${input.purchaseOrder.purchaseOrderNumber}`, { align: 'right' });
     doc.text(`Issue Date: ${input.purchaseOrder.issueDate}`, { align: 'right' });
     doc.text(`Status: ${input.purchaseOrder.status}`, { align: 'right' });
+    doc.text(`Billing: ${input.purchaseOrder.billingStatus}`, { align: 'right' });
+    doc.text(`Billed: ${input.purchaseOrder.totalBilledAmount.toFixed(2)}`, { align: 'right' });
+    doc.text(`Remaining: ${input.purchaseOrder.remainingUnbilledAmount.toFixed(2)}`, { align: 'right' });
     if (input.purchaseOrder.expectedDeliveryDate) {
       doc.text(`Expected Delivery: ${input.purchaseOrder.expectedDeliveryDate}`, { align: 'right' });
     }
@@ -570,6 +578,20 @@ export function generatePurchaseOrderPdfBuffer(input: {
       doc.moveDown(1.4);
       doc.fillColor('#111827').fontSize(11).text('Notes');
       doc.fontSize(10).fillColor('#4b5563').text(input.purchaseOrder.notes, { width: 500 });
+    }
+
+    if (input.linkedSupplierBills && input.linkedSupplierBills.length > 0) {
+      doc.moveDown(1);
+      doc.fillColor('#111827').fontSize(11).text('Linked Supplier Bills');
+      for (const linkedBill of input.linkedSupplierBills) {
+        doc
+          .fontSize(10)
+          .fillColor('#4b5563')
+          .text(
+            `${linkedBill.billNumber ?? 'Draft'} | ${linkedBill.status} | ${linkedBill.total.toFixed(2)}`,
+            { width: 500 },
+          );
+      }
     }
 
     doc.end();

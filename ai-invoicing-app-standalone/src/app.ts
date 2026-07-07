@@ -103,6 +103,12 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_DOCUMENT') ||
       errorMessage.includes('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS') ||
       errorMessage.includes('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED') ||
+      errorMessage.includes('PURCHASE_ORDER_LINE_ITEM_NOT_FOUND') ||
+      errorMessage.includes('PURCHASE_ORDER_BILLING_LINES_REQUIRED') ||
+      errorMessage.includes('PURCHASE_ORDER_BILLING_DUPLICATE_LINE_ITEM') ||
+      errorMessage.includes('PURCHASE_ORDER_BILLING_QUANTITY_INVALID') ||
+      errorMessage.includes('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING') ||
+      errorMessage.includes('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING') ||
       errorMessage.includes('Only draft purchase orders can be edited') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||

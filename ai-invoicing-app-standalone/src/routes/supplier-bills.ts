@@ -73,7 +73,11 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     if (!supplier) {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
-    const html = renderSupplierBillHtml({ bill, supplier });
+    const html = renderSupplierBillHtml({
+      bill,
+      supplier,
+      sourcePurchaseOrderNumber: bill.sourcePurchaseOrderNumber,
+    });
     return reply.code(200).header('Content-Type', 'text/html; charset=utf-8').send(html);
   });
 
@@ -93,6 +97,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
       lineItems: bill.lineItems,
       supplier,
       businessProfile,
+      sourcePurchaseOrderNumber: bill.sourcePurchaseOrderNumber,
     });
     return reply
       .code(200)

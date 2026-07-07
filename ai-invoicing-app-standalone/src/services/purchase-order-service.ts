@@ -12,6 +12,7 @@ function escapeHtml(value: string): string {
 export function renderPurchaseOrderHtml(input: {
   purchaseOrder: PurchaseOrder & { lineItems: Array<{ description: string; quantity: number; unitPrice: number }> };
   supplier: Supplier;
+  linkedSupplierBills?: Array<{ billNumber: string | null; status: string; total: number }>;
 }): string {
   const { purchaseOrder, supplier } = input;
   const rows = purchaseOrder.lineItems
@@ -38,6 +39,9 @@ export function renderPurchaseOrderHtml(input: {
   <h1>Purchase Order</h1>
   <div><strong>PO #:</strong> ${escapeHtml(purchaseOrder.purchaseOrderNumber)}</div>
   <div><strong>Status:</strong> ${escapeHtml(purchaseOrder.status)}</div>
+  <div><strong>Billing Status:</strong> ${escapeHtml(purchaseOrder.billingStatus)}</div>
+  <div><strong>Total Billed:</strong> ${purchaseOrder.totalBilledAmount.toFixed(2)}</div>
+  <div><strong>Remaining Unbilled:</strong> ${purchaseOrder.remainingUnbilledAmount.toFixed(2)}</div>
   <div><strong>Issue Date:</strong> ${escapeHtml(purchaseOrder.issueDate)}</div>
   <div><strong>Expected Delivery:</strong> ${escapeHtml(purchaseOrder.expectedDeliveryDate ?? '')}</div>
   <div><strong>Currency:</strong> ${escapeHtml(purchaseOrder.currency)}</div>
@@ -48,6 +52,11 @@ export function renderPurchaseOrderHtml(input: {
     <tbody>${rows}</tbody>
   </table>
   <div style="margin-top: 16px;"><strong>Total:</strong> ${purchaseOrder.totals.total.toFixed(2)}</div>
+  <div style="margin-top: 16px;"><strong>Linked Supplier Bills:</strong> ${
+    (input.linkedSupplierBills ?? [])
+      .map((bill) => `${escapeHtml(bill.billNumber ?? 'Draft')} (${escapeHtml(bill.status)})`)
+      .join(', ') || 'None'
+  }</div>
 </body>
 </html>`;
 }

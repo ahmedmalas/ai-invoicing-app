@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import {
+  createSupplierBillFromPurchaseOrderSchema,
   createPurchaseOrderDraftSchema,
   listPurchaseOrdersQuerySchema,
   updatePurchaseOrderDraftSchema,
@@ -39,7 +40,8 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/purchase-orders/:purchaseOrderId/create-supplier-bill', async (request, reply) => {
     const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
-    const supplierBill = app.db.createSupplierBillDraftFromPurchaseOrder(params.purchaseOrderId);
+    const body = createSupplierBillFromPurchaseOrderSchema.parse(request.body ?? {});
+    const supplierBill = app.db.createSupplierBillDraftFromPurchaseOrder(params.purchaseOrderId, body);
     return reply.code(201).send(supplierBill);
   });
 
@@ -58,6 +60,7 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
       supplierId?: string;
       purchaseOrderNumber?: string;
       status?: 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
+      billingStatus?: 'unbilled' | 'partially_billed' | 'fully_billed';
       fromIssueDate?: string;
       toIssueDate?: string;
       fromExpectedDeliveryDate?: string;
@@ -66,6 +69,7 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     if (query.supplierId) filter.supplierId = query.supplierId;
     if (query.purchaseOrderNumber) filter.purchaseOrderNumber = query.purchaseOrderNumber;
     if (query.status) filter.status = query.status;
+    if (query.billingStatus) filter.billingStatus = query.billingStatus;
     if (query.fromIssueDate) filter.fromIssueDate = query.fromIssueDate;
     if (query.toIssueDate) filter.toIssueDate = query.toIssueDate;
     if (query.fromExpectedDeliveryDate) filter.fromExpectedDeliveryDate = query.fromExpectedDeliveryDate;
@@ -85,7 +89,8 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     if (!supplier) {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
-    const html = renderPurchaseOrderHtml({ purchaseOrder, supplier });
+    const linkedSupplierBills = app.db.listSupplierBills({ sourcePurchaseOrderId: purchaseOrder.id });
+    const html = renderPurchaseOrderHtml({ purchaseOrder, supplier, linkedSupplierBills });
     return reply.code(200).header('Content-Type', 'text/html; charset=utf-8').send(html);
   });
 
@@ -100,11 +105,13 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
     const businessProfile = app.db.getBusinessProfile();
+    const linkedSupplierBills = app.db.listSupplierBills({ sourcePurchaseOrderId: purchaseOrder.id });
     const pdfBuffer = await generatePurchaseOrderPdfBuffer({
       purchaseOrder,
       lineItems: purchaseOrder.lineItems,
       supplier,
       businessProfile,
+      linkedSupplierBills,
     });
     return reply
       .code(200)
