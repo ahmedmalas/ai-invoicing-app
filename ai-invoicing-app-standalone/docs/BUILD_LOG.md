@@ -232,9 +232,18 @@
 - Confirmed supplier bill and purchase order HTML/PDF routes continue using existing rendering and PDF pipeline behavior with amended draft values reflected from current data.
 - Preserved existing timeline architecture and intentionally omitted new draft-amendment timeline events.
 
+#### Slice 28 — Supplier Bill Finalisation Readiness
+- Commit: `ecfa194d62a0fd3c08d1f45a869c6f9cb4e3e122`
+- Added deterministic draft supplier bill finalisation readiness checks before status transition, including supplier existence, non-empty line items, positive quantity/non-negative price checks, and totals reconciliation against the existing calculation model.
+- Added linked purchase order readiness checks at finalisation time for source PO existence, supplier consistency, source PO line reference validity, and remaining quantity/value over-billing protection.
+- Preserved supplier bill lifecycle semantics (`Draft` -> `Finalised` only) and existing immutability behavior for finalised bills.
+- Preserved purchase order lifecycle semantics and continued deriving PO billing status/amounts from linked supplier bills without persisting calculated balances.
+- Extended `supplier_bill.finalised` timeline metadata to distinguish `standalone` vs `purchase_order_linked` finalisations without introducing new taxonomy keys.
+- Added focused integration/e2e coverage for readiness failures (empty lines, totals mismatch, supplier mismatch, orphaned PO linkage, invalid PO line refs, over-billing), standalone and linked finalisation metadata, and unchanged HTML/PDF pipeline behavior.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-27-draft-supplier-bill-amendments-19d3`
-- Status at logging: implementation baseline completed through Slice 27 and passing validation gates.
+- Branch: `cursor/slice-28-supplier-bill-finalisation-readiness-19d3`
+- Status at logging: implementation baseline completed through Slice 28 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
