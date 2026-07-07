@@ -109,6 +109,11 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('PURCHASE_ORDER_BILLING_QUANTITY_INVALID') ||
       errorMessage.includes('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING') ||
       errorMessage.includes('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING') ||
+      errorMessage.includes('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE') ||
+      errorMessage.includes('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE') ||
+      errorMessage.includes('PURCHASE_ORDER_ALREADY_CLOSED') ||
+      errorMessage.includes('PURCHASE_ORDER_CLOSE_REASON_REQUIRED') ||
+      errorMessage.includes('PURCHASE_ORDER_CLOSE_DATE_REQUIRED') ||
       errorMessage.includes('Only draft purchase orders can be edited') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL') ||
       errorMessage.includes('IMMUTABLE_FINALISED_SUPPLIER_BILL_LINE_ITEMS') ||

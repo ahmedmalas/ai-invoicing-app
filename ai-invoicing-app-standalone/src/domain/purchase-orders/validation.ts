@@ -70,3 +70,9 @@ export const createSupplierBillFromPurchaseOrderSchema = z.object({
     .min(1)
     .optional(),
 });
+
+export const closePurchaseOrderSchema = z.object({
+  closeReason: z.string().min(1).optional(),
+  closedDate: isoDateSchema.refine(isValidIsoCalendarDate, 'closedDate must be a valid ISO date').optional(),
+  closedBy: z.string().min(1).optional(),
+});

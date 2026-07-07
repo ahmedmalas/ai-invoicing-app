@@ -511,6 +511,12 @@ export function generatePurchaseOrderPdfBuffer(input: {
     doc.fontSize(11).text(`PO Number: ${input.purchaseOrder.purchaseOrderNumber}`, { align: 'right' });
     doc.text(`Issue Date: ${input.purchaseOrder.issueDate}`, { align: 'right' });
     doc.text(`Status: ${input.purchaseOrder.status}`, { align: 'right' });
+    if (input.purchaseOrder.closeReason) {
+      doc.text(`Close Reason: ${input.purchaseOrder.closeReason}`, { align: 'right' });
+    }
+    if (input.purchaseOrder.closedDate) {
+      doc.text(`Closed Date: ${input.purchaseOrder.closedDate}`, { align: 'right' });
+    }
     doc.text(`Billing: ${input.purchaseOrder.billingStatus}`, { align: 'right' });
     doc.text(`Billed: ${input.purchaseOrder.totalBilledAmount.toFixed(2)}`, { align: 'right' });
     doc.text(`Remaining: ${input.purchaseOrder.remainingUnbilledAmount.toFixed(2)}`, { align: 'right' });

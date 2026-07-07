@@ -14,6 +14,8 @@ const purchaseOrderSchema = z.object({
   supplierReference: z.string().nullable(),
   currency: z.string(),
   status: z.enum(['Draft', 'Approved', 'Closed', 'Cancelled']),
+  closeReason: z.string().nullable().optional(),
+  closedDate: z.string().nullable().optional(),
   billingStatus: z.enum(['unbilled', 'partially_billed', 'fully_billed']),
   totalBilledAmount: z.number(),
   remainingUnbilledAmount: z.number(),
@@ -101,6 +103,16 @@ describe('purchase orders e2e', () => {
     expect(draftPoRes.statusCode).toBe(201);
     const draftPo = purchaseOrderSchema.parse(draftPoRes.json());
     expect(draftPo.status).toBe('Draft');
+
+    const closeDraftRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${draftPo.id}/close`,
+      payload: { closeReason: 'Draft should not close', closedDate: '2026-07-29' },
+    });
+    expect(closeDraftRes.statusCode).toBe(409);
+    expect(closeDraftRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_DRAFT_CANNOT_CLOSE',
+    });
 
     const updatedDraftRes = await app.inject({
       method: 'PUT',
@@ -250,6 +262,7 @@ describe('purchase orders e2e', () => {
     expect(closeRes.statusCode).toBe(200);
     const closedPo = purchaseOrderSchema.parse(closeRes.json());
     expect(closedPo.status).toBe('Closed');
+    expect(closedPo.closeReason).toBeNull();
 
     const modifyClosedRes = await app.inject({
       method: 'PUT',
@@ -286,13 +299,102 @@ describe('purchase orders e2e', () => {
       message: 'PURCHASE_ORDER_REQUIRES_APPROVED_STATUS',
     });
 
+    const approveUnbilledClosePoRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo.id}/approve`,
+    });
+    expect(approveUnbilledClosePoRes.statusCode).toBe(200);
+
+    const closeUnbilledWithoutReasonRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo.id}/close`,
+    });
+    expect(closeUnbilledWithoutReasonRes.statusCode).toBe(409);
+    expect(closeUnbilledWithoutReasonRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_CLOSE_REASON_REQUIRED',
+    });
+
+    const closeUnbilledWithReasonRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo.id}/close`,
+      payload: {
+        closeReason: 'Order no longer required',
+        closedDate: '2026-07-30',
+      },
+    });
+    expect(closeUnbilledWithReasonRes.statusCode).toBe(200);
+    const unbilledClosedPo = purchaseOrderSchema.parse(closeUnbilledWithReasonRes.json());
+    expect(unbilledClosedPo.closeReason).toBe('Order no longer required');
+    expect(unbilledClosedPo.closedDate).toBe('2026-07-30');
+
+    const unbilledClosedHtmlRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${unbilledClosedPo.id}/html`,
+    });
+    expect(unbilledClosedHtmlRes.statusCode).toBe(200);
+    expect(unbilledClosedHtmlRes.body).toContain('Close Reason');
+    expect(unbilledClosedHtmlRes.body).toContain('Order no longer required');
+
+    const unbilledClosedPdfRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${unbilledClosedPo.id}/pdf`,
+    });
+    expect(unbilledClosedPdfRes.statusCode).toBe(200);
+    expect(unbilledClosedPdfRes.headers['content-type']).toContain('application/pdf');
+    const unbilledTimelineRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/purchase_order/${unbilledClosedPo.id}`,
+    });
+    expect(unbilledTimelineRes.statusCode).toBe(200);
+    const unbilledTimeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(unbilledTimelineRes.json());
+    const unbilledClosedEvent = unbilledTimeline.events.find((event) => event.eventKey === 'purchase_order.closed');
+    expect(unbilledClosedEvent).toBeTruthy();
+    const unbilledClosedEventPayload = JSON.parse(unbilledClosedEvent?.eventPayload ?? '{}') as { closureType?: string };
+    expect(unbilledClosedEventPayload.closureType).toBe('unbilled_closure');
+
     const cancelRes = await app.inject({
       method: 'POST',
-      url: `/purchase-orders/${cancellablePo.id}/cancel`,
+      url: `/purchase-orders/${unbilledClosedPo.id}/cancel`,
     });
-    expect(cancelRes.statusCode).toBe(200);
-    const cancelledPo = purchaseOrderSchema.parse(cancelRes.json());
+    expect(cancelRes.statusCode).toBe(409);
+
+    const cancellablePo2Res = await app.inject({
+      method: 'POST',
+      url: '/purchase-orders',
+      payload: {
+        supplierId: supplier.id,
+        issueDate: '2026-07-13',
+        expectedDeliveryDate: '2026-07-24',
+        supplierReference: 'PO-REF-2B',
+        currency: 'AUD',
+        lineItems: [{ description: 'Cancelable line 2', quantity: 1, unitPrice: 20, gstApplicable: true }],
+      },
+    });
+    expect(cancellablePo2Res.statusCode).toBe(201);
+    const cancellablePo2 = purchaseOrderSchema.parse(cancellablePo2Res.json());
+
+    const cancelRes2 = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancellablePo2.id}/cancel`,
+    });
+    expect(cancelRes2.statusCode).toBe(200);
+    const cancelledPo = purchaseOrderSchema.parse(cancelRes2.json());
     expect(cancelledPo.status).toBe('Cancelled');
+
+    const closeCancelledRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${cancelledPo.id}/close`,
+      payload: {
+        closeReason: 'Should fail',
+        closedDate: '2026-07-30',
+      },
+    });
+    expect(closeCancelledRes.statusCode).toBe(409);
+    expect(closeCancelledRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE',
+    });
 
     const createBillFromCancelledPoRes = await app.inject({
       method: 'POST',
@@ -305,7 +407,7 @@ describe('purchase orders e2e', () => {
 
     const approveCancelledRes = await app.inject({
       method: 'POST',
-      url: `/purchase-orders/${cancellablePo.id}/approve`,
+      url: `/purchase-orders/${cancelledPo.id}/approve`,
     });
     expect(approveCancelledRes.statusCode).toBe(409);
     expect(approveCancelledRes.json()).toMatchObject({
@@ -370,12 +472,18 @@ describe('purchase orders e2e', () => {
     });
     expect(approvedTimelineRes.statusCode).toBe(200);
     const approvedTimeline = z
-      .object({ events: z.array(z.object({ eventKey: z.string() })) })
+      .object(
+        { events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) },
+      )
       .parse(approvedTimelineRes.json());
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.created')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.approved')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.partially_billed')).toBe(true);
     expect(approvedTimeline.events.some((event) => event.eventKey === 'purchase_order.fully_billed')).toBe(true);
+    const closedEvent = approvedTimeline.events.find((event) => event.eventKey === 'purchase_order.closed');
+    expect(closedEvent).toBeTruthy();
+    const closedEventPayload = JSON.parse(closedEvent?.eventPayload ?? '{}') as { closureType?: string };
+    expect(closedEventPayload.closureType).toBe('fully_billed_closure');
     const supplierBillTimelineRes = await app.inject({
       method: 'GET',
       url: `/timeline/supplier_bill/${createdBillFromPo.id}`,
@@ -390,13 +498,85 @@ describe('purchase orders e2e', () => {
 
     const cancelledTimelineRes = await app.inject({
       method: 'GET',
-      url: `/timeline/purchase_order/${cancellablePo.id}`,
+      url: `/timeline/purchase_order/${cancelledPo.id}`,
     });
     expect(cancelledTimelineRes.statusCode).toBe(200);
     const cancelledTimeline = z
-      .object({ events: z.array(z.object({ eventKey: z.string() })) })
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
       .parse(cancelledTimelineRes.json());
     expect(cancelledTimeline.events.some((event) => event.eventKey === 'purchase_order.cancelled')).toBe(true);
+
+    const partialClosablePoRes = await app.inject({
+      method: 'POST',
+      url: '/purchase-orders',
+      payload: {
+        supplierId: supplier.id,
+        issueDate: '2026-07-14',
+        expectedDeliveryDate: '2026-07-27',
+        supplierReference: 'PO-REF-4',
+        currency: 'AUD',
+        lineItems: [{ description: 'Partial close line', quantity: 2, unitPrice: 15, gstApplicable: true }],
+      },
+    });
+    expect(partialClosablePoRes.statusCode).toBe(201);
+    const partialClosablePo = purchaseOrderSchema.parse(partialClosablePoRes.json());
+    const approvePartialClosablePoRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${partialClosablePo.id}/approve`,
+    });
+    expect(approvePartialClosablePoRes.statusCode).toBe(200);
+    const partialClosableDetailsRes = await app.inject({
+      method: 'GET',
+      url: `/purchase-orders/${partialClosablePo.id}`,
+    });
+    const partialClosableDetails = purchaseOrderSchema.parse(partialClosableDetailsRes.json());
+    const partialLineId = partialClosableDetails.lineItems?.[0]?.id;
+    if (!partialLineId) {
+      throw new Error('Expected partial closable PO line id');
+    }
+    const partialBillCreateRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${partialClosablePo.id}/create-supplier-bill`,
+      payload: {
+        lineItems: [{ purchaseOrderLineItemId: partialLineId, quantity: 1 }],
+      },
+    });
+    expect(partialBillCreateRes.statusCode).toBe(201);
+
+    const closePartiallyBilledWithoutReasonRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${partialClosablePo.id}/close`,
+    });
+    expect(closePartiallyBilledWithoutReasonRes.statusCode).toBe(409);
+    expect(closePartiallyBilledWithoutReasonRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_CLOSE_REASON_REQUIRED',
+    });
+
+    const closePartiallyBilledWithReasonRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${partialClosablePo.id}/close`,
+      payload: {
+        closeReason: 'Partial delivery accepted',
+        closedDate: '2026-07-31',
+      },
+    });
+    expect(closePartiallyBilledWithReasonRes.statusCode).toBe(200);
+    const closedPartiallyBilledPo = purchaseOrderSchema.parse(closePartiallyBilledWithReasonRes.json());
+    expect(closedPartiallyBilledPo.closeReason).toBe('Partial delivery accepted');
+    const partiallyBilledTimelineRes = await app.inject({
+      method: 'GET',
+      url: `/timeline/purchase_order/${partialClosablePo.id}`,
+    });
+    expect(partiallyBilledTimelineRes.statusCode).toBe(200);
+    const partiallyBilledTimeline = z
+      .object({ events: z.array(z.object({ eventKey: z.string(), eventPayload: z.string().optional() })) })
+      .parse(partiallyBilledTimelineRes.json());
+    const partiallyClosedEvent = partiallyBilledTimeline.events.find((event) => event.eventKey === 'purchase_order.closed');
+    expect(partiallyClosedEvent).toBeTruthy();
+    const partiallyClosedEventPayload = JSON.parse(partiallyClosedEvent?.eventPayload ?? '{}') as {
+      closureType?: string;
+    };
+    expect(partiallyClosedEventPayload.closureType).toBe('partially_billed_closure');
 
     const closablePoRes = await app.inject({
       method: 'POST',
@@ -421,7 +601,33 @@ describe('purchase orders e2e', () => {
       method: 'POST',
       url: `/purchase-orders/${closablePo.id}/close`,
     });
-    expect(closeClosableRes.statusCode).toBe(200);
+    expect(closeClosableRes.statusCode).toBe(409);
+    expect(closeClosableRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_CLOSE_REASON_REQUIRED',
+    });
+    const closeClosableWithReasonRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${closablePo.id}/close`,
+      payload: {
+        closeReason: 'No billing required',
+        closedDate: '2026-07-31',
+      },
+    });
+    expect(closeClosableWithReasonRes.statusCode).toBe(200);
+    const closeClosableWithReason = purchaseOrderSchema.parse(closeClosableWithReasonRes.json());
+    expect(closeClosableWithReason.closeReason).toBe('No billing required');
+    const closeClosableAgainRes = await app.inject({
+      method: 'POST',
+      url: `/purchase-orders/${closablePo.id}/close`,
+      payload: {
+        closeReason: 'Repeat close should fail',
+        closedDate: '2026-07-31',
+      },
+    });
+    expect(closeClosableAgainRes.statusCode).toBe(409);
+    expect(closeClosableAgainRes.json()).toMatchObject({
+      message: 'PURCHASE_ORDER_ALREADY_CLOSED',
+    });
     const createBillFromClosedPoRes = await app.inject({
       method: 'POST',
       url: `/purchase-orders/${closablePo.id}/create-supplier-bill`,

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import {
+  closePurchaseOrderSchema,
   createSupplierBillFromPurchaseOrderSchema,
   createPurchaseOrderDraftSchema,
   listPurchaseOrdersQuerySchema,
@@ -30,7 +31,8 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/purchase-orders/:purchaseOrderId/close', async (request) => {
     const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
-    return app.db.closePurchaseOrder(params.purchaseOrderId);
+    const body = closePurchaseOrderSchema.parse(request.body ?? {});
+    return app.db.closePurchaseOrder(params.purchaseOrderId, body);
   });
 
   app.post('/purchase-orders/:purchaseOrderId/cancel', async (request) => {

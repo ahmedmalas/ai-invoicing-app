@@ -261,6 +261,9 @@ export interface PurchaseOrder {
   currency: string;
   notes: string | null;
   status: PurchaseOrderStatus;
+  closeReason: string | null;
+  closedDate: string | null;
+  closedBy: string | null;
   billingStatus: PurchaseOrderBillingStatus;
   totalBilledAmount: number;
   remainingUnbilledAmount: number;

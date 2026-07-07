@@ -168,6 +168,9 @@ interface DbPurchaseOrderRow {
   currency: string;
   notes: string | null;
   status: PurchaseOrderStatus;
+  close_reason: string | null;
+  closed_date: string | null;
+  closed_by: string | null;
   subtotal: number;
   gst_total: number;
   total: number;
@@ -454,6 +457,12 @@ export interface CreateSupplierBillFromPurchaseOrderInput {
   }> | undefined;
 }
 
+export interface ClosePurchaseOrderInput {
+  closeReason?: string | undefined;
+  closedDate?: string | undefined;
+  closedBy?: string | undefined;
+}
+
 export interface JobDocumentLinkRecord {
   id: string;
   jobId: string;
@@ -524,7 +533,7 @@ export interface AppDatabase {
   updatePurchaseOrderDraft(id: string, input: UpdatePurchaseOrderDraftInput): PurchaseOrder;
   getPurchaseOrderById(id: string): (PurchaseOrder & { lineItems: PurchaseOrderLineItemInput[] }) | null;
   approvePurchaseOrder(id: string): PurchaseOrder;
-  closePurchaseOrder(id: string): PurchaseOrder;
+  closePurchaseOrder(id: string, input?: ClosePurchaseOrderInput): PurchaseOrder;
   cancelPurchaseOrder(id: string): PurchaseOrder;
   listPurchaseOrders(filter?: ListPurchaseOrdersFilter): PurchaseOrder[];
   createRole(input: CreateRoleInput): Role;
@@ -688,6 +697,9 @@ function mapPurchaseOrderRow(row: DbPurchaseOrderRow): PurchaseOrder {
     currency: row.currency,
     notes: row.notes,
     status: row.status,
+    closeReason: row.close_reason,
+    closedDate: row.closed_date,
+    closedBy: row.closed_by,
     billingStatus: 'unbilled',
     totalBilledAmount: 0,
     remainingUnbilledAmount: row.total,
@@ -888,6 +900,20 @@ export function createDatabase(dbPath: string): AppDatabase {
      END
      WHERE payment_state IS NULL`,
   );
+
+  const purchaseOrderColumns = db
+    .prepare("SELECT name FROM pragma_table_info('purchase_orders')")
+    .all() as Array<{ name: string }>;
+  const purchaseOrderColumnSet = new Set(purchaseOrderColumns.map((column) => column.name));
+  if (!purchaseOrderColumnSet.has('close_reason')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN close_reason TEXT;');
+  }
+  if (!purchaseOrderColumnSet.has('closed_date')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN closed_date TEXT;');
+  }
+  if (!purchaseOrderColumnSet.has('closed_by')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN closed_by TEXT;');
+  }
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -2425,12 +2451,15 @@ export function createDatabase(dbPath: string): AppDatabase {
             currency,
             notes,
             status,
+            close_reason,
+            closed_date,
+            closed_by,
             subtotal,
             gst_total,
             total,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           id,
           purchaseOrderNumber,
@@ -2441,6 +2470,9 @@ export function createDatabase(dbPath: string): AppDatabase {
           input.currency,
           input.notes ?? null,
           'Draft',
+          null,
+          null,
+          null,
           totals.subtotal,
           totals.gstTotal,
           totals.total,
@@ -2606,15 +2638,55 @@ export function createDatabase(dbPath: string): AppDatabase {
       );
     },
 
-    closePurchaseOrder(id) {
+    closePurchaseOrder(id, input) {
       const order = this.getPurchaseOrderById(id);
       if (!order) {
         throw new Error('Purchase order not found');
       }
+      if (order.status === 'Draft') {
+        throw new Error('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE');
+      }
+      if (order.status === 'Cancelled') {
+        throw new Error('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE');
+      }
+      if (order.status === 'Closed') {
+        throw new Error('PURCHASE_ORDER_ALREADY_CLOSED');
+      }
       assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Closed');
-      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Closed', nowIso(), id);
+
+      const closeReason = input?.closeReason?.trim();
+      const closedDate = input?.closedDate;
+      const closedBy = input?.closedBy?.trim() || 'system';
+
+      if (order.billingStatus !== 'fully_billed') {
+        if (!closeReason) {
+          throw new Error('PURCHASE_ORDER_CLOSE_REASON_REQUIRED');
+        }
+        if (!closedDate) {
+          throw new Error('PURCHASE_ORDER_CLOSE_DATE_REQUIRED');
+        }
+      }
+
+      const persistedClosedDate = closedDate ?? nowIso().slice(0, 10);
+      db.prepare(
+        'UPDATE purchase_orders SET status = ?, close_reason = ?, closed_date = ?, closed_by = ?, updated_at = ? WHERE id = ?',
+      ).run('Closed', closeReason ?? null, persistedClosedDate, closedBy, nowIso(), id);
+
+      const closureType =
+        order.billingStatus === 'fully_billed'
+          ? 'fully_billed_closure'
+          : order.billingStatus === 'partially_billed'
+            ? 'partially_billed_closure'
+            : 'unbilled_closure';
       timeline('purchase_order.closed', id, {
         purchaseOrderNumber: order.purchaseOrderNumber,
+        closureType,
+        billingStatus: order.billingStatus,
+        totalBilledAmount: order.totalBilledAmount,
+        remainingUnbilledAmount: order.remainingUnbilledAmount,
+        closeReason: closeReason ?? null,
+        closedDate: persistedClosedDate,
+        closedBy,
       });
       return withPurchaseOrderBillingSummary(
         mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),

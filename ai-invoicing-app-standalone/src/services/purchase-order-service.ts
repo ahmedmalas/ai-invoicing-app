@@ -39,6 +39,8 @@ export function renderPurchaseOrderHtml(input: {
   <h1>Purchase Order</h1>
   <div><strong>PO #:</strong> ${escapeHtml(purchaseOrder.purchaseOrderNumber)}</div>
   <div><strong>Status:</strong> ${escapeHtml(purchaseOrder.status)}</div>
+  <div><strong>Close Reason:</strong> ${escapeHtml(purchaseOrder.closeReason ?? '')}</div>
+  <div><strong>Closed Date:</strong> ${escapeHtml(purchaseOrder.closedDate ?? '')}</div>
   <div><strong>Billing Status:</strong> ${escapeHtml(purchaseOrder.billingStatus)}</div>
   <div><strong>Total Billed:</strong> ${purchaseOrder.totalBilledAmount.toFixed(2)}</div>
   <div><strong>Remaining Unbilled:</strong> ${purchaseOrder.remainingUnbilledAmount.toFixed(2)}</div>
