@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 24 — Purchase Order Billing Status & Partial Conversion**
-- Baseline commit: `846ce07dd10b717f8f9f7d9c2d3f5fdb0b2611e4`
-- Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
+- Current implemented slice: **Slice 25 — Purchase Order Closure Guardrails**
+- Baseline commit: `c93f17b848247ea10c6cb9f8018d8bdbd62720bf`
+- Active branch at roadmap update: `cursor/slice-25-po-closure-guardrails-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -33,15 +33,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 22. **Slice 22 — Purchase Orders (Procurement Foundation)** (implemented)
 23. **Slice 23 — Supplier Bill Creation from Purchase Orders** (implemented)
 24. **Slice 24 — Purchase Order Billing Status & Partial Conversion** (implemented)
+25. **Slice 25 — Purchase Order Closure Guardrails** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 25 — TBD (placeholder only)
 - Slice 26 — TBD (placeholder only)
 - Slice 27 — TBD (placeholder only)
+- Slice 28 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

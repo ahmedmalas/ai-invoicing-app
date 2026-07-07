@@ -3,9 +3,9 @@
 This matrix tracks implementation readiness at module level without prescribing unapproved detailed future implementation.
 
 ## Current Project Snapshot
-- Current branch: `cursor/ai-invoicing-foundation-19d3`
-- Current commit (Slice 24 implementation): `846ce07dd10b717f8f9f7d9c2d3f5fdb0b2611e4`
-- Current implemented slice: **Slice 24 — Purchase Order Billing Status & Partial Conversion**
+- Current branch: `cursor/slice-25-po-closure-guardrails-19d3`
+- Current commit (Slice 25 implementation): `c93f17b848247ea10c6cb9f8018d8bdbd62720bf`
+- Current implemented slice: **Slice 25 — Purchase Order Closure Guardrails**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
@@ -22,7 +22,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 ## Matrix
 | Module | Status | Current Implemented Slice | Dependencies | Next Planned Work | Risks | Notes |
 |---|---|---|---|---|---|---|
-| Foundation | Implemented | Slice 1-24 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
+| Foundation | Implemented | Slice 1-25 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present. |
 | Jobs | Partial | Slice 4-13 | Customers, Documents, Timeline, Search, Users/Roles, Teams | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, assignment integrity, team-scope assignment controls, membership lifecycle safeguards, team role authorization, and team deletion safeguards exist. |
 | Customers | Partial | Slice 1 | Foundation, Timeline, Search | TBD | Data model expansion without governance | Core customer lifecycle exists. |
 | Quotes | Not Started | N/A | Customers, Documents, Timeline, Numbering, PDF | TBD | Contract drift with invoice model | Placeholder only. |
@@ -32,9 +32,9 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Calendar | Not Started | N/A | Scheduling, Users/Roles, Notifications | TBD | Integration coupling risk | Placeholder only. |
 | Teams | Partial | Slice 8-13 | Users/Roles, Jobs, Audit | TBD | Scope expansion into org-management/permissions | Team create/list/get/delete, membership add/remove/role-update lifecycle, role authorization rules, membership role scaffolding, and team/job integrity safeguards are implemented. |
 | Users/Roles | Partial | Slice 7 | Foundation, Audit | TBD | Scope expansion into full auth/permissions | Minimal users/roles persistence, role association, and assignment-policy baseline are implemented. |
-| Documents | Partial | Slice 1,5,18-24 | Foundation, Search, Timeline | TBD | Schema breadth risk | Document records, job linkage baseline, credit note documents, customer payment receipts, supplier bill documents (including PO-linked partial conversions), supplier payment receipts, and purchase order procurement documents are implemented. |
-| Accounts Payable | Partial | Slice 20-21,23-24 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into full accounting/ledger behavior | Supplier and supplier bill operational purchasing foundation includes supplier payment allocation workflows and purchase-order-origin partial bill creation with deterministic validation and no ledger/double-entry behavior. |
-| Procurement | Partial | Slice 22-24 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into inventory/goods-receipt features | Purchase order lifecycle is unchanged; billing status/amounts are calculated from linked supplier bills (not persisted), with partial conversion guardrails and no inventory/goods-receipt features. |
+| Documents | Partial | Slice 1,5,18-25 | Foundation, Search, Timeline | TBD | Schema breadth risk | Document records, job linkage baseline, credit note documents, customer payment receipts, supplier bill documents (including PO-linked partial conversions), supplier payment receipts, and purchase order procurement documents are implemented. |
+| Accounts Payable | Partial | Slice 20-21,23-25 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into full accounting/ledger behavior | Supplier and supplier bill operational purchasing foundation includes supplier payment allocation workflows and purchase-order-origin partial bill creation with deterministic validation and no ledger/double-entry behavior. |
+| Procurement | Partial | Slice 22-25 | Suppliers, Documents, Timeline, PDF | TBD | Scope drift into inventory/goods-receipt features | Purchase order lifecycle remains unchanged except closure validation guardrails; billing status/amounts and remaining unbilled values are calculated from linked supplier bills (not persisted), with explicit close-reason requirements for unbilled/partially billed closures and no inventory/goods-receipt features. |
 | Attachments | Not Started | N/A | Documents, Storage strategy, Audit | TBD | Storage/security risk | Placeholder only. |
 | Notifications | Not Started | N/A | Jobs, Invoices, Users/Roles, Calendar | TBD | Delivery reliability and noise risk | Placeholder only. |
 | AI Assistant | Not Started | N/A | Documents, Preferences, Audit, Policy controls | TBD | Non-deterministic behavior risk | AI remains intentionally non-foundational. |
@@ -42,7 +42,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 | Dashboard | Not Started | N/A | Reporting, Jobs, Invoices | TBD | UX scope creep risk | Placeholder only. |
 | Settings | Partial | Slice 1 | Business profile, Preferences, Validation | TBD | Configuration sprawl risk | Branding/preferences baseline exists. |
 | Integrations | Not Started | N/A | Security, Audit, Payments, Calendar | TBD | Third-party contract volatility | Placeholder only. |
-| Audit | Partial | Slice 1-24 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including invoice finalisation, `credit_note.created`, `payment.created`, `payment.allocated`, `supplier_bill.created`, `supplier_bill.finalised`, `supplier_bill.created_from_purchase_order`, `supplier_payment.created`, `supplier_payment.allocated`, `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, `purchase_order.cancelled`, `purchase_order.partially_billed`, and `purchase_order.fully_billed`; statement generation remains read-only and intentionally does not emit read/query audit events. |
+| Audit | Partial | Slice 1-25 | Timeline taxonomy, Persistence, Search | TBD | Event taxonomy drift risk | Canonical timeline/versioning exists, including invoice finalisation, `credit_note.created`, `payment.created`, `payment.allocated`, `supplier_bill.created`, `supplier_bill.finalised`, `supplier_bill.created_from_purchase_order`, `supplier_payment.created`, `supplier_payment.allocated`, `purchase_order.created`, `purchase_order.approved`, `purchase_order.closed`, `purchase_order.cancelled`, `purchase_order.partially_billed`, and `purchase_order.fully_billed`; `purchase_order.closed` now carries closure-type metadata for fully billed/partially billed/unbilled closures; statement generation remains read-only and intentionally does not emit read/query audit events. |
 | Administration | Not Started | N/A | Users/Roles, Audit, Settings | TBD | Privilege escalation risk | Placeholder only. |
 
 ## Cross-References

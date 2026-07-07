@@ -206,9 +206,18 @@
 - Added timeline emissions for billing progression and PO-origin supplier bill creation (`purchase_order.partially_billed`, `purchase_order.fully_billed`, `supplier_bill.created_from_purchase_order`).
 - Added focused validation and e2e coverage for partial conversion progression, over-billing rejection, linkage retrieval, and calculated-status behavior without inventory, goods receipts, stock movement, or ledger additions.
 
+#### Slice 25 — Purchase Order Closure Guardrails
+- Commit: `c93f17b848247ea10c6cb9f8018d8bdbd62720bf`
+- Hardened purchase order closure validation so fully billed orders can close without reason, while unbilled/partially billed closures require explicit `closeReason` and `closedDate`.
+- Added deterministic closure rejection paths for invalid status conditions (`PURCHASE_ORDER_DRAFT_CANNOT_CLOSE`, `PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE`, `PURCHASE_ORDER_ALREADY_CLOSED`) and missing closure metadata.
+- Extended purchase order read model with closure metadata (`closeReason`, `closedDate`, `closedBy`) while keeping billed totals/status calculated from linked supplier bills and not persisted.
+- Enriched `purchase_order.closed` timeline payload metadata with closure type (`fully_billed_closure`, `partially_billed_closure`, `unbilled_closure`) and billed/unbilled summary at close time.
+- Updated purchase order HTML/PDF rendering to display closure reason/date and billing context via the existing PDF service pipeline.
+- Added focused unit/e2e coverage proving closure guardrails, closure-type timeline metadata, and calculated billing status behavior without introducing inventory, goods-receipt, stock-movement, or ledger features.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 24 and passing validation gates.
+- Branch: `cursor/slice-25-po-closure-guardrails-19d3`
+- Status at logging: implementation baseline completed through Slice 25 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
