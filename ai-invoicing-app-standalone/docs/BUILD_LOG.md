@@ -258,9 +258,16 @@
 - Confirmed supplier payment receipt HTML/PDF rendering continues through the existing PDF pipeline.
 - Preserved timeline taxonomy keys and existing `supplier_payment.created` / `supplier_payment.allocated` behavior; failed allocations emit no new payment timeline records.
 
+#### Slice 31 — Document Number Sequence Integrity
+- Commit: `6494103598038d81a2ef0f9ae7f9f96419f74093`
+- Hardened document numbering infrastructure with a shared transactional allocator for invoices, credit notes, customer payments, purchase orders, supplier bills, and supplier payments.
+- Added deterministic sequence-failure handling (`DOCUMENT_NUMBER_SEQUENCE_INVALID_STATE`, `DOCUMENT_NUMBER_SEQUENCE_CONFLICT`) to prevent silent duplicate-number behavior under invalid/concurrent sequence conditions.
+- Added persistence-level immutability guards preventing direct number mutation for purchase orders, credit notes, customer payments, and supplier payments while preserving existing invoice/supplier bill finalised immutability protections.
+- Added integration coverage proving concurrent sequence creation remains unique/deterministic per document type, numbers stay immutable across all six document classes, duplicate numbering does not occur, and HTML/PDF outputs continue to surface assigned numbers through the existing PDF pipeline.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-30-supplier-bill-payment-readiness-19d3`
-- Status at logging: implementation baseline completed through Slice 30 and passing validation gates.
+- Branch: `cursor/slice-31-document-number-sequence-integrity-19d3`
+- Status at logging: implementation baseline completed through Slice 31 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
