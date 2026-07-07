@@ -152,9 +152,18 @@
 - Added `credit_note.created` taxonomy event and timeline emission aligned with existing timeline architecture.
 - Added unit and end-to-end test coverage for full/partial credit creation, validation rejection paths, immutable invoice proof, retrieval/filtering, HTML/PDF rendering, and timeline behavior.
 
+#### Slice 19 — Customer Payments (Allocation Without Ledger)
+- Commit: `daa92f7b1cf2613287c94801873e4a0fac0bdcc6`
+- Added first-class customer payment persistence with allocation records linked to finalised invoices.
+- Added lifecycle-safe allocation validation for invoice existence/finalised state/customer match, duplicate allocations, positive amounts, payment amount caps, and per-invoice outstanding caps.
+- Added read model endpoints for payment retrieval by id, customer, invoice, and date range filters.
+- Added HTML and PDF payment receipt rendering through the existing PDF service pipeline (`src/services/pdf-service.ts`) and route conventions.
+- Added `payment.created` and `payment.allocated` taxonomy events and timeline emission via existing timeline infrastructure.
+- Added focused unit and end-to-end coverage for full/partial/multi-invoice allocations, rejection paths, retrieval/filtering, receipt rendering, timeline events, and invoice total immutability proof.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
-- Status at logging: implementation baseline completed through Slice 17 and passing validation gates.
+- Status at logging: implementation baseline completed through Slice 19 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

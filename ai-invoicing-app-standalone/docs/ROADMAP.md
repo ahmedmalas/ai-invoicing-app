@@ -4,8 +4,8 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 18 — Invoice Credit Notes (Lifecycle-Safe)**
-- Baseline commit: `e8eb9f9e8b5b4dcf6a38cc9d7bee1e83a35cae97`
+- Current implemented slice: **Slice 19 — Customer Payments (Allocation Without Ledger)**
+- Baseline commit: `daa92f7b1cf2613287c94801873e4a0fac0bdcc6`
 - Active branch at roadmap creation: `cursor/ai-invoicing-foundation-19d3`
 
 ## Completed Slices (Canonical History)
@@ -27,15 +27,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 16. **Slice 16 — Customer Statement Engine (Read-Only)** (implemented)
 17. **Slice 17 — Statement Audit & Export Hardening** (implemented)
 18. **Slice 18 — Invoice Credit Notes (Lifecycle-Safe)** (implemented)
+19. **Slice 19 — Customer Payments (Allocation Without Ledger)** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 19 — TBD (placeholder only)
 - Slice 20 — TBD (placeholder only)
 - Slice 21 — TBD (placeholder only)
+- Slice 22 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.
