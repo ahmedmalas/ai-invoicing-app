@@ -143,6 +143,15 @@
 - Intentionally omitted statement timeline event emission to align with current architecture (read/report queries do not emit timeline events).
 - Added regression test proof that statement generation performs no statement/audit writes to persistence.
 
+#### Slice 18 — Invoice Credit Notes (Lifecycle-Safe)
+- Commit: `e8eb9f9e8b5b4dcf6a38cc9d7bee1e83a35cae97`
+- Added first-class credit note persistence linked to existing invoices without changing invoice states, finalisation flow, or invoice totals.
+- Added lifecycle-safe validation for non-existent invoice, draft invoice, cancelled invoice, over-credit attempts, and duplicate full-credit attempts.
+- Added read model endpoints for credit note retrieval by id, customer, invoice, and filtered listing.
+- Added HTML and PDF credit note rendering through the existing PDF service pipeline (`src/services/pdf-service.ts`) and route conventions.
+- Added `credit_note.created` taxonomy event and timeline emission aligned with existing timeline architecture.
+- Added unit and end-to-end test coverage for full/partial credit creation, validation rejection paths, immutable invoice proof, retrieval/filtering, HTML/PDF rendering, and timeline behavior.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/ai-invoicing-foundation-19d3`
 - Status at logging: implementation baseline completed through Slice 17 and passing validation gates.
