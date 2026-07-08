@@ -313,9 +313,18 @@
 - Added integration coverage proving backup/restore parity (counts, numbers, linkage, timeline), deterministic reporting/search parity after restore, and no additional lifecycle event emission during backup/restore operations.
 - Preserved existing lifecycle rules, timeline taxonomy, and PDF/HTML rendering behavior; no new business taxonomy events were introduced.
 
+#### Slice 37 — Global Concurrency & Idempotency Hardening
+- Commit: `1c2dbac05537b0fd2894527b7feae5dda8faaf8a`
+- Hardened multi-step write operations with explicit transaction boundaries across invoice, payment, supplier bill, supplier payment, and purchase order write flows so partial writes cannot persist on failure.
+- Added deterministic create idempotency persistence (`idempotency_requests`) for high-risk duplicate-request create paths while preserving existing business lifecycle behavior.
+- Added failpoint-backed rollback hardening hooks for deterministic transactional rollback verification in integration tests.
+- Added integration coverage proving concurrent invoice/payment/supplier bill/purchase order writes, duplicate create safety, document-number uniqueness, rollback on injected failure, relationship integrity, and repeated deterministic reporting/search/timeline reads.
+- Extended platform snapshot restore to include idempotency persistence rows so backup/restore parity remains exact after Slice 37 hardening.
+- Preserved existing timeline taxonomy keys and document lifecycle contracts; no new business taxonomy events were introduced.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-36-platform-backup-restore-snapshot-integrity-19d3`
-- Status at logging: implementation baseline completed through Slice 36 and passing validation gates.
+- Branch: `cursor/slice-37-global-concurrency-idempotency-hardening-19d3`
+- Status at logging: implementation baseline completed through Slice 37 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

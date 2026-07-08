@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 36 — Platform Backup, Restore & Snapshot Integrity**
-- Baseline commit: `88ef92b1a5ba4d32c40ff6907ee1a2f8a8b03240`
-- Active branch at roadmap update: `cursor/slice-36-platform-backup-restore-snapshot-integrity-19d3`
+- Current implemented slice: **Slice 37 — Global Concurrency & Idempotency Hardening**
+- Baseline commit: `1c2dbac05537b0fd2894527b7feae5dda8faaf8a`
+- Active branch at roadmap update: `cursor/slice-37-global-concurrency-idempotency-hardening-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -45,15 +45,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 34. **Slice 34 — Global Reporting Read Model Integrity** (implemented)
 35. **Slice 35 — Global API Contract Integrity & Error Determinism** (implemented)
 36. **Slice 36 — Platform Backup, Restore & Snapshot Integrity** (implemented)
+37. **Slice 37 — Global Concurrency & Idempotency Hardening** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 37 — TBD (placeholder only)
 - Slice 38 — TBD (placeholder only)
 - Slice 39 — TBD (placeholder only)
+- Slice 40 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.
