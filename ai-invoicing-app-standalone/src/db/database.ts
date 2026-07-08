@@ -676,8 +676,10 @@ export interface AppDatabase {
   close(): void;
   createCustomer(input: CreateCustomerInput): Customer;
   updateCustomer(id: string, input: UpdateCustomerInput): Customer;
+  deleteCustomer(id: string): void;
   getCustomerById(id: string): Customer | null;
   createSupplier(input: CreateSupplierInput): Supplier;
+  deleteSupplier(id: string): void;
   getSupplierById(id: string): Supplier | null;
   listSuppliers(): Supplier[];
   upsertBusinessProfile(input: UpsertBusinessProfileInput): BrandingProfile;
@@ -699,6 +701,7 @@ export interface AppDatabase {
     purchaseOrderId: string,
     input?: CreateSupplierBillFromPurchaseOrderInput,
   ): SupplierBill;
+  deleteSupplierBillDraft(id: string): void;
   updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
   getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
   finaliseSupplierBill(id: string): SupplierBill;
@@ -707,6 +710,7 @@ export interface AppDatabase {
   getSupplierPaymentById(id: string): SupplierBillPayment | null;
   listSupplierPayments(filter?: ListSupplierPaymentsFilter): SupplierBillPayment[];
   createPurchaseOrderDraft(input: CreatePurchaseOrderDraftInput): PurchaseOrder;
+  deletePurchaseOrderDraft(id: string): void;
   updatePurchaseOrderDraft(id: string, input: UpdatePurchaseOrderDraftInput): PurchaseOrder;
   getPurchaseOrderById(id: string): (PurchaseOrder & { lineItems: PurchaseOrderLineItemInput[] }) | null;
   approvePurchaseOrder(id: string): PurchaseOrder;
@@ -714,9 +718,11 @@ export interface AppDatabase {
   cancelPurchaseOrder(id: string): PurchaseOrder;
   listPurchaseOrders(filter?: ListPurchaseOrdersFilter): PurchaseOrder[];
   createRole(input: CreateRoleInput): Role;
+  deleteRole(id: string): void;
   getRoleById(id: string): Role | null;
   listRoles(): Role[];
   createUser(input: CreateUserInput): User;
+  deleteUser(id: string): void;
   getUserById(id: string): User | null;
   listUsers(): User[];
   createTeam(input: CreateTeamInput): Team;
@@ -1724,6 +1730,45 @@ export function createDatabase(dbPath: string): AppDatabase {
       return mapCustomerRow(row);
     },
 
+    deleteCustomer(id) {
+      return db.transaction((customerId: string) => {
+        const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(customerId);
+        if (!existing) {
+          throw new Error('Customer not found');
+        }
+
+        const invoiceCount = db
+          .prepare('SELECT count(*) AS count FROM invoices WHERE customer_id = ?')
+          .get(customerId) as { count: number };
+        if (invoiceCount.count > 0) {
+          throw new Error('CUSTOMER_HAS_INVOICES');
+        }
+
+        const paymentCount = db
+          .prepare('SELECT count(*) AS count FROM customer_payments WHERE customer_id = ?')
+          .get(customerId) as { count: number };
+        if (paymentCount.count > 0) {
+          throw new Error('CUSTOMER_HAS_PAYMENTS');
+        }
+
+        const creditNoteCount = db
+          .prepare('SELECT count(*) AS count FROM credit_notes WHERE customer_id = ?')
+          .get(customerId) as { count: number };
+        if (creditNoteCount.count > 0) {
+          throw new Error('CUSTOMER_HAS_CREDIT_NOTES');
+        }
+
+        const jobCount = db
+          .prepare('SELECT count(*) AS count FROM jobs WHERE customer_id = ?')
+          .get(customerId) as { count: number };
+        if (jobCount.count > 0) {
+          throw new Error('CUSTOMER_HAS_JOBS');
+        }
+
+        db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
+      })(id);
+    },
+
     getCustomerById(id) {
       const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as
         | Record<string, unknown>
@@ -1755,6 +1800,38 @@ export function createDatabase(dbPath: string): AppDatabase {
           return mapSupplierRow(row);
         }),
       )(input);
+    },
+
+    deleteSupplier(id) {
+      return db.transaction((supplierId: string) => {
+        const existing = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(supplierId);
+        if (!existing) {
+          throw new Error('Supplier not found');
+        }
+
+        const poCount = db
+          .prepare('SELECT count(*) AS count FROM purchase_orders WHERE supplier_id = ?')
+          .get(supplierId) as { count: number };
+        if (poCount.count > 0) {
+          throw new Error('SUPPLIER_HAS_PURCHASE_ORDERS');
+        }
+
+        const billCount = db
+          .prepare('SELECT count(*) AS count FROM supplier_bills WHERE supplier_id = ?')
+          .get(supplierId) as { count: number };
+        if (billCount.count > 0) {
+          throw new Error('SUPPLIER_HAS_BILLS');
+        }
+
+        const paymentCount = db
+          .prepare('SELECT count(*) AS count FROM supplier_payments WHERE supplier_id = ?')
+          .get(supplierId) as { count: number };
+        if (paymentCount.count > 0) {
+          throw new Error('SUPPLIER_HAS_PAYMENTS');
+        }
+
+        db.prepare('DELETE FROM suppliers WHERE id = ?').run(supplierId);
+      })(id);
     },
 
     getSupplierById(id) {
@@ -2606,6 +2683,30 @@ export function createDatabase(dbPath: string): AppDatabase {
       })();
     },
 
+    deleteSupplierBillDraft(id) {
+      return db.transaction((billId: string) => {
+        const existing = db
+          .prepare('SELECT status FROM supplier_bills WHERE id = ?')
+          .get(billId) as { status: SupplierBillStatus } | undefined;
+        if (!existing) {
+          throw new Error('Supplier bill not found');
+        }
+        const allocationCount = db
+          .prepare('SELECT count(*) AS count FROM supplier_payment_allocations WHERE supplier_bill_id = ?')
+          .get(billId) as { count: number };
+        if (allocationCount.count > 0) {
+          throw new Error('SUPPLIER_BILL_HAS_ALLOCATIONS');
+        }
+        if (existing.status !== 'Draft') {
+          throw new Error('IMMUTABLE_FINALISED_SUPPLIER_BILL');
+        }
+
+        db.prepare('DELETE FROM supplier_bill_line_items WHERE supplier_bill_id = ?').run(billId);
+        db.prepare('DELETE FROM documents WHERE entity_id = ? AND document_type = ?').run(billId, 'supplier_bill');
+        db.prepare('DELETE FROM supplier_bills WHERE id = ?').run(billId);
+      })(id);
+    },
+
     updateSupplierBillDraft(id, input) {
       const existing = db
         .prepare('SELECT status, supplier_id, source_purchase_order_id FROM supplier_bills WHERE id = ?')
@@ -3112,6 +3213,33 @@ export function createDatabase(dbPath: string): AppDatabase {
           return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
         }),
       )(input);
+    },
+
+    deletePurchaseOrderDraft(id) {
+      return db.transaction((purchaseOrderId: string) => {
+        const existing = db
+          .prepare('SELECT status FROM purchase_orders WHERE id = ?')
+          .get(purchaseOrderId) as { status: PurchaseOrderStatus } | undefined;
+        if (!existing) {
+          throw new Error('Purchase order not found');
+        }
+        const linkedBillCount = db
+          .prepare('SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?')
+          .get(purchaseOrderId) as { count: number };
+        if (linkedBillCount.count > 0) {
+          throw new Error('PURCHASE_ORDER_HAS_LINKED_SUPPLIER_BILLS');
+        }
+        if (existing.status !== 'Draft') {
+          throw new Error('IMMUTABLE_APPROVED_PURCHASE_ORDER');
+        }
+
+        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(purchaseOrderId);
+        db.prepare('DELETE FROM documents WHERE entity_id = ? AND document_type = ?').run(
+          purchaseOrderId,
+          'purchase_order',
+        );
+        db.prepare('DELETE FROM purchase_orders WHERE id = ?').run(purchaseOrderId);
+      })(id);
     },
 
     updatePurchaseOrderDraft(id, input) {
@@ -3635,6 +3763,22 @@ export function createDatabase(dbPath: string): AppDatabase {
       return mapRoleRow(row);
     },
 
+    deleteRole(id) {
+      return db.transaction((roleId: string) => {
+        const existing = db.prepare('SELECT id FROM roles WHERE id = ?').get(roleId);
+        if (!existing) {
+          throw new Error('ROLE_NOT_FOUND');
+        }
+        const linkCount = db
+          .prepare('SELECT count(*) AS count FROM user_role_links WHERE role_id = ?')
+          .get(roleId) as { count: number };
+        if (linkCount.count > 0) {
+          throw new Error('ROLE_HAS_USERS');
+        }
+        db.prepare('DELETE FROM roles WHERE id = ?').run(roleId);
+      })(id);
+    },
+
     getRoleById(id) {
       const row = db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as DbRoleRow | undefined;
       return row ? mapRoleRow(row) : null;
@@ -3673,6 +3817,32 @@ export function createDatabase(dbPath: string): AppDatabase {
 
       const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as DbUserRow;
       return mapUserRow(row, getRoleIdsForUser(id));
+    },
+
+    deleteUser(id) {
+      return db.transaction((userId: string) => {
+        const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+        if (!existing) {
+          throw new Error('USER_NOT_FOUND');
+        }
+
+        const assignedJobCount = db
+          .prepare('SELECT count(*) AS count FROM jobs WHERE assigned_user_id = ?')
+          .get(userId) as { count: number };
+        if (assignedJobCount.count > 0) {
+          throw new Error('USER_HAS_ASSIGNED_JOBS');
+        }
+
+        const teamMembershipCount = db
+          .prepare('SELECT count(*) AS count FROM team_memberships WHERE user_id = ?')
+          .get(userId) as { count: number };
+        if (teamMembershipCount.count > 0) {
+          throw new Error('USER_HAS_TEAM_MEMBERSHIPS');
+        }
+
+        db.prepare('DELETE FROM user_role_links WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+      })(id);
     },
 
     getUserById(id) {

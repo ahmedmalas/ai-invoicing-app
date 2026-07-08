@@ -31,4 +31,10 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     }
     return customer;
   });
+
+  app.delete('/customers/:customerId', async (request, reply) => {
+    const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+    app.db.deleteCustomer(params.customerId);
+    return reply.code(204).send();
+  });
 };

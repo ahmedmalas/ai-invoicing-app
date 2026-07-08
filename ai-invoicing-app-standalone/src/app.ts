@@ -108,6 +108,18 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('TEAM_MEMBER_HAS_SCOPED_ASSIGNMENTS') ||
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||
+      errorMessage.includes('CUSTOMER_HAS_INVOICES') ||
+      errorMessage.includes('CUSTOMER_HAS_PAYMENTS') ||
+      errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
+      errorMessage.includes('CUSTOMER_HAS_JOBS') ||
+      errorMessage.includes('SUPPLIER_HAS_PURCHASE_ORDERS') ||
+      errorMessage.includes('SUPPLIER_HAS_BILLS') ||
+      errorMessage.includes('SUPPLIER_HAS_PAYMENTS') ||
+      errorMessage.includes('ROLE_HAS_USERS') ||
+      errorMessage.includes('USER_HAS_ASSIGNED_JOBS') ||
+      errorMessage.includes('USER_HAS_TEAM_MEMBERSHIPS') ||
+      errorMessage.includes('PURCHASE_ORDER_HAS_LINKED_SUPPLIER_BILLS') ||
+      errorMessage.includes('SUPPLIER_BILL_HAS_ALLOCATIONS') ||
       errorMessage.includes('CREDIT_NOTE_REQUIRES_FINALISED_INVOICE') ||
       errorMessage.includes('CREDIT_NOTE_FOR_CANCELLED_INVOICE_FORBIDDEN') ||
       errorMessage.includes('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL') ||
@@ -196,6 +208,16 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_LINE_ITEMS') ||
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_DOCUMENT') ||
+      errorMessage.includes('IMMUTABLE_INVOICE_CUSTOMER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_CREDIT_NOTE_CUSTOMER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_CREDIT_NOTE_INVOICE_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_CUSTOMER_PAYMENT_CUSTOMER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_PURCHASE_ORDER_SUPPLIER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_SUPPLIER_BILL_SUPPLIER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_SUPPLIER_BILL_SOURCE_PO_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_SUPPLIER_PAYMENT_SUPPLIER_REFERENCE') ||
+      errorMessage.includes('IMMUTABLE_PAYMENT_ALLOCATION') ||
+      errorMessage.includes('IMMUTABLE_SUPPLIER_PAYMENT_ALLOCATION') ||
       errorMessage.includes('Only draft invoices can be edited') ||
       errorMessage.includes('already finalised') ||
       errorMessage.includes('BACKUP_RESTORE_INCOMPATIBLE_VERSION') ||

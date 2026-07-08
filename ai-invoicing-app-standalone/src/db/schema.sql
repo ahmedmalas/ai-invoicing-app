@@ -820,3 +820,69 @@ BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_FINALISED_SUPPLIER_BILL_DOCUMENT');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_invoices_customer_reference_immutable_update
+BEFORE UPDATE ON invoices
+WHEN NEW.customer_id <> OLD.customer_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_INVOICE_CUSTOMER_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_credit_notes_customer_reference_immutable_update
+BEFORE UPDATE ON credit_notes
+WHEN NEW.customer_id <> OLD.customer_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_CREDIT_NOTE_CUSTOMER_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_credit_notes_invoice_reference_immutable_update
+BEFORE UPDATE ON credit_notes
+WHEN NEW.linked_invoice_id <> OLD.linked_invoice_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_CREDIT_NOTE_INVOICE_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_customer_payments_customer_reference_immutable_update
+BEFORE UPDATE ON customer_payments
+WHEN NEW.customer_id <> OLD.customer_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_CUSTOMER_PAYMENT_CUSTOMER_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_orders_supplier_reference_immutable_update
+BEFORE UPDATE ON purchase_orders
+WHEN NEW.supplier_id <> OLD.supplier_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_PURCHASE_ORDER_SUPPLIER_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_payments_supplier_reference_immutable_update
+BEFORE UPDATE ON supplier_payments
+WHEN NEW.supplier_id <> OLD.supplier_id
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_SUPPLIER_PAYMENT_SUPPLIER_REFERENCE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_payment_allocations_immutable_update
+BEFORE UPDATE ON payment_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_PAYMENT_ALLOCATION');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_payment_allocations_immutable_delete
+BEFORE DELETE ON payment_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_PAYMENT_ALLOCATION');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_payment_allocations_immutable_update
+BEFORE UPDATE ON supplier_payment_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_SUPPLIER_PAYMENT_ALLOCATION');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_payment_allocations_immutable_delete
+BEFORE DELETE ON supplier_payment_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_SUPPLIER_PAYMENT_ALLOCATION');
+END;
+

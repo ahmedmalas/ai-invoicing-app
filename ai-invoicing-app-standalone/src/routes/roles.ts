@@ -26,4 +26,10 @@ export const roleRoutes: FastifyPluginAsync = async (app) => {
       roles: paginateArray(app.db.listRoles(), pagination),
     };
   });
+
+  app.delete('/roles/:roleId', async (request, reply) => {
+    const params = z.object({ roleId: z.string().uuid() }).parse(request.params);
+    app.db.deleteRole(params.roleId);
+    return reply.code(204).send();
+  });
 };

@@ -61,6 +61,12 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     return purchaseOrder;
   });
 
+  app.delete('/purchase-orders/:purchaseOrderId', async (request, reply) => {
+    const params = z.object({ purchaseOrderId: z.string().uuid() }).parse(request.params);
+    app.db.deletePurchaseOrderDraft(params.purchaseOrderId);
+    return reply.code(204).send();
+  });
+
   app.get('/purchase-orders', async (request) => {
     const query = listPurchaseOrdersQuerySchema.parse(request.query);
     const pagination = parsePagination(request.query);

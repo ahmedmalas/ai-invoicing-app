@@ -26,4 +26,10 @@ export const supplierRoutes: FastifyPluginAsync = async (app) => {
     }
     return supplier;
   });
+
+  app.delete('/suppliers/:supplierId', async (request, reply) => {
+    const params = z.object({ supplierId: z.string().uuid() }).parse(request.params);
+    app.db.deleteSupplier(params.supplierId);
+    return reply.code(204).send();
+  });
 };

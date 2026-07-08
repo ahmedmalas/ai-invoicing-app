@@ -37,6 +37,12 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     return bill;
   });
 
+  app.delete('/supplier-bills/:billId', async (request, reply) => {
+    const params = z.object({ billId: z.string().uuid() }).parse(request.params);
+    app.db.deleteSupplierBillDraft(params.billId);
+    return reply.code(204).send();
+  });
+
   app.get('/supplier-bills', async (request) => {
     const query = listSupplierBillsQuerySchema.parse(request.query);
     const pagination = parsePagination(request.query);

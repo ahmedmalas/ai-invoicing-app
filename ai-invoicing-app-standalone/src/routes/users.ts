@@ -26,4 +26,10 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       users: paginateArray(app.db.listUsers(), pagination),
     };
   });
+
+  app.delete('/users/:userId', async (request, reply) => {
+    const params = z.object({ userId: z.string().uuid() }).parse(request.params);
+    app.db.deleteUser(params.userId);
+    return reply.code(204).send();
+  });
 };
