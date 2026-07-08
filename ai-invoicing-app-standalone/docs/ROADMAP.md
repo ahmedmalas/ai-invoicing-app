@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 34 — Global Reporting Read Model Integrity**
-- Baseline commit: `6ae9f56d029218ea2b65cd3232eac955ca39f4d5`
-- Active branch at roadmap update: `cursor/slice-34-global-reporting-read-model-integrity-19d3`
+- Current implemented slice: **Slice 35 — Global API Contract Integrity & Error Determinism**
+- Baseline commit: `30a5f603bf8cfeae8cc89823a169caf2da49e2cd`
+- Active branch at roadmap update: `cursor/slice-35-global-api-contract-integrity-error-determinism-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -43,15 +43,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 32. **Slice 32 — Global Timeline Integrity & Ordering** (implemented)
 33. **Slice 33 — Global Search Integrity & Cross-Document References** (implemented)
 34. **Slice 34 — Global Reporting Read Model Integrity** (implemented)
+35. **Slice 35 — Global API Contract Integrity & Error Determinism** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 35 — TBD (placeholder only)
 - Slice 36 — TBD (placeholder only)
 - Slice 37 — TBD (placeholder only)
+- Slice 38 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

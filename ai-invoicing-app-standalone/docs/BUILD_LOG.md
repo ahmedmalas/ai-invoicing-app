@@ -294,9 +294,19 @@
 - Added integration coverage proving AR/AP reconciliation, deterministic pagination/order, immutable document reportability, no report-side mutations, and concurrent deterministic reporting reads.
 - Preserved existing lifecycle models, timeline taxonomy, and rendering pipeline behavior; no taxonomy keys or materialized reporting tables were introduced.
 
+#### Slice 35 — Global API Contract Integrity & Error Determinism
+- Commit: `30a5f603bf8cfeae8cc89823a169caf2da49e2cd`
+- Hardened API error responses to a deterministic shared structure (`status`, `code`, `message`, `details`) via the existing Fastify error framework without introducing a second error system.
+- Added deterministic machine-readable error codes for validation, not-found, forbidden, conflict, and internal-error paths while preserving existing business lifecycle behavior.
+- Added shared pagination controls (`limit`, `offset`) across list endpoints and applied deterministic pagination slicing consistently for users, roles, teams, team-members, suppliers, jobs, job documents, credit notes, customer payments, supplier bills, supplier payments, and purchase orders.
+- Hardened deterministic read ordering tie-breakers across list queries with explicit `id` (or membership/link id) ordering where timestamps can collide.
+- Hardened customer statement read determinism by deriving `generatedAt` from source update timestamps instead of request-time clocks so repeated identical requests remain byte-for-byte stable on unchanged data.
+- Added integration coverage proving deterministic repeated responses, deterministic error payload shape/code behavior, deterministic empty-list behavior, deterministic pagination composition, and deterministic concurrent read responses.
+- Preserved timeline taxonomy keys and document lifecycle workflows; no taxonomy additions or lifecycle changes were introduced.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-34-global-reporting-read-model-integrity-19d3`
-- Status at logging: implementation baseline completed through Slice 34 and passing validation gates.
+- Branch: `cursor/slice-35-global-api-contract-integrity-error-determinism-19d3`
+- Status at logging: implementation baseline completed through Slice 35 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
