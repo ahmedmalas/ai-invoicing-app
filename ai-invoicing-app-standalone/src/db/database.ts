@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
@@ -639,6 +639,7 @@ const PLATFORM_SNAPSHOT_TABLES = [
   'supplier_payment_sequences',
   'purchase_order_sequences',
   'job_sequences',
+  'idempotency_requests',
   'timeline_events',
 ] as const;
 
@@ -1551,6 +1552,51 @@ export function createDatabase(dbPath: string): AppDatabase {
     }
   }
 
+  function stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+    }
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+      .join(',')}}`;
+  }
+
+  function withIdempotentCreate<T>(operation: string, payload: unknown, execute: () => T): T {
+    const fingerprint = createHash('sha256')
+      .update(operation)
+      .update(':')
+      .update(stableStringify(payload))
+      .digest('hex');
+
+    const existing = db
+      .prepare(
+        `SELECT response_json
+         FROM idempotency_requests
+         WHERE operation = ? AND fingerprint = ?`,
+      )
+      .get(operation, fingerprint) as { response_json: string } | undefined;
+    if (existing) {
+      return JSON.parse(existing.response_json) as T;
+    }
+
+    const result = execute();
+    db.prepare(
+      `INSERT INTO idempotency_requests (operation, fingerprint, response_json, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(operation, fingerprint, JSON.stringify(result), nowIso());
+    return result;
+  }
+
+  function assertNoInjectedFailure(failpoint: string): void {
+    if (process.env.AI_BUSINESS_OS_FAILPOINT === failpoint) {
+      throw new Error(`INJECTED_FAILURE_${failpoint}`);
+    }
+  }
+
   const restorePlatformSnapshot = db.transaction((snapshot: PlatformSnapshot) => {
     assertRestoreTargetIsEmptyOrThrow();
 
@@ -1590,6 +1636,7 @@ export function createDatabase(dbPath: string): AppDatabase {
     insertSnapshotRows('supplier_payment_sequences', snapshot.entities.supplier_payment_sequences);
     insertSnapshotRows('purchase_order_sequences', snapshot.entities.purchase_order_sequences);
     insertSnapshotRows('job_sequences', snapshot.entities.job_sequences);
+    insertSnapshotRows('idempotency_requests', snapshot.entities.idempotency_requests);
 
     for (const row of snapshot.entities.invoices) {
       if (typeof row.id !== 'string' || typeof row.status !== 'string') {
@@ -1626,25 +1673,30 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createCustomer(input) {
-      const id = randomUUID();
-      const now = nowIso();
-      db.prepare(
-        `INSERT INTO customers (id, display_name, email, phone, address, abn_tax_id, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        input.displayName,
-        input.email ?? null,
-        input.phone ?? null,
-        input.address ?? null,
-        input.abnTaxId ?? null,
-        input.notes ?? null,
-        now,
-        now,
-      );
-      const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
-      timeline('customer.created', id, { displayName: input.displayName });
-      return mapCustomerRow(row);
+      return db.transaction((txInput: CreateCustomerInput) =>
+        withIdempotentCreate<Customer>('createCustomer', txInput, () => {
+          const id = randomUUID();
+          const now = nowIso();
+          db.prepare(
+            `INSERT INTO customers (id, display_name, email, phone, address, abn_tax_id, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            id,
+            txInput.displayName,
+            txInput.email ?? null,
+            txInput.phone ?? null,
+            txInput.address ?? null,
+            txInput.abnTaxId ?? null,
+            txInput.notes ?? null,
+            now,
+            now,
+          );
+          assertNoInjectedFailure('create_customer_after_insert');
+          const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
+          timeline('customer.created', id, { displayName: txInput.displayName });
+          return mapCustomerRow(row);
+        }),
+      )(input);
     },
 
     updateCustomer(id, input) {
@@ -1680,24 +1732,29 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createSupplier(input) {
-      const id = randomUUID();
-      const now = nowIso();
-      db.prepare(
-        `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        input.displayName,
-        input.email ?? null,
-        input.phone ?? null,
-        input.address ?? null,
-        input.taxId ?? null,
-        input.notes ?? null,
-        now,
-        now,
-      );
-      const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as DbSupplierRow;
-      return mapSupplierRow(row);
+      return db.transaction((txInput: CreateSupplierInput) =>
+        withIdempotentCreate<Supplier>('createSupplier', txInput, () => {
+          const id = randomUUID();
+          const now = nowIso();
+          db.prepare(
+            `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            id,
+            txInput.displayName,
+            txInput.email ?? null,
+            txInput.phone ?? null,
+            txInput.address ?? null,
+            txInput.taxId ?? null,
+            txInput.notes ?? null,
+            now,
+            now,
+          );
+          assertNoInjectedFailure('create_supplier_after_insert');
+          const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as DbSupplierRow;
+          return mapSupplierRow(row);
+        }),
+      )(input);
     },
 
     getSupplierById(id) {
@@ -1779,117 +1836,125 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createInvoiceDraft(input) {
-      const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
-      if (!customer) {
-        throw new Error('Customer not found');
-      }
-      const id = randomUUID();
-      const now = nowIso();
-      const { totals } = calculateTotals(input.lineItems);
+      return db.transaction((txInput: CreateInvoiceDraftInput) =>
+        withIdempotentCreate<InvoiceDraft>('createInvoiceDraft', txInput, () => {
+          const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+          if (!customer) {
+            throw new Error('Customer not found');
+          }
+          const id = randomUUID();
+          const now = nowIso();
+          const { totals } = calculateTotals(txInput.lineItems);
 
-      db.prepare(
-        `INSERT INTO invoices (id, customer_id, title, issue_date, due_date, notes, payment_terms, invoice_number, status, payment_state, reminder_state, subtotal, gst_total, total, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        input.customerId,
-        input.title,
-        input.issueDate,
-        input.dueDate,
-        input.notes ?? null,
-        input.paymentTerms ?? null,
-        null,
-        'Draft',
-        'Draft',
-        'None',
-        totals.subtotal,
-        totals.gstTotal,
-        totals.total,
-        now,
-        now,
-      );
+          db.prepare(
+            `INSERT INTO invoices (id, customer_id, title, issue_date, due_date, notes, payment_terms, invoice_number, status, payment_state, reminder_state, subtotal, gst_total, total, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            id,
+            txInput.customerId,
+            txInput.title,
+            txInput.issueDate,
+            txInput.dueDate,
+            txInput.notes ?? null,
+            txInput.paymentTerms ?? null,
+            null,
+            'Draft',
+            'Draft',
+            'None',
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            now,
+            now,
+          );
+          assertNoInjectedFailure('create_invoice_after_insert');
 
-      const insertLine = db.prepare(
-        `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      const { calculatedItems } = calculateTotals(input.lineItems);
-      for (const item of calculatedItems) {
-        insertLine.run(
-          randomUUID(),
-          id,
-          item.description,
-          item.quantity,
-          item.unitPrice,
-          item.gstApplicable ? 1 : 0,
-          item.lineSubtotal,
-          item.lineGst,
-          item.lineTotal,
-        );
-      }
+          const insertLine = db.prepare(
+            `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          const { calculatedItems } = calculateTotals(txInput.lineItems);
+          for (const item of calculatedItems) {
+            insertLine.run(
+              randomUUID(),
+              id,
+              item.description,
+              item.quantity,
+              item.unitPrice,
+              item.gstApplicable ? 1 : 0,
+              item.lineSubtotal,
+              item.lineGst,
+              item.lineTotal,
+            );
+          }
 
-      upsertDocument(id, input.title, 'invoice', `${input.title} ${input.notes ?? ''}`);
-      timeline('invoice.draft_created', id, { totals, lineItems: input.lineItems.length });
+          assertNoInjectedFailure('create_invoice_after_line_items');
+          upsertDocument(id, txInput.title, 'invoice', `${txInput.title} ${txInput.notes ?? ''}`);
+          timeline('invoice.draft_created', id, { totals, lineItems: txInput.lineItems.length });
 
-      const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
-      return mapInvoiceRow(row);
+          const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
+          return mapInvoiceRow(row);
+        }),
+      )(input);
     },
 
     updateInvoiceDraft(id, input) {
-      const existing = db.prepare('SELECT status FROM invoices WHERE id = ?').get(id) as
-        | { status: string }
-        | undefined;
-      if (!existing) {
-        throw new Error('Invoice not found');
-      }
-      if (existing.status !== 'Draft') {
-        throw new Error('Only draft invoices can be edited');
-      }
+      return db.transaction((invoiceId: string, txInput: UpdateInvoiceDraftInput) => {
+        const existing = db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId) as
+          | { status: string }
+          | undefined;
+        if (!existing) {
+          throw new Error('Invoice not found');
+        }
+        if (existing.status !== 'Draft') {
+          throw new Error('Only draft invoices can be edited');
+        }
 
-      const { totals } = calculateTotals(input.lineItems);
-      db.prepare(
-        `UPDATE invoices
-         SET title = ?, issue_date = ?, due_date = ?, notes = ?, payment_terms = ?, payment_state = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
-         WHERE id = ?`,
-      ).run(
-        input.title,
-        input.issueDate,
-        input.dueDate,
-        input.notes ?? null,
-        input.paymentTerms ?? null,
-        input.paymentState,
-        totals.subtotal,
-        totals.gstTotal,
-        totals.total,
-        nowIso(),
-        id,
-      );
-
-      db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(id);
-      const insertLine = db.prepare(
-        `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      const { calculatedItems } = calculateTotals(input.lineItems);
-      for (const item of calculatedItems) {
-        insertLine.run(
-          randomUUID(),
-          id,
-          item.description,
-          item.quantity,
-          item.unitPrice,
-          item.gstApplicable ? 1 : 0,
-          item.lineSubtotal,
-          item.lineGst,
-          item.lineTotal,
+        const { totals } = calculateTotals(txInput.lineItems);
+        db.prepare(
+          `UPDATE invoices
+           SET title = ?, issue_date = ?, due_date = ?, notes = ?, payment_terms = ?, payment_state = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          txInput.title,
+          txInput.issueDate,
+          txInput.dueDate,
+          txInput.notes ?? null,
+          txInput.paymentTerms ?? null,
+          txInput.paymentState,
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          nowIso(),
+          invoiceId,
         );
-      }
 
-      upsertDocument(id, input.title, 'invoice', `${input.title} ${input.notes ?? ''}`);
-      timeline('invoice.draft_updated', id, { totals, lineItems: input.lineItems.length });
+        db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
+        const insertLine = db.prepare(
+          `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const { calculatedItems } = calculateTotals(txInput.lineItems);
+        for (const item of calculatedItems) {
+          insertLine.run(
+            randomUUID(),
+            invoiceId,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
+        }
 
-      const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
-      return mapInvoiceRow(row);
+        upsertDocument(invoiceId, txInput.title, 'invoice', `${txInput.title} ${txInput.notes ?? ''}`);
+        timeline('invoice.draft_updated', invoiceId, { totals, lineItems: txInput.lineItems.length });
+
+        const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as DbInvoiceRow;
+        return mapInvoiceRow(row);
+      })(id, input);
     },
 
     getInvoiceById(id) {
@@ -1917,174 +1982,182 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     finaliseInvoice(id) {
-      const invoice = this.getInvoiceById(id);
-      if (!invoice) {
-        throw new Error('Invoice not found');
-      }
-      if (invoice.status !== 'Draft') {
-        throw new Error('Invoice already finalised');
-      }
-
-      const invoiceNumber = allocateDocumentNumber('invoice_sequences', 'INV');
-      const now = nowIso();
-      upsertDocument(
-        id,
-        `${invoiceNumber} ${invoice.title}`,
-        'invoice',
-        `${invoiceNumber} ${invoice.title} ${invoice.notes ?? ''}`,
-      );
-      try {
-        db.prepare(
-          `UPDATE invoices
-           SET status = 'Finalised', invoice_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
-           WHERE id = ?`,
-        ).run(invoiceNumber, now, id);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_invoices_number_not_null') ||
-          message.includes('UNIQUE constraint failed: invoices.invoice_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+      return db.transaction((invoiceId: string) => {
+        const invoice = this.getInvoiceById(invoiceId);
+        if (!invoice) {
+          throw new Error('Invoice not found');
         }
-        throw error;
-      }
+        if (invoice.status !== 'Draft') {
+          throw new Error('Invoice already finalised');
+        }
 
-      const finalised = this.getInvoiceById(id);
-      if (!finalised) {
-        throw new Error('Failed to load finalised invoice');
-      }
+        const invoiceNumber = allocateDocumentNumber('invoice_sequences', 'INV');
+        const now = nowIso();
+        upsertDocument(
+          invoiceId,
+          `${invoiceNumber} ${invoice.title}`,
+          'invoice',
+          `${invoiceNumber} ${invoice.title} ${invoice.notes ?? ''}`,
+        );
+        try {
+          db.prepare(
+            `UPDATE invoices
+             SET status = 'Finalised', invoice_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
+             WHERE id = ?`,
+          ).run(invoiceNumber, now, invoiceId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('uq_invoices_number_not_null') ||
+            message.includes('UNIQUE constraint failed: invoices.invoice_number')
+          ) {
+            throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+          }
+          throw error;
+        }
 
-      db.prepare(
-        `INSERT INTO invoice_snapshots (id, invoice_id, snapshot_json, created_at)
-         VALUES (?, ?, ?, ?)`,
-      ).run(randomUUID(), id, JSON.stringify(finalised), now);
+        const finalised = this.getInvoiceById(invoiceId);
+        if (!finalised) {
+          throw new Error('Failed to load finalised invoice');
+        }
 
-      timeline('invoice.finalised', id, {
-        invoiceNumber,
-        total: finalised.totals.total,
-      });
+        db.prepare(
+          `INSERT INTO invoice_snapshots (id, invoice_id, snapshot_json, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(randomUUID(), invoiceId, JSON.stringify(finalised), now);
 
-      return finalised;
+        assertNoInjectedFailure('finalise_invoice_after_snapshot');
+        timeline('invoice.finalised', invoiceId, {
+          invoiceNumber,
+          total: finalised.totals.total,
+        });
+
+        return finalised;
+      })(id);
     },
 
     createCreditNote(input) {
-      const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(input.linkedInvoiceId) as
-        | DbInvoiceRow
-        | undefined;
-      if (!invoice) {
-        throw new Error('Invoice not found');
-      }
-      if (invoice.status !== 'Finalised') {
-        throw new Error('CREDIT_NOTE_REQUIRES_FINALISED_INVOICE');
-      }
-      if (invoice.payment_state === 'Cancelled') {
-        throw new Error('CREDIT_NOTE_FOR_CANCELLED_INVOICE_FORBIDDEN');
-      }
+      return db.transaction((txInput: CreateCreditNoteInput) =>
+        withIdempotentCreate<CreditNote>('createCreditNote', txInput, () => {
+          const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(txInput.linkedInvoiceId) as
+            | DbInvoiceRow
+            | undefined;
+          if (!invoice) {
+            throw new Error('Invoice not found');
+          }
+          if (invoice.status !== 'Finalised') {
+            throw new Error('CREDIT_NOTE_REQUIRES_FINALISED_INVOICE');
+          }
+          if (invoice.payment_state === 'Cancelled') {
+            throw new Error('CREDIT_NOTE_FOR_CANCELLED_INVOICE_FORBIDDEN');
+          }
 
-      let lineItems: CreditNoteLineItem[] = [];
-      let totalCredit = 0;
+          let lineItems: CreditNoteLineItem[] = [];
+          let totalCredit = 0;
 
-      if (input.type === 'Full') {
-        const existingFullCredit = db
-          .prepare(
-            `SELECT COUNT(1) AS total
-             FROM credit_notes
-             WHERE linked_invoice_id = ? AND type = 'Full' AND status = 'Issued'`,
-          )
-          .get(input.linkedInvoiceId) as { total: number };
-        if (existingFullCredit.total > 0) {
-          throw new Error('CREDIT_NOTE_FULL_ALREADY_EXISTS');
-        }
-        totalCredit = invoice.total;
-        lineItems = [
-          {
-            description: `Full credit for ${invoice.invoice_number ?? invoice.id}`,
-            amount: invoice.total,
-          },
-        ];
-      } else {
-        if (input.lineItems && input.lineItems.length > 0) {
-          lineItems = input.lineItems;
-        } else if (input.adjustmentAmount && input.adjustmentAmount > 0) {
-          lineItems = [
-            {
-              description: 'Partial credit adjustment',
-              amount: input.adjustmentAmount,
-            },
-          ];
-        } else {
-          throw new Error('CREDIT_NOTE_PARTIAL_AMOUNT_REQUIRED');
-        }
-        totalCredit = lineItems.reduce((sum, item) => sum + item.amount, 0);
-      }
+          if (txInput.type === 'Full') {
+            const existingFullCredit = db
+              .prepare(
+                `SELECT COUNT(1) AS total
+                 FROM credit_notes
+                 WHERE linked_invoice_id = ? AND type = 'Full' AND status = 'Issued'`,
+              )
+              .get(txInput.linkedInvoiceId) as { total: number };
+            if (existingFullCredit.total > 0) {
+              throw new Error('CREDIT_NOTE_FULL_ALREADY_EXISTS');
+            }
+            totalCredit = invoice.total;
+            lineItems = [
+              {
+                description: `Full credit for ${invoice.invoice_number ?? invoice.id}`,
+                amount: invoice.total,
+              },
+            ];
+          } else {
+            if (txInput.lineItems && txInput.lineItems.length > 0) {
+              lineItems = txInput.lineItems;
+            } else if (txInput.adjustmentAmount && txInput.adjustmentAmount > 0) {
+              lineItems = [
+                {
+                  description: 'Partial credit adjustment',
+                  amount: txInput.adjustmentAmount,
+                },
+              ];
+            } else {
+              throw new Error('CREDIT_NOTE_PARTIAL_AMOUNT_REQUIRED');
+            }
+            totalCredit = lineItems.reduce((sum, item) => sum + item.amount, 0);
+          }
 
-      if (totalCredit <= 0) {
-        throw new Error('CREDIT_NOTE_AMOUNT_INVALID');
-      }
-      if (totalCredit > invoice.total) {
-        throw new Error('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL');
-      }
+          if (totalCredit <= 0) {
+            throw new Error('CREDIT_NOTE_AMOUNT_INVALID');
+          }
+          if (totalCredit > invoice.total) {
+            throw new Error('CREDIT_NOTE_AMOUNT_EXCEEDS_INVOICE_TOTAL');
+          }
 
-      const id = randomUUID();
-      const creditNoteNumber = allocateDocumentNumber('credit_note_sequences', 'CRN');
-      const now = nowIso();
-      try {
-        db.prepare(
-          `INSERT INTO credit_notes (
+          const id = randomUUID();
+          const creditNoteNumber = allocateDocumentNumber('credit_note_sequences', 'CRN');
+          const now = nowIso();
+          try {
+            db.prepare(
+              `INSERT INTO credit_notes (
+                id,
+                credit_note_number,
+                linked_invoice_id,
+                customer_id,
+                issue_date,
+                reason,
+                type,
+                status,
+                total_credit,
+                line_items_json,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              id,
+              creditNoteNumber,
+              txInput.linkedInvoiceId,
+              invoice.customer_id,
+              txInput.issueDate,
+              txInput.reason,
+              txInput.type,
+              'Issued',
+              totalCredit,
+              JSON.stringify(lineItems),
+              now,
+              now,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              message.includes('credit_notes.credit_note_number') ||
+              message.includes('uq_credit_notes_number')
+            ) {
+              throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+            }
+            throw error;
+          }
+
+          assertNoInjectedFailure('create_credit_note_after_insert');
+          upsertDocument(
             id,
-            credit_note_number,
-            linked_invoice_id,
-            customer_id,
-            issue_date,
-            reason,
-            type,
-            status,
-            total_credit,
-            line_items_json,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          creditNoteNumber,
-          input.linkedInvoiceId,
-          invoice.customer_id,
-          input.issueDate,
-          input.reason,
-          input.type,
-          'Issued',
-          totalCredit,
-          JSON.stringify(lineItems),
-          now,
-          now,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('credit_notes.credit_note_number') ||
-          message.includes('uq_credit_notes_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
-        }
-        throw error;
-      }
+            `${creditNoteNumber} ${txInput.reason}`,
+            'custom',
+            `${creditNoteNumber} ${txInput.reason} ${invoice.invoice_number ?? txInput.linkedInvoiceId}`,
+          );
+          timeline('credit_note.created', id, {
+            creditNoteNumber,
+            linkedInvoiceId: txInput.linkedInvoiceId,
+            type: txInput.type,
+            totalCredit,
+          });
 
-      upsertDocument(
-        id,
-        `${creditNoteNumber} ${input.reason}`,
-        'custom',
-        `${creditNoteNumber} ${input.reason} ${invoice.invoice_number ?? input.linkedInvoiceId}`,
-      );
-      timeline('credit_note.created', id, {
-        creditNoteNumber,
-        linkedInvoiceId: input.linkedInvoiceId,
-        type: input.type,
-        totalCredit,
-      });
-
-      const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow;
-      return mapCreditNoteRow(row);
+          const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow;
+          return mapCreditNoteRow(row);
+        }),
+      )(input);
     },
 
     getCreditNoteById(id) {
@@ -2111,145 +2184,150 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createCustomerPayment(input) {
-      const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(input.customerId);
-      if (!customer) {
-        throw new Error('Customer not found');
-      }
-      if (input.allocations.length === 0) {
-        throw new Error('PAYMENT_ALLOCATIONS_REQUIRED');
-      }
+      return db.transaction((txInput: CreateCustomerPaymentInput) =>
+        withIdempotentCreate<CustomerPayment>('createCustomerPayment', txInput, () => {
+          const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+          if (!customer) {
+            throw new Error('Customer not found');
+          }
+          if (txInput.allocations.length === 0) {
+            throw new Error('PAYMENT_ALLOCATIONS_REQUIRED');
+          }
 
-      const allocationInvoiceSet = new Set(input.allocations.map((allocation) => allocation.invoiceId));
-      if (allocationInvoiceSet.size !== input.allocations.length) {
-        throw new Error('PAYMENT_DUPLICATE_ALLOCATION_INVOICE');
-      }
+          const allocationInvoiceSet = new Set(txInput.allocations.map((allocation) => allocation.invoiceId));
+          if (allocationInvoiceSet.size !== txInput.allocations.length) {
+            throw new Error('PAYMENT_DUPLICATE_ALLOCATION_INVOICE');
+          }
 
-      const allocationTotal = input.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
-      if (allocationTotal > input.amount) {
-        throw new Error('PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
-      }
+          const allocationTotal = txInput.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+          if (allocationTotal > txInput.amount) {
+            throw new Error('PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
+          }
 
-      for (const allocation of input.allocations) {
-        if (allocation.amount <= 0) {
-          throw new Error('PAYMENT_ALLOCATION_AMOUNT_INVALID');
-        }
+          for (const allocation of txInput.allocations) {
+            if (allocation.amount <= 0) {
+              throw new Error('PAYMENT_ALLOCATION_AMOUNT_INVALID');
+            }
 
-        const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as
-          | DbInvoiceRow
-          | undefined;
-        if (!invoice) {
-          throw new Error('Invoice not found');
-        }
-        if (invoice.status !== 'Finalised') {
-          throw new Error('PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE');
-        }
-        if (invoice.customer_id !== input.customerId) {
-          throw new Error('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH');
-        }
-        if (invoice.payment_state === 'Cancelled') {
-          throw new Error('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN');
-        }
+            const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as
+              | DbInvoiceRow
+              | undefined;
+            if (!invoice) {
+              throw new Error('Invoice not found');
+            }
+            if (invoice.status !== 'Finalised') {
+              throw new Error('PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE');
+            }
+            if (invoice.customer_id !== txInput.customerId) {
+              throw new Error('PAYMENT_ALLOCATION_CUSTOMER_MISMATCH');
+            }
+            if (invoice.payment_state === 'Cancelled') {
+              throw new Error('PAYMENT_ALLOCATION_FOR_CANCELLED_INVOICE_FORBIDDEN');
+            }
 
-        const existingAllocated = db
-          .prepare(
-            `SELECT coalesce(sum(pa.amount), 0) AS total
-             FROM payment_allocations pa
-             WHERE pa.invoice_id = ?`,
-          )
-          .get(allocation.invoiceId) as { total: number };
+            const existingAllocated = db
+              .prepare(
+                `SELECT coalesce(sum(pa.amount), 0) AS total
+                 FROM payment_allocations pa
+                 WHERE pa.invoice_id = ?`,
+              )
+              .get(allocation.invoiceId) as { total: number };
 
-        const outstanding = invoice.total - existingAllocated.total;
-        if (allocation.amount > outstanding) {
-          throw new Error('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
-        }
-      }
+            const outstanding = invoice.total - existingAllocated.total;
+            if (allocation.amount > outstanding) {
+              throw new Error('PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
+            }
+          }
 
-      const id = randomUUID();
-      const paymentNumber = allocateDocumentNumber('payment_sequences', 'PAY');
-      const now = nowIso();
+          const id = randomUUID();
+          const paymentNumber = allocateDocumentNumber('payment_sequences', 'PAY');
+          const now = nowIso();
 
-      try {
-        db.prepare(
-          `INSERT INTO customer_payments (
+          try {
+            db.prepare(
+              `INSERT INTO customer_payments (
+                id,
+                payment_number,
+                customer_id,
+                payment_date,
+                payment_method,
+                reference,
+                amount,
+                notes,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              id,
+              paymentNumber,
+              txInput.customerId,
+              txInput.paymentDate,
+              txInput.paymentMethod,
+              txInput.reference,
+              txInput.amount,
+              txInput.notes ?? null,
+              now,
+              now,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              message.includes('customer_payments.payment_number') ||
+              message.includes('uq_customer_payments_number')
+            ) {
+              throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+            }
+            throw error;
+          }
+
+          const insertAllocation = db.prepare(
+            `INSERT INTO payment_allocations (id, payment_id, invoice_id, amount, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          );
+          for (const allocation of txInput.allocations) {
+            insertAllocation.run(randomUUID(), id, allocation.invoiceId, allocation.amount, now);
+          }
+
+          assertNoInjectedFailure('create_customer_payment_after_allocations');
+          for (const allocation of txInput.allocations) {
+            const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as DbInvoiceRow;
+            const totalAllocated = db
+              .prepare(
+                `SELECT coalesce(sum(pa.amount), 0) AS total
+                 FROM payment_allocations pa
+                 WHERE pa.invoice_id = ?`,
+              )
+              .get(allocation.invoiceId) as { total: number };
+            const nextState: PaymentState = totalAllocated.total >= invoice.total ? 'Paid' : 'Awaiting Payment';
+            db.prepare('UPDATE invoices SET payment_state = ?, updated_at = ? WHERE id = ?').run(
+              nextState,
+              nowIso(),
+              allocation.invoiceId,
+            );
+          }
+
+          upsertDocument(
             id,
-            payment_number,
-            customer_id,
-            payment_date,
-            payment_method,
-            reference,
-            amount,
-            notes,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          paymentNumber,
-          input.customerId,
-          input.paymentDate,
-          input.paymentMethod,
-          input.reference,
-          input.amount,
-          input.notes ?? null,
-          now,
-          now,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('customer_payments.payment_number') ||
-          message.includes('uq_customer_payments_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
-        }
-        throw error;
-      }
+            `${paymentNumber} ${txInput.reference}`,
+            'receipt',
+            `${paymentNumber} ${txInput.paymentMethod} ${txInput.reference} ${txInput.notes ?? ''}`,
+          );
+          timeline('payment.created', id, {
+            customerId: txInput.customerId,
+            paymentNumber,
+            amount: txInput.amount,
+          });
+          timeline('payment.allocated', id, {
+            allocations: txInput.allocations,
+            allocationTotal,
+          });
 
-      const insertAllocation = db.prepare(
-        `INSERT INTO payment_allocations (id, payment_id, invoice_id, amount, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      );
-      for (const allocation of input.allocations) {
-        insertAllocation.run(randomUUID(), id, allocation.invoiceId, allocation.amount, now);
-      }
-
-      for (const allocation of input.allocations) {
-        const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as DbInvoiceRow;
-        const totalAllocated = db
-          .prepare(
-            `SELECT coalesce(sum(pa.amount), 0) AS total
-             FROM payment_allocations pa
-             WHERE pa.invoice_id = ?`,
-          )
-          .get(allocation.invoiceId) as { total: number };
-        const nextState: PaymentState = totalAllocated.total >= invoice.total ? 'Paid' : 'Awaiting Payment';
-        db.prepare('UPDATE invoices SET payment_state = ?, updated_at = ? WHERE id = ?').run(
-          nextState,
-          nowIso(),
-          allocation.invoiceId,
-        );
-      }
-
-      upsertDocument(
-        id,
-        `${paymentNumber} ${input.reference}`,
-        'receipt',
-        `${paymentNumber} ${input.paymentMethod} ${input.reference} ${input.notes ?? ''}`,
-      );
-      timeline('payment.created', id, {
-        customerId: input.customerId,
-        paymentNumber,
-        amount: input.amount,
-      });
-      timeline('payment.allocated', id, {
-        allocations: input.allocations,
-        allocationTotal,
-      });
-
-      const paymentRow = db
-        .prepare('SELECT * FROM customer_payments WHERE id = ?')
-        .get(id) as DbCustomerPaymentRow;
-      return mapCustomerPaymentRow(paymentRow, getAllocationsForPayment(id));
+          const paymentRow = db
+            .prepare('SELECT * FROM customer_payments WHERE id = ?')
+            .get(id) as DbCustomerPaymentRow;
+          return mapCustomerPaymentRow(paymentRow, getAllocationsForPayment(id));
+        }),
+      )(input);
     },
 
     getCustomerPaymentById(id) {
@@ -2293,115 +2371,119 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createSupplierBillDraft(input) {
-      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
-      if (!supplier) {
-        throw new Error('Supplier not found');
-      }
+      return db.transaction((txInput: CreateSupplierBillDraftInput) => {
+          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
+          if (!supplier) {
+            throw new Error('Supplier not found');
+          }
 
-      const { totals, calculatedItems } = calculateTotals(input.lineItems);
-      const id = randomUUID();
-      const now = nowIso();
-      try {
-        db.prepare(
-          `INSERT INTO supplier_bills (
+          const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+          const id = randomUUID();
+          const now = nowIso();
+          try {
+            db.prepare(
+              `INSERT INTO supplier_bills (
+                id,
+                supplier_id,
+                source_purchase_order_id,
+                bill_number,
+                bill_date,
+                due_date,
+                supplier_reference,
+                currency,
+                notes,
+                status,
+                payment_state,
+                subtotal,
+                gst_total,
+                total,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              id,
+              txInput.supplierId,
+              null,
+              null,
+              txInput.billDate,
+              txInput.dueDate,
+              txInput.supplierReference ?? null,
+              txInput.currency,
+              txInput.notes ?? null,
+              'Draft',
+              'Draft',
+              totals.subtotal,
+              totals.gstTotal,
+              totals.total,
+              now,
+              now,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              message.includes('uq_supplier_bills_supplier_reference_not_null') ||
+              message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
+            ) {
+              throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
+            }
+            throw error;
+          }
+
+          const insertLine = db.prepare(
+            `INSERT INTO supplier_bill_line_items (
+              id, supplier_bill_id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          for (const [index, item] of calculatedItems.entries()) {
+            const inputLine = txInput.lineItems[index];
+            if (!inputLine) {
+              throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
+            }
+            const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
+            insertLine.run(
+              randomUUID(),
+              id,
+              sourcePurchaseOrderLineItemId ?? null,
+              item.description,
+              item.quantity,
+              item.unitPrice,
+              item.gstApplicable ? 1 : 0,
+              item.lineSubtotal,
+              item.lineGst,
+              item.lineTotal,
+            );
+          }
+
+          assertNoInjectedFailure('create_supplier_bill_after_line_items');
+          upsertDocument(
             id,
-            supplier_id,
-            source_purchase_order_id,
-            bill_number,
-            bill_date,
-            due_date,
-            supplier_reference,
-            currency,
-            notes,
-            status,
-            payment_state,
-            subtotal,
-            gst_total,
-            total,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          input.supplierId,
-          null,
-          null,
-          input.billDate,
-          input.dueDate,
-          input.supplierReference ?? null,
-          input.currency,
-          input.notes ?? null,
-          'Draft',
-          'Draft',
-          totals.subtotal,
-          totals.gstTotal,
-          totals.total,
-          now,
-          now,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_supplier_bills_supplier_reference_not_null') ||
-          message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
-        ) {
-          throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
-        }
-        throw error;
-      }
+            `Draft Supplier Bill ${txInput.supplierReference ?? ''}`.trim(),
+            'supplier_bill',
+            `${txInput.currency} ${txInput.notes ?? ''} ${txInput.supplierReference ?? ''}`,
+          );
+          timeline('supplier_bill.created', id, {
+            status: 'Draft',
+            supplierId: txInput.supplierId,
+            total: totals.total,
+          });
 
-      const insertLine = db.prepare(
-        `INSERT INTO supplier_bill_line_items (
-          id, supplier_bill_id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const [index, item] of calculatedItems.entries()) {
-        const inputLine = input.lineItems[index];
-        if (!inputLine) {
-          throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
-        }
-        const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
-        insertLine.run(
-          randomUUID(),
-          id,
-          sourcePurchaseOrderLineItemId ?? null,
-          item.description,
-          item.quantity,
-          item.unitPrice,
-          item.gstApplicable ? 1 : 0,
-          item.lineSubtotal,
-          item.lineGst,
-          item.lineTotal,
-        );
-      }
-
-      upsertDocument(
-        id,
-        `Draft Supplier Bill ${input.supplierReference ?? ''}`.trim(),
-        'supplier_bill',
-        `${input.currency} ${input.notes ?? ''} ${input.supplierReference ?? ''}`,
-      );
-      timeline('supplier_bill.created', id, {
-        status: 'Draft',
-        supplierId: input.supplierId,
-        total: totals.total,
-      });
-
-      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
-      return mapSupplierBillRow(row);
+          const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
+          return mapSupplierBillRow(row);
+      })(input);
     },
 
     createSupplierBillDraftFromPurchaseOrder(purchaseOrderId, input) {
-      const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
-      if (!purchaseOrder) {
-        throw new Error('PURCHASE_ORDER_NOT_FOUND');
-      }
-      if (purchaseOrder.status !== 'Approved') {
-        throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
-      }
-      if (purchaseOrder.billingStatus === 'fully_billed') {
-        throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
-      }
+      return db.transaction(() => {
+            const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
+            if (!purchaseOrder) {
+              throw new Error('PURCHASE_ORDER_NOT_FOUND');
+            }
+            if (purchaseOrder.status !== 'Approved') {
+              throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
+            }
+            if (purchaseOrder.billingStatus === 'fully_billed') {
+              throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
+            }
 
       const sourceLines =
         input?.lineItems && input.lineItems.length > 0
@@ -2512,15 +2594,16 @@ export function createDatabase(dbPath: string): AppDatabase {
         });
       }
 
-      const linkedRow = db
-        .prepare(
-          `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
-           FROM supplier_bills sb
-           LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
-           WHERE sb.id = ?`,
-        )
-        .get(created.id) as DbSupplierBillRow;
-      return mapSupplierBillRow(linkedRow);
+            const linkedRow = db
+              .prepare(
+                `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+                 FROM supplier_bills sb
+                 LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
+                 WHERE sb.id = ?`,
+              )
+              .get(created.id) as DbSupplierBillRow;
+            return mapSupplierBillRow(linkedRow);
+      })();
     },
 
     updateSupplierBillDraft(id, input) {
@@ -2738,144 +2821,149 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     finaliseSupplierBill(id) {
-      const bill = this.getSupplierBillById(id);
-      if (!bill) {
-        throw new Error('Supplier bill not found');
-      }
-      if (bill.status !== 'Draft') {
-        throw new Error('Supplier bill already finalised');
-      }
-      if (!bill.lineItems || bill.lineItems.length === 0) {
-        throw new Error('SUPPLIER_BILL_FINALISE_EMPTY_LINE_ITEMS');
-      }
-
-      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(bill.supplierId);
-      if (!supplier) {
-        throw new Error('SUPPLIER_BILL_FINALISE_SUPPLIER_NOT_FOUND');
-      }
-
-      for (const lineItem of bill.lineItems) {
-        if (lineItem.quantity <= 0) {
-          throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_QUANTITY');
+      return db.transaction((billId: string) => {
+        const bill = this.getSupplierBillById(billId);
+        if (!bill) {
+          throw new Error('Supplier bill not found');
         }
-        if (lineItem.unitPrice < 0) {
-          throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_UNIT_PRICE');
+        if (bill.status !== 'Draft') {
+          throw new Error('Supplier bill already finalised');
         }
-      }
-
-      const reconciledTotals = calculateTotals(bill.lineItems).totals;
-      if (
-        Math.abs(reconciledTotals.subtotal - bill.totals.subtotal) > 1e-6 ||
-        Math.abs(reconciledTotals.gstTotal - bill.totals.gstTotal) > 1e-6 ||
-        Math.abs(reconciledTotals.total - bill.totals.total) > 1e-6
-      ) {
-        throw new Error('SUPPLIER_BILL_FINALISE_TOTALS_MISMATCH');
-      }
-
-      if (bill.sourcePurchaseOrderId) {
-        const sourcePurchaseOrder = this.getPurchaseOrderById(bill.sourcePurchaseOrderId);
-        if (!sourcePurchaseOrder) {
-          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_NOT_FOUND');
-        }
-        if (sourcePurchaseOrder.supplierId !== bill.supplierId) {
-          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_SUPPLIER_MISMATCH');
+        if (!bill.lineItems || bill.lineItems.length === 0) {
+          throw new Error('SUPPLIER_BILL_FINALISE_EMPTY_LINE_ITEMS');
         }
 
-        const sourcePurchaseOrderLineMap = new Map(
-          sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
-        );
-        let projectedSupplierBillTotal = 0;
+        const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(bill.supplierId);
+        if (!supplier) {
+          throw new Error('SUPPLIER_BILL_FINALISE_SUPPLIER_NOT_FOUND');
+        }
+
         for (const lineItem of bill.lineItems) {
-          if (!lineItem.sourcePurchaseOrderLineItemId) {
-            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_REQUIRED');
+          if (lineItem.quantity <= 0) {
+            throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_QUANTITY');
           }
-          const sourceLine = sourcePurchaseOrderLineMap.get(lineItem.sourcePurchaseOrderLineItemId);
-          if (!sourceLine) {
-            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_INVALID');
+          if (lineItem.unitPrice < 0) {
+            throw new Error('SUPPLIER_BILL_FINALISE_INVALID_LINE_UNIT_PRICE');
+          }
+        }
+
+        const reconciledTotals = calculateTotals(bill.lineItems).totals;
+        if (
+          Math.abs(reconciledTotals.subtotal - bill.totals.subtotal) > 1e-6 ||
+          Math.abs(reconciledTotals.gstTotal - bill.totals.gstTotal) > 1e-6 ||
+          Math.abs(reconciledTotals.total - bill.totals.total) > 1e-6
+        ) {
+          throw new Error('SUPPLIER_BILL_FINALISE_TOTALS_MISMATCH');
+        }
+
+        if (bill.sourcePurchaseOrderId) {
+          const sourcePurchaseOrder = this.getPurchaseOrderById(bill.sourcePurchaseOrderId);
+          if (!sourcePurchaseOrder) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_NOT_FOUND');
+          }
+          if (sourcePurchaseOrder.supplierId !== bill.supplierId) {
+            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_SUPPLIER_MISMATCH');
           }
 
-          const otherBillsSummary = db
+          const sourcePurchaseOrderLineMap = new Map(
+            sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+          );
+          let projectedSupplierBillTotal = 0;
+          for (const lineItem of bill.lineItems) {
+            if (!lineItem.sourcePurchaseOrderLineItemId) {
+              throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_REQUIRED');
+            }
+            const sourceLine = sourcePurchaseOrderLineMap.get(lineItem.sourcePurchaseOrderLineItemId);
+            if (!sourceLine) {
+              throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_INVALID');
+            }
+
+            const otherBillsSummary = db
+              .prepare(
+                `SELECT
+                   coalesce(sum(li.quantity), 0) AS total_quantity,
+                   coalesce(sum(li.line_total), 0) AS total_amount
+                 FROM supplier_bill_line_items li
+                 INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+                 WHERE b.source_purchase_order_id = ?
+                   AND b.id != ?
+                   AND li.source_purchase_order_line_item_id = ?`,
+              )
+              .get(bill.sourcePurchaseOrderId, billId, lineItem.sourcePurchaseOrderLineItemId) as {
+              total_quantity: number;
+              total_amount: number;
+            };
+
+            const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+            if (lineItem.quantity > remainingLineQuantity + 1e-9) {
+              throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
+            }
+
+            const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+            const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+            const lineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
+            if (lineAmount > remainingLineAmount + 1e-6) {
+              throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+            }
+            projectedSupplierBillTotal += lineAmount;
+          }
+
+          const otherLinkedBillsTotal = db
             .prepare(
-              `SELECT
-                 coalesce(sum(li.quantity), 0) AS total_quantity,
-                 coalesce(sum(li.line_total), 0) AS total_amount
+              `SELECT coalesce(sum(li.line_total), 0) AS total
                FROM supplier_bill_line_items li
                INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
                WHERE b.source_purchase_order_id = ?
-                 AND b.id != ?
-                 AND li.source_purchase_order_line_item_id = ?`,
+                 AND b.id != ?`,
             )
-            .get(bill.sourcePurchaseOrderId, id, lineItem.sourcePurchaseOrderLineItemId) as {
-            total_quantity: number;
-            total_amount: number;
-          };
-
-          const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
-          if (lineItem.quantity > remainingLineQuantity + 1e-9) {
-            throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
-          }
-
-          const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
-          const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
-          const lineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
-          if (lineAmount > remainingLineAmount + 1e-6) {
+            .get(bill.sourcePurchaseOrderId, billId) as { total: number };
+          if (otherLinkedBillsTotal.total + projectedSupplierBillTotal > sourcePurchaseOrder.totals.total + 1e-6) {
             throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
           }
-          projectedSupplierBillTotal += lineAmount;
         }
 
-        const otherLinkedBillsTotal = db
-          .prepare(
-            `SELECT coalesce(sum(li.line_total), 0) AS total
-             FROM supplier_bill_line_items li
-             INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
-             WHERE b.source_purchase_order_id = ?
-               AND b.id != ?`,
-          )
-          .get(bill.sourcePurchaseOrderId, id) as { total: number };
-        if (otherLinkedBillsTotal.total + projectedSupplierBillTotal > sourcePurchaseOrder.totals.total + 1e-6) {
-          throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+        const billNumber = allocateDocumentNumber('supplier_bill_sequences', 'BILL');
+        const now = nowIso();
+        upsertDocument(
+          billId,
+          `${billNumber} ${bill.supplierReference ?? ''}`.trim(),
+          'supplier_bill',
+          `${billNumber} ${bill.currency} ${bill.notes ?? ''}`,
+        );
+        try {
+          db.prepare(
+            `UPDATE supplier_bills
+             SET status = 'Finalised', bill_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
+             WHERE id = ?`,
+          ).run(billNumber, now, billId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('uq_supplier_bills_number_not_null') ||
+            message.includes('UNIQUE constraint failed: supplier_bills.bill_number')
+          ) {
+            throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+          }
+          throw error;
         }
-      }
 
-      const billNumber = allocateDocumentNumber('supplier_bill_sequences', 'BILL');
-      const now = nowIso();
-      upsertDocument(
-        id,
-        `${billNumber} ${bill.supplierReference ?? ''}`.trim(),
-        'supplier_bill',
-        `${billNumber} ${bill.currency} ${bill.notes ?? ''}`,
-      );
-      try {
-        db.prepare(
-          `UPDATE supplier_bills
-           SET status = 'Finalised', bill_number = ?, payment_state = 'Awaiting Payment', updated_at = ?
-           WHERE id = ?`,
-        ).run(billNumber, now, id);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_supplier_bills_number_not_null') ||
-          message.includes('UNIQUE constraint failed: supplier_bills.bill_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+        const finalised = this.getSupplierBillById(billId);
+        if (!finalised) {
+          throw new Error('Failed to load finalised supplier bill');
         }
-        throw error;
-      }
+        assertNoInjectedFailure('finalise_supplier_bill_after_update');
+        timeline('supplier_bill.finalised', billId, {
+          billNumber,
+          total: finalised.totals.total,
+          linkageType: finalised.sourcePurchaseOrderId ? 'purchase_order_linked' : 'standalone',
+          sourcePurchaseOrderId: finalised.sourcePurchaseOrderId,
+          sourcePurchaseOrderNumber: finalised.sourcePurchaseOrderNumber,
+        });
 
-      const finalised = this.getSupplierBillById(id);
-      if (!finalised) {
-        throw new Error('Failed to load finalised supplier bill');
-      }
-      timeline('supplier_bill.finalised', id, {
-        billNumber,
-        total: finalised.totals.total,
-        linkageType: finalised.sourcePurchaseOrderId ? 'purchase_order_linked' : 'standalone',
-        sourcePurchaseOrderId: finalised.sourcePurchaseOrderId,
-        sourcePurchaseOrderNumber: finalised.sourcePurchaseOrderNumber,
-      });
-
-      return mapSupplierBillRow(db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow);
+        return mapSupplierBillRow(
+          db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(billId) as DbSupplierBillRow,
+        );
+      })(id);
     },
 
     listSupplierBills(filter) {
@@ -2920,175 +3008,182 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createPurchaseOrderDraft(input) {
-      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
-      if (!supplier) {
-        throw new Error('Supplier not found');
-      }
+      return db.transaction((txInput: CreatePurchaseOrderDraftInput) =>
+        withIdempotentCreate<PurchaseOrder>('createPurchaseOrderDraft', txInput, () => {
+          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
+          if (!supplier) {
+            throw new Error('Supplier not found');
+          }
 
-      const { totals, calculatedItems } = calculateTotals(input.lineItems);
-      const id = randomUUID();
-      const now = nowIso();
-      const purchaseOrderNumber = allocateDocumentNumber('purchase_order_sequences', 'PO');
-      try {
-        db.prepare(
-          `INSERT INTO purchase_orders (
+          const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+          const id = randomUUID();
+          const now = nowIso();
+          const purchaseOrderNumber = allocateDocumentNumber('purchase_order_sequences', 'PO');
+          try {
+            db.prepare(
+              `INSERT INTO purchase_orders (
+                id,
+                purchase_order_number,
+                supplier_id,
+                issue_date,
+                expected_delivery_date,
+                supplier_reference,
+                currency,
+                notes,
+                status,
+                close_reason,
+                closed_date,
+                closed_by,
+                subtotal,
+                gst_total,
+                total,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              id,
+              purchaseOrderNumber,
+              txInput.supplierId,
+              txInput.issueDate,
+              txInput.expectedDeliveryDate ?? null,
+              txInput.supplierReference ?? null,
+              txInput.currency,
+              txInput.notes ?? null,
+              'Draft',
+              null,
+              null,
+              null,
+              totals.subtotal,
+              totals.gstTotal,
+              totals.total,
+              now,
+              now,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              message.includes('uq_purchase_orders_supplier_reference_not_null') ||
+              message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+            ) {
+              throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+            }
+            if (
+              message.includes('purchase_orders.purchase_order_number') ||
+              message.includes('uq_purchase_orders_number')
+            ) {
+              throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+            }
+            throw error;
+          }
+
+          const insertLine = db.prepare(
+            `INSERT INTO purchase_order_line_items (
+              id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          for (const item of calculatedItems) {
+            insertLine.run(
+              randomUUID(),
+              id,
+              item.description,
+              item.quantity,
+              item.unitPrice,
+              item.gstApplicable ? 1 : 0,
+              item.lineSubtotal,
+              item.lineGst,
+              item.lineTotal,
+            );
+          }
+
+          assertNoInjectedFailure('create_purchase_order_after_line_items');
+          upsertDocument(
             id,
-            purchase_order_number,
-            supplier_id,
-            issue_date,
-            expected_delivery_date,
-            supplier_reference,
-            currency,
-            notes,
-            status,
-            close_reason,
-            closed_date,
-            closed_by,
-            subtotal,
-            gst_total,
-            total,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          purchaseOrderNumber,
-          input.supplierId,
-          input.issueDate,
-          input.expectedDeliveryDate ?? null,
-          input.supplierReference ?? null,
-          input.currency,
-          input.notes ?? null,
-          'Draft',
-          null,
-          null,
-          null,
-          totals.subtotal,
-          totals.gstTotal,
-          totals.total,
-          now,
-          now,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_purchase_orders_supplier_reference_not_null') ||
-          message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
-        ) {
-          throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
-        }
-        if (
-          message.includes('purchase_orders.purchase_order_number') ||
-          message.includes('uq_purchase_orders_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
-        }
-        throw error;
-      }
+            `${purchaseOrderNumber} ${txInput.supplierReference ?? ''}`.trim(),
+            'purchase_order',
+            `${purchaseOrderNumber} ${txInput.currency} ${txInput.notes ?? ''} ${txInput.supplierReference ?? ''}`,
+          );
+          timeline('purchase_order.created', id, {
+            purchaseOrderNumber,
+            supplierId: txInput.supplierId,
+            total: totals.total,
+          });
 
-      const insertLine = db.prepare(
-        `INSERT INTO purchase_order_line_items (
-          id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const item of calculatedItems) {
-        insertLine.run(
-          randomUUID(),
-          id,
-          item.description,
-          item.quantity,
-          item.unitPrice,
-          item.gstApplicable ? 1 : 0,
-          item.lineSubtotal,
-          item.lineGst,
-          item.lineTotal,
-        );
-      }
-
-      upsertDocument(
-        id,
-        `${purchaseOrderNumber} ${input.supplierReference ?? ''}`.trim(),
-        'purchase_order',
-        `${purchaseOrderNumber} ${input.currency} ${input.notes ?? ''} ${input.supplierReference ?? ''}`,
-      );
-      timeline('purchase_order.created', id, {
-        purchaseOrderNumber,
-        supplierId: input.supplierId,
-        total: totals.total,
-      });
-
-      const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
-      return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
+          const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
+          return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
+        }),
+      )(input);
     },
 
     updatePurchaseOrderDraft(id, input) {
-      const existing = db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(id) as
-        | { status: PurchaseOrderStatus }
-        | undefined;
-      if (!existing) {
-        throw new Error('Purchase order not found');
-      }
-      if (existing.status !== 'Draft') {
-        throw new Error('Only draft purchase orders can be edited');
-      }
-
-      const { totals, calculatedItems } = calculateTotals(input.lineItems);
-      try {
-        db.prepare(
-          `UPDATE purchase_orders
-           SET issue_date = ?, expected_delivery_date = ?, supplier_reference = ?, currency = ?, notes = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
-           WHERE id = ?`,
-        ).run(
-          input.issueDate,
-          input.expectedDeliveryDate ?? null,
-          input.supplierReference ?? null,
-          input.currency,
-          input.notes ?? null,
-          totals.subtotal,
-          totals.gstTotal,
-          totals.total,
-          nowIso(),
-          id,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_purchase_orders_supplier_reference_not_null') ||
-          message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
-        ) {
-          throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+      return db.transaction((purchaseOrderId: string, txInput: UpdatePurchaseOrderDraftInput) => {
+        const existing = db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as
+          | { status: PurchaseOrderStatus }
+          | undefined;
+        if (!existing) {
+          throw new Error('Purchase order not found');
         }
-        throw error;
-      }
+        if (existing.status !== 'Draft') {
+          throw new Error('Only draft purchase orders can be edited');
+        }
 
-      db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(id);
-      const insertLine = db.prepare(
-        `INSERT INTO purchase_order_line_items (
-          id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const item of calculatedItems) {
-        insertLine.run(
-          randomUUID(),
-          id,
-          item.description,
-          item.quantity,
-          item.unitPrice,
-          item.gstApplicable ? 1 : 0,
-          item.lineSubtotal,
-          item.lineGst,
-          item.lineTotal,
+        const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+        try {
+          db.prepare(
+            `UPDATE purchase_orders
+             SET issue_date = ?, expected_delivery_date = ?, supplier_reference = ?, currency = ?, notes = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ?
+             WHERE id = ?`,
+          ).run(
+            txInput.issueDate,
+            txInput.expectedDeliveryDate ?? null,
+            txInput.supplierReference ?? null,
+            txInput.currency,
+            txInput.notes ?? null,
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            nowIso(),
+            purchaseOrderId,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('uq_purchase_orders_supplier_reference_not_null') ||
+            message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+          ) {
+            throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
+          }
+          throw error;
+        }
+
+        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(purchaseOrderId);
+        const insertLine = db.prepare(
+          `INSERT INTO purchase_order_line_items (
+            id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
-      }
+        for (const item of calculatedItems) {
+          insertLine.run(
+            randomUUID(),
+            purchaseOrderId,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
+        }
 
-      const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
-      upsertDocument(
-        id,
-        `${row.purchase_order_number} ${row.supplier_reference ?? ''}`.trim(),
-        'purchase_order',
-        `${row.purchase_order_number} ${row.currency} ${row.notes ?? ''} ${row.supplier_reference ?? ''}`,
-      );
-      return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
+        const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow;
+        upsertDocument(
+          purchaseOrderId,
+          `${row.purchase_order_number} ${row.supplier_reference ?? ''}`.trim(),
+          'purchase_order',
+          `${row.purchase_order_number} ${row.currency} ${row.notes ?? ''} ${row.supplier_reference ?? ''}`,
+        );
+        return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
+      })(id, input);
     },
 
     getPurchaseOrderById(id) {
@@ -3120,25 +3215,34 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     approvePurchaseOrder(id) {
-      const order = this.getPurchaseOrderById(id);
-      if (!order) {
-        throw new Error('Purchase order not found');
-      }
-      if (order.status === 'Approved') {
-        throw new Error('PURCHASE_ORDER_ALREADY_APPROVED');
-      }
-      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Approved');
-      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Approved', nowIso(), id);
-      timeline('purchase_order.approved', id, {
-        purchaseOrderNumber: order.purchaseOrderNumber,
-      });
-      return withPurchaseOrderBillingSummary(
-        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
-      );
+      return db.transaction((purchaseOrderId: string) => {
+        const order = this.getPurchaseOrderById(purchaseOrderId);
+        if (!order) {
+          throw new Error('Purchase order not found');
+        }
+        if (order.status === 'Approved') {
+          throw new Error('PURCHASE_ORDER_ALREADY_APPROVED');
+        }
+        assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Approved');
+        db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run(
+          'Approved',
+          nowIso(),
+          purchaseOrderId,
+        );
+        timeline('purchase_order.approved', purchaseOrderId, {
+          purchaseOrderNumber: order.purchaseOrderNumber,
+        });
+        return withPurchaseOrderBillingSummary(
+          mapPurchaseOrderRow(
+            db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
+          ),
+        );
+      })(id);
     },
 
     closePurchaseOrder(id, input) {
-      const order = this.getPurchaseOrderById(id);
+      return db.transaction((purchaseOrderId: string, closeInput?: ClosePurchaseOrderInput) => {
+      const order = this.getPurchaseOrderById(purchaseOrderId);
       if (!order) {
         throw new Error('Purchase order not found');
       }
@@ -3153,9 +3257,9 @@ export function createDatabase(dbPath: string): AppDatabase {
       }
       assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Closed');
 
-      const closeReason = input?.closeReason?.trim();
-      const closedDate = input?.closedDate;
-      const closedBy = input?.closedBy?.trim() || 'system';
+      const closeReason = closeInput?.closeReason?.trim();
+      const closedDate = closeInput?.closedDate;
+      const closedBy = closeInput?.closedBy?.trim() || 'system';
 
       if (order.billingStatus !== 'fully_billed') {
         if (!closeReason) {
@@ -3169,7 +3273,7 @@ export function createDatabase(dbPath: string): AppDatabase {
       const persistedClosedDate = closedDate ?? nowIso().slice(0, 10);
       db.prepare(
         'UPDATE purchase_orders SET status = ?, close_reason = ?, closed_date = ?, closed_by = ?, updated_at = ? WHERE id = ?',
-      ).run('Closed', closeReason ?? null, persistedClosedDate, closedBy, nowIso(), id);
+      ).run('Closed', closeReason ?? null, persistedClosedDate, closedBy, nowIso(), purchaseOrderId);
 
       const closureType =
         order.billingStatus === 'fully_billed'
@@ -3177,7 +3281,7 @@ export function createDatabase(dbPath: string): AppDatabase {
           : order.billingStatus === 'partially_billed'
             ? 'partially_billed_closure'
             : 'unbilled_closure';
-      timeline('purchase_order.closed', id, {
+      timeline('purchase_order.closed', purchaseOrderId, {
         purchaseOrderNumber: order.purchaseOrderNumber,
         closureType,
         billingStatus: order.billingStatus,
@@ -3188,23 +3292,34 @@ export function createDatabase(dbPath: string): AppDatabase {
         closedBy,
       });
       return withPurchaseOrderBillingSummary(
-        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
+        mapPurchaseOrderRow(
+          db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
+        ),
       );
+      })(id, input);
     },
 
     cancelPurchaseOrder(id) {
-      const order = this.getPurchaseOrderById(id);
-      if (!order) {
-        throw new Error('Purchase order not found');
-      }
-      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Cancelled');
-      db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run('Cancelled', nowIso(), id);
-      timeline('purchase_order.cancelled', id, {
-        purchaseOrderNumber: order.purchaseOrderNumber,
-      });
-      return withPurchaseOrderBillingSummary(
-        mapPurchaseOrderRow(db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow),
-      );
+      return db.transaction((purchaseOrderId: string) => {
+        const order = this.getPurchaseOrderById(purchaseOrderId);
+        if (!order) {
+          throw new Error('Purchase order not found');
+        }
+        assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Cancelled');
+        db.prepare('UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?').run(
+          'Cancelled',
+          nowIso(),
+          purchaseOrderId,
+        );
+        timeline('purchase_order.cancelled', purchaseOrderId, {
+          purchaseOrderNumber: order.purchaseOrderNumber,
+        });
+        return withPurchaseOrderBillingSummary(
+          mapPurchaseOrderRow(
+            db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
+          ),
+        );
+      })(id);
     },
 
     listPurchaseOrders(filter) {
@@ -3246,206 +3361,212 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     createSupplierPayment(input) {
-      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(input.supplierId);
-      if (!supplier) {
-        throw new Error('Supplier not found');
-      }
-      if (input.allocations.length === 0) {
-        throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED');
-      }
-
-      const allocationBillSet = new Set(input.allocations.map((allocation) => allocation.supplierBillId));
-      if (allocationBillSet.size !== input.allocations.length) {
-        throw new Error('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL');
-      }
-
-      const allocationTotal = input.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
-      if (allocationTotal > input.amount) {
-        throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
-      }
-
-      for (const allocation of input.allocations) {
-        if (allocation.amount <= 0) {
-          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_AMOUNT_INVALID');
-        }
-
-        const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as
-          | DbSupplierBillRow
-          | undefined;
-        if (!bill) {
-          throw new Error('Supplier bill not found');
-        }
-        if (bill.status !== 'Finalised') {
-          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_REQUIRES_FINALISED_BILL');
-        }
-        if (bill.supplier_id !== input.supplierId) {
-          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SUPPLIER_MISMATCH');
-        }
-        if (bill.payment_state === 'Cancelled') {
-          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN');
-        }
-
-        if (bill.source_purchase_order_id) {
-          const sourcePurchaseOrder = this.getPurchaseOrderById(bill.source_purchase_order_id);
-          if (!sourcePurchaseOrder) {
-            throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_NOT_FOUND');
+      return db.transaction((txInput: CreateSupplierPaymentInput) =>
+        withIdempotentCreate<SupplierBillPayment>('createSupplierPayment', txInput, () => {
+          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
+          if (!supplier) {
+            throw new Error('Supplier not found');
           }
-          if (sourcePurchaseOrder.supplierId !== bill.supplier_id) {
-            throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_SUPPLIER_MISMATCH');
+          if (txInput.allocations.length === 0) {
+            throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED');
           }
 
-          const sourcePurchaseOrderLineMap = new Map(
-            sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
-          );
-          const billLineRows = db
-            .prepare(
-              `SELECT source_purchase_order_line_item_id, quantity, line_total
-               FROM supplier_bill_line_items
-               WHERE supplier_bill_id = ?`,
-            )
-            .all(allocation.supplierBillId) as Array<{
-            source_purchase_order_line_item_id: string | null;
-            quantity: number;
-            line_total: number;
-          }>;
+          const allocationBillSet = new Set(txInput.allocations.map((allocation) => allocation.supplierBillId));
+          if (allocationBillSet.size !== txInput.allocations.length) {
+            throw new Error('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL');
+          }
 
-          for (const billLine of billLineRows) {
-            if (!billLine.source_purchase_order_line_item_id) {
-              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_REQUIRED');
-            }
-            const sourceLine = sourcePurchaseOrderLineMap.get(billLine.source_purchase_order_line_item_id);
-            if (!sourceLine) {
-              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_INVALID');
+          const allocationTotal = txInput.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+          if (allocationTotal > txInput.amount) {
+            throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
+          }
+
+          for (const allocation of txInput.allocations) {
+            if (allocation.amount <= 0) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_AMOUNT_INVALID');
             }
 
-            const otherBillsSummary = db
+            const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as
+              | DbSupplierBillRow
+              | undefined;
+            if (!bill) {
+              throw new Error('Supplier bill not found');
+            }
+            if (bill.status !== 'Finalised') {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_REQUIRES_FINALISED_BILL');
+            }
+            if (bill.supplier_id !== txInput.supplierId) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SUPPLIER_MISMATCH');
+            }
+            if (bill.payment_state === 'Cancelled') {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_FOR_CANCELLED_BILL_FORBIDDEN');
+            }
+
+            if (bill.source_purchase_order_id) {
+              const sourcePurchaseOrder = this.getPurchaseOrderById(bill.source_purchase_order_id);
+              if (!sourcePurchaseOrder) {
+                throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_NOT_FOUND');
+              }
+              if (sourcePurchaseOrder.supplierId !== bill.supplier_id) {
+                throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_SUPPLIER_MISMATCH');
+              }
+
+              const sourcePurchaseOrderLineMap = new Map(
+                sourcePurchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+              );
+              const billLineRows = db
+                .prepare(
+                  `SELECT source_purchase_order_line_item_id, quantity, line_total
+                   FROM supplier_bill_line_items
+                   WHERE supplier_bill_id = ?`,
+                )
+                .all(allocation.supplierBillId) as Array<{
+                source_purchase_order_line_item_id: string | null;
+                quantity: number;
+                line_total: number;
+              }>;
+
+              for (const billLine of billLineRows) {
+                if (!billLine.source_purchase_order_line_item_id) {
+                  throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_REQUIRED');
+                }
+                const sourceLine = sourcePurchaseOrderLineMap.get(billLine.source_purchase_order_line_item_id);
+                if (!sourceLine) {
+                  throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_INVALID');
+                }
+
+                const otherBillsSummary = db
+                  .prepare(
+                    `SELECT
+                       coalesce(sum(li.quantity), 0) AS total_quantity,
+                       coalesce(sum(li.line_total), 0) AS total_amount
+                     FROM supplier_bill_line_items li
+                     INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
+                     WHERE b.source_purchase_order_id = ?
+                       AND b.id != ?
+                       AND li.source_purchase_order_line_item_id = ?`,
+                  )
+                  .get(
+                    bill.source_purchase_order_id,
+                    allocation.supplierBillId,
+                    billLine.source_purchase_order_line_item_id,
+                  ) as { total_quantity: number; total_amount: number };
+
+                const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+                if (billLine.quantity > remainingLineQuantity + 1e-9) {
+                  throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
+                }
+
+                const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+                const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+                if (billLine.line_total > remainingLineAmount + 1e-6) {
+                  throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+                }
+              }
+            }
+
+            const existingAllocated = db
               .prepare(
-                `SELECT
-                   coalesce(sum(li.quantity), 0) AS total_quantity,
-                   coalesce(sum(li.line_total), 0) AS total_amount
-                 FROM supplier_bill_line_items li
-                 INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
-                 WHERE b.source_purchase_order_id = ?
-                   AND b.id != ?
-                   AND li.source_purchase_order_line_item_id = ?`,
+                `SELECT coalesce(sum(spa.amount), 0) AS total
+                 FROM supplier_payment_allocations spa
+                 WHERE spa.supplier_bill_id = ?`,
               )
-              .get(bill.source_purchase_order_id, allocation.supplierBillId, billLine.source_purchase_order_line_item_id) as {
-              total_quantity: number;
-              total_amount: number;
-            };
-
-            const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
-            if (billLine.quantity > remainingLineQuantity + 1e-9) {
-              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
-            }
-
-            const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
-            const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
-            if (billLine.line_total > remainingLineAmount + 1e-6) {
-              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
+              .get(allocation.supplierBillId) as { total: number };
+            const outstanding = bill.total - existingAllocated.total;
+            if (allocation.amount > outstanding) {
+              throw new Error('SUPPLIER_PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
             }
           }
-        }
 
-        const existingAllocated = db
-          .prepare(
-            `SELECT coalesce(sum(spa.amount), 0) AS total
-             FROM supplier_payment_allocations spa
-             WHERE spa.supplier_bill_id = ?`,
-          )
-          .get(allocation.supplierBillId) as { total: number };
-        const outstanding = bill.total - existingAllocated.total;
-        if (allocation.amount > outstanding) {
-          throw new Error('SUPPLIER_PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING');
-        }
-      }
+          const id = randomUUID();
+          const paymentNumber = allocateDocumentNumber('supplier_payment_sequences', 'SPAY');
+          const now = nowIso();
 
-      const id = randomUUID();
-      const paymentNumber = allocateDocumentNumber('supplier_payment_sequences', 'SPAY');
-      const now = nowIso();
+          try {
+            db.prepare(
+              `INSERT INTO supplier_payments (
+                id,
+                payment_number,
+                supplier_id,
+                payment_date,
+                payment_method,
+                reference,
+                amount,
+                notes,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              id,
+              paymentNumber,
+              txInput.supplierId,
+              txInput.paymentDate,
+              txInput.paymentMethod,
+              txInput.reference,
+              txInput.amount,
+              txInput.notes ?? null,
+              now,
+              now,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              message.includes('supplier_payments.payment_number') ||
+              message.includes('uq_supplier_payments_number')
+            ) {
+              throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
+            }
+            throw error;
+          }
 
-      try {
-        db.prepare(
-          `INSERT INTO supplier_payments (
+          const insertAllocation = db.prepare(
+            `INSERT INTO supplier_payment_allocations (id, supplier_payment_id, supplier_bill_id, amount, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          );
+          for (const allocation of txInput.allocations) {
+            insertAllocation.run(randomUUID(), id, allocation.supplierBillId, allocation.amount, now);
+          }
+
+          assertNoInjectedFailure('create_supplier_payment_after_allocations');
+          for (const allocation of txInput.allocations) {
+            const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as DbSupplierBillRow;
+            const totalAllocated = db
+              .prepare(
+                `SELECT coalesce(sum(spa.amount), 0) AS total
+                 FROM supplier_payment_allocations spa
+                 WHERE spa.supplier_bill_id = ?`,
+              )
+              .get(allocation.supplierBillId) as { total: number };
+            const nextState: PaymentState = totalAllocated.total >= bill.total ? 'Paid' : 'Awaiting Payment';
+            db.prepare('UPDATE supplier_bills SET payment_state = ?, updated_at = ? WHERE id = ?').run(
+              nextState,
+              nowIso(),
+              allocation.supplierBillId,
+            );
+          }
+
+          upsertDocument(
             id,
-            payment_number,
-            supplier_id,
-            payment_date,
-            payment_method,
-            reference,
-            amount,
-            notes,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          paymentNumber,
-          input.supplierId,
-          input.paymentDate,
-          input.paymentMethod,
-          input.reference,
-          input.amount,
-          input.notes ?? null,
-          now,
-          now,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('supplier_payments.payment_number') ||
-          message.includes('uq_supplier_payments_number')
-        ) {
-          throw new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
-        }
-        throw error;
-      }
+            `${paymentNumber} ${txInput.reference}`,
+            'receipt',
+            `${paymentNumber} ${txInput.paymentMethod} ${txInput.reference} ${txInput.notes ?? ''}`,
+          );
+          timeline('supplier_payment.created', id, {
+            supplierId: txInput.supplierId,
+            paymentNumber,
+            amount: txInput.amount,
+          });
+          timeline('supplier_payment.allocated', id, {
+            allocations: txInput.allocations,
+            allocationTotal,
+          });
 
-      const insertAllocation = db.prepare(
-        `INSERT INTO supplier_payment_allocations (id, supplier_payment_id, supplier_bill_id, amount, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      );
-      for (const allocation of input.allocations) {
-        insertAllocation.run(randomUUID(), id, allocation.supplierBillId, allocation.amount, now);
-      }
-
-      for (const allocation of input.allocations) {
-        const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as DbSupplierBillRow;
-        const totalAllocated = db
-          .prepare(
-            `SELECT coalesce(sum(spa.amount), 0) AS total
-             FROM supplier_payment_allocations spa
-             WHERE spa.supplier_bill_id = ?`,
-          )
-          .get(allocation.supplierBillId) as { total: number };
-        const nextState: PaymentState = totalAllocated.total >= bill.total ? 'Paid' : 'Awaiting Payment';
-        db.prepare('UPDATE supplier_bills SET payment_state = ?, updated_at = ? WHERE id = ?').run(
-          nextState,
-          nowIso(),
-          allocation.supplierBillId,
-        );
-      }
-
-      upsertDocument(
-        id,
-        `${paymentNumber} ${input.reference}`,
-        'receipt',
-        `${paymentNumber} ${input.paymentMethod} ${input.reference} ${input.notes ?? ''}`,
-      );
-      timeline('supplier_payment.created', id, {
-        supplierId: input.supplierId,
-        paymentNumber,
-        amount: input.amount,
-      });
-      timeline('supplier_payment.allocated', id, {
-        allocations: input.allocations,
-        allocationTotal,
-      });
-
-      const paymentRow = db
-        .prepare('SELECT * FROM supplier_payments WHERE id = ?')
-        .get(id) as DbSupplierPaymentRow;
-      return mapSupplierPaymentRow(paymentRow, getAllocationsForSupplierPayment(id));
+          const paymentRow = db
+            .prepare('SELECT * FROM supplier_payments WHERE id = ?')
+            .get(id) as DbSupplierPaymentRow;
+          return mapSupplierPaymentRow(paymentRow, getAllocationsForSupplierPayment(id));
+        }),
+      )(input);
     },
 
     getSupplierPaymentById(id) {

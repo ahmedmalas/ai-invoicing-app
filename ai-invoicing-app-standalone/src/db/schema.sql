@@ -353,6 +353,14 @@ CREATE TABLE IF NOT EXISTS job_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS idempotency_requests (
+  operation TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (operation, fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS timeline_events (
   id TEXT PRIMARY KEY,
   event_key TEXT,
@@ -454,6 +462,7 @@ ON supplier_bills(bill_number)
 WHERE bill_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entity_order ON timeline_events(entity_type, entity_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_requests(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);
 
