@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { z } from 'zod';
 
 import type {
   BrandingProfile,
@@ -603,6 +604,73 @@ interface TimelineQueryOptions {
   offset?: number;
 }
 
+const PLATFORM_SNAPSHOT_VERSION = 1;
+
+const PLATFORM_SNAPSHOT_TABLES = [
+  'business_profile',
+  'preferences',
+  'customers',
+  'suppliers',
+  'roles',
+  'users',
+  'user_role_links',
+  'teams',
+  'team_memberships',
+  'documents',
+  'invoices',
+  'invoice_line_items',
+  'purchase_orders',
+  'purchase_order_line_items',
+  'supplier_bills',
+  'supplier_bill_line_items',
+  'jobs',
+  'job_document_links',
+  'credit_notes',
+  'customer_payments',
+  'payment_allocations',
+  'supplier_payments',
+  'supplier_payment_allocations',
+  'invoice_snapshots',
+  'reminder_states',
+  'invoice_sequences',
+  'credit_note_sequences',
+  'payment_sequences',
+  'supplier_bill_sequences',
+  'supplier_payment_sequences',
+  'purchase_order_sequences',
+  'job_sequences',
+  'timeline_events',
+] as const;
+
+type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
+type PlatformSnapshotRow = Record<string, unknown>;
+
+export interface PlatformSnapshot {
+  version: number;
+  products: PlatformSnapshotRow[];
+  derived: {
+    customerStatements: Array<{
+      customerId: string;
+      statement: CustomerStatementReport;
+    }>;
+  };
+  entities: Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
+}
+
+const platformSnapshotSchema = z.object({
+  version: z.number().int(),
+  products: z.array(z.record(z.string(), z.unknown())),
+  derived: z.object({
+    customerStatements: z.array(
+      z.object({
+        customerId: z.string().uuid(),
+        statement: z.unknown(),
+      }),
+    ),
+  }),
+  entities: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
+});
+
 export interface AppDatabase {
   close(): void;
   createCustomer(input: CreateCustomerInput): Customer;
@@ -682,6 +750,8 @@ export interface AppDatabase {
     options?: TimelineQueryOptions,
   ): Array<Record<string, unknown>>;
   search(query: string, options?: SearchQueryOptions): SearchResults;
+  exportPlatformSnapshot(): PlatformSnapshot;
+  restorePlatformSnapshot(snapshot: unknown): void;
 }
 
 function nowIso(): string {
@@ -1402,6 +1472,153 @@ export function createDatabase(dbPath: string): AppDatabase {
       nextRole: nextRole ?? null,
     });
   }
+
+  function getTableColumns(table: PlatformSnapshotTable): string[] {
+    return (
+      db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as Array<{ name: string }>
+    ).map((column) => column.name);
+  }
+
+  function snapshotTableRows(table: PlatformSnapshotTable): PlatformSnapshotRow[] {
+    return db.prepare(`SELECT * FROM ${table} ORDER BY rowid ASC`).all() as PlatformSnapshotRow[];
+  }
+
+  function parseAndValidateSnapshot(snapshot: unknown): PlatformSnapshot {
+    let parsed: z.infer<typeof platformSnapshotSchema>;
+    try {
+      parsed = platformSnapshotSchema.parse(snapshot);
+    } catch {
+      throw new Error('BACKUP_RESTORE_MALFORMED_PAYLOAD');
+    }
+    if (parsed.version !== PLATFORM_SNAPSHOT_VERSION) {
+      throw new Error('BACKUP_RESTORE_INCOMPATIBLE_VERSION');
+    }
+
+    const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
+    for (const table of PLATFORM_SNAPSHOT_TABLES) {
+      const rows = parsed.entities[table];
+      if (!Array.isArray(rows)) {
+        throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+      }
+      entities[table] = rows.map((row) => ({ ...row }));
+    }
+
+    return {
+      version: parsed.version,
+      products: parsed.products.map((row) => ({ ...row })),
+      derived: {
+        customerStatements: parsed.derived.customerStatements.map((entry) => ({
+          customerId: entry.customerId,
+          statement: entry.statement as CustomerStatementReport,
+        })),
+      },
+      entities,
+    };
+  }
+
+  function assertRestoreTargetIsEmptyOrThrow() {
+    for (const table of PLATFORM_SNAPSHOT_TABLES) {
+      const count = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
+      if (count.count > 0) {
+        throw new Error('BACKUP_RESTORE_TARGET_NOT_EMPTY');
+      }
+    }
+  }
+
+  function insertSnapshotRows(
+    table: PlatformSnapshotTable,
+    rows: PlatformSnapshotRow[],
+    transform?: (row: PlatformSnapshotRow) => PlatformSnapshotRow,
+  ) {
+    if (rows.length < 1) {
+      return;
+    }
+
+    const columns = getTableColumns(table);
+    const statement = db.prepare(
+      `INSERT INTO ${table} (${columns.map((column) => `"${column}"`).join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+    );
+
+    for (const sourceRow of rows) {
+      const row = transform ? transform(sourceRow) : sourceRow;
+      for (const column of columns) {
+        if (!Object.prototype.hasOwnProperty.call(row, column)) {
+          throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+        }
+      }
+      statement.run(...columns.map((column) => row[column] ?? null));
+    }
+  }
+
+  const restorePlatformSnapshot = db.transaction((snapshot: PlatformSnapshot) => {
+    assertRestoreTargetIsEmptyOrThrow();
+
+    insertSnapshotRows('business_profile', snapshot.entities.business_profile);
+    insertSnapshotRows('preferences', snapshot.entities.preferences);
+    insertSnapshotRows('customers', snapshot.entities.customers);
+    insertSnapshotRows('suppliers', snapshot.entities.suppliers);
+    insertSnapshotRows('roles', snapshot.entities.roles);
+    insertSnapshotRows('users', snapshot.entities.users);
+    insertSnapshotRows('user_role_links', snapshot.entities.user_role_links);
+    insertSnapshotRows('teams', snapshot.entities.teams);
+    insertSnapshotRows('team_memberships', snapshot.entities.team_memberships);
+    insertSnapshotRows('documents', snapshot.entities.documents);
+
+    insertSnapshotRows('invoices', snapshot.entities.invoices, (row) => ({ ...row, status: 'Draft' }));
+    insertSnapshotRows('invoice_line_items', snapshot.entities.invoice_line_items);
+    insertSnapshotRows('purchase_orders', snapshot.entities.purchase_orders, (row) => ({ ...row, status: 'Draft' }));
+    insertSnapshotRows('purchase_order_line_items', snapshot.entities.purchase_order_line_items);
+    insertSnapshotRows('supplier_bills', snapshot.entities.supplier_bills, (row) => ({
+      ...row,
+      status: 'Draft',
+    }));
+    insertSnapshotRows('supplier_bill_line_items', snapshot.entities.supplier_bill_line_items);
+
+    insertSnapshotRows('jobs', snapshot.entities.jobs);
+    insertSnapshotRows('job_document_links', snapshot.entities.job_document_links);
+    insertSnapshotRows('credit_notes', snapshot.entities.credit_notes);
+    insertSnapshotRows('customer_payments', snapshot.entities.customer_payments);
+    insertSnapshotRows('payment_allocations', snapshot.entities.payment_allocations);
+    insertSnapshotRows('supplier_payments', snapshot.entities.supplier_payments);
+    insertSnapshotRows('supplier_payment_allocations', snapshot.entities.supplier_payment_allocations);
+
+    insertSnapshotRows('invoice_sequences', snapshot.entities.invoice_sequences);
+    insertSnapshotRows('credit_note_sequences', snapshot.entities.credit_note_sequences);
+    insertSnapshotRows('payment_sequences', snapshot.entities.payment_sequences);
+    insertSnapshotRows('supplier_bill_sequences', snapshot.entities.supplier_bill_sequences);
+    insertSnapshotRows('supplier_payment_sequences', snapshot.entities.supplier_payment_sequences);
+    insertSnapshotRows('purchase_order_sequences', snapshot.entities.purchase_order_sequences);
+    insertSnapshotRows('job_sequences', snapshot.entities.job_sequences);
+
+    for (const row of snapshot.entities.invoices) {
+      if (typeof row.id !== 'string' || typeof row.status !== 'string') {
+        throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+      }
+      db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run(row.status, row.id);
+    }
+    for (const row of snapshot.entities.purchase_orders) {
+      if (typeof row.id !== 'string' || typeof row.status !== 'string') {
+        throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+      }
+      db.prepare('UPDATE purchase_orders SET status = ? WHERE id = ?').run(row.status, row.id);
+    }
+    for (const row of snapshot.entities.supplier_bills) {
+      if (typeof row.id !== 'string' || typeof row.status !== 'string') {
+        throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+      }
+      db.prepare('UPDATE supplier_bills SET status = ? WHERE id = ?').run(row.status, row.id);
+    }
+
+    insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
+    insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
+    insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
+
+    const foreignKeyViolations = db.prepare('PRAGMA foreign_key_check').all() as Array<Record<string, unknown>>;
+    if (foreignKeyViolations.length > 0) {
+      throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
+    }
+  });
 
   return {
     close() {
@@ -4550,6 +4767,36 @@ export function createDatabase(dbPath: string): AppDatabase {
         documents,
         jobs,
       };
+    },
+
+    exportPlatformSnapshot() {
+      const customerIds = (
+        db.prepare('SELECT id FROM customers ORDER BY id ASC').all() as Array<{ id: string }>
+      ).map((row) => row.id);
+
+      const customerStatements = customerIds.map((customerId) => ({
+        customerId,
+        statement: this.getCustomerStatement(customerId, null, null),
+      }));
+
+      const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
+      for (const table of PLATFORM_SNAPSHOT_TABLES) {
+        entities[table] = snapshotTableRows(table);
+      }
+
+      return {
+        version: PLATFORM_SNAPSHOT_VERSION,
+        products: [],
+        derived: {
+          customerStatements,
+        },
+        entities,
+      };
+    },
+
+    restorePlatformSnapshot(snapshot) {
+      const parsedSnapshot = parseAndValidateSnapshot(snapshot);
+      restorePlatformSnapshot(parsedSnapshot);
     },
   };
 }

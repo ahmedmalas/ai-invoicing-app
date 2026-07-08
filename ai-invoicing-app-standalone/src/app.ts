@@ -21,6 +21,7 @@ import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
 import { reportRoutes } from './routes/reports.js';
+import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -76,6 +77,13 @@ export async function buildApp(options: BuildAppOptions) {
           issues: error.issues,
         },
       });
+    }
+
+    if (
+      errorMessage.includes('BACKUP_RESTORE_MALFORMED_PAYLOAD') ||
+      errorMessage.includes('BACKUP_RESTORE_INCOMPLETE_PAYLOAD')
+    ) {
+      return reply.code(400).send(standardizeErrorPayload(400, errorMessage));
     }
 
     if (normalizedMessage.includes('not found') || normalizedMessage.includes('not_found')) {
@@ -189,7 +197,9 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_INVOICE_SNAPSHOT') ||
       errorMessage.includes('IMMUTABLE_FINALISED_INVOICE_DOCUMENT') ||
       errorMessage.includes('Only draft invoices can be edited') ||
-      errorMessage.includes('already finalised')
+      errorMessage.includes('already finalised') ||
+      errorMessage.includes('BACKUP_RESTORE_INCOMPATIBLE_VERSION') ||
+      errorMessage.includes('BACKUP_RESTORE_TARGET_NOT_EMPTY')
     ) {
       return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
@@ -236,6 +246,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   await app.register(healthRoutes);
+  await app.register(platformSnapshotRoutes);
   await app.register(customerRoutes);
   await app.register(businessProfileRoutes);
   await app.register(preferenceRoutes);
