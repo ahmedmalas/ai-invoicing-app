@@ -8,6 +8,7 @@ import {
 } from '../domain/supplier-bills/validation.js';
 import { renderSupplierBillHtml } from '../services/supplier-bill-service.js';
 import { generateSupplierBillPdfBuffer } from '../services/pdf-service.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
   app.post('/supplier-bills', async (request, reply) => {
@@ -38,6 +39,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/supplier-bills', async (request) => {
     const query = listSupplierBillsQuerySchema.parse(request.query);
+    const pagination = parsePagination(request.query);
     const filter: {
       supplierId?: string;
       sourcePurchaseOrderId?: string;
@@ -59,7 +61,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     if (query.status) filter.status = query.status;
     if (query.paymentState) filter.paymentState = query.paymentState;
     return {
-      bills: app.db.listSupplierBills(filter),
+      bills: paginateArray(app.db.listSupplierBills(filter), pagination),
     };
   });
 

@@ -40,26 +40,53 @@ export async function buildApp(options: BuildAppOptions) {
 
   app.decorate('db', db);
 
+  const machineCodeFromMessage = (message: string, fallback: string): string => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return fallback;
+    }
+    const normalized = trimmed
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toUpperCase();
+    return normalized || fallback;
+  };
+
+  const standardizeErrorPayload = (
+    status: number,
+    message: string,
+    details?: unknown,
+  ): { status: number; code: string; message: string; details?: unknown } => ({
+    status,
+    code: machineCodeFromMessage(message, status === 500 ? 'INTERNAL_SERVER_ERROR' : 'API_ERROR'),
+    message,
+    ...(details !== undefined ? { details } : {}),
+  });
+
   app.setErrorHandler((error, _request, reply) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const normalizedMessage = errorMessage.toLowerCase();
 
     if (error instanceof ZodError) {
       return reply.code(400).send({
+        status: 400,
+        code: 'VALIDATION_FAILED',
         message: 'Validation failed',
-        issues: error.issues,
+        details: {
+          issues: error.issues,
+        },
       });
     }
 
     if (normalizedMessage.includes('not found') || normalizedMessage.includes('not_found')) {
-      return reply.code(404).send({ message: errorMessage });
+      return reply.code(404).send(standardizeErrorPayload(404, errorMessage));
     }
 
     if (
       errorMessage.includes('TEAM_PERMISSION_DENIED') ||
       errorMessage.includes('TEAM_OWNER_MODIFICATION_FORBIDDEN')
     ) {
-      return reply.code(403).send({ message: errorMessage });
+      return reply.code(403).send(standardizeErrorPayload(403, errorMessage));
     }
 
     if (
@@ -164,10 +191,44 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('Only draft invoices can be edited') ||
       errorMessage.includes('already finalised')
     ) {
-      return reply.code(409).send({ message: errorMessage });
+      return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
 
-    return reply.code(500).send({ message: 'Internal server error' });
+    return reply.code(500).send(standardizeErrorPayload(500, 'Internal server error'));
+  });
+
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode < 400) {
+      return payload;
+    }
+
+    const normalizePayload = (input: unknown): Record<string, unknown> | null => {
+      if (input && typeof input === 'object' && !Buffer.isBuffer(input)) {
+        return input as Record<string, unknown>;
+      }
+      if (typeof input === 'string') {
+        try {
+          const parsed = JSON.parse(input) as unknown;
+          if (parsed && typeof parsed === 'object') {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+
+    const normalized = normalizePayload(payload);
+    if (!normalized || typeof normalized.message !== 'string') {
+      return payload;
+    }
+
+    const details =
+      normalized.details ??
+      (normalized.issues !== undefined ? { issues: normalized.issues } : undefined);
+    const standardized = standardizeErrorPayload(reply.statusCode, normalized.message, details);
+    return typeof payload === 'string' ? JSON.stringify(standardized) : standardized;
   });
 
   app.addHook('onClose', async () => {

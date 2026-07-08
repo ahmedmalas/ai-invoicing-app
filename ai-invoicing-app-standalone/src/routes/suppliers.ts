@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { supplierSchema } from '../domain/supplier-bills/validation.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 export const supplierRoutes: FastifyPluginAsync = async (app) => {
   app.post('/suppliers', async (request, reply) => {
@@ -10,9 +11,10 @@ export const supplierRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(supplier);
   });
 
-  app.get('/suppliers', async () => {
+  app.get('/suppliers', async (request) => {
+    const pagination = parsePagination(request.query);
     return {
-      suppliers: app.db.listSuppliers(),
+      suppliers: paginateArray(app.db.listSuppliers(), pagination),
     };
   });
 

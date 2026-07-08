@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { createJobSchema, linkJobDocumentSchema, updateJobSchema } from '../domain/jobs/validation.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post('/jobs', async (request, reply) => {
@@ -25,9 +26,10 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     return job;
   });
 
-  app.get('/jobs', async () => {
+  app.get('/jobs', async (request) => {
+    const pagination = parsePagination(request.query);
     return {
-      jobs: app.db.listJobs(),
+      jobs: paginateArray(app.db.listJobs(), pagination),
     };
   });
 
@@ -40,8 +42,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/jobs/:jobId/documents', async (request) => {
     const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      documents: app.db.listJobDocuments(params.jobId),
+      documents: paginateArray(app.db.listJobDocuments(params.jobId), pagination),
     };
   });
 };

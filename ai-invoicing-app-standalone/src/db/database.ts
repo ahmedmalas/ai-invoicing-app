@@ -1490,7 +1490,7 @@ export function createDatabase(dbPath: string): AppDatabase {
 
     listSuppliers() {
       const rows = db
-        .prepare('SELECT * FROM suppliers ORDER BY created_at DESC')
+        .prepare('SELECT * FROM suppliers ORDER BY created_at DESC, id DESC')
         .all() as DbSupplierRow[];
       return rows.map(mapSupplierRow);
     },
@@ -1882,7 +1882,7 @@ export function createDatabase(dbPath: string): AppDatabase {
           `SELECT * FROM credit_notes
            WHERE (? IS NULL OR customer_id = ?)
              AND (? IS NULL OR linked_invoice_id = ?)
-           ORDER BY issue_date DESC, created_at DESC`,
+           ORDER BY issue_date DESC, created_at DESC, id DESC`,
         )
         .all(
           rowFilter.customerId ?? null,
@@ -2060,7 +2060,7 @@ export function createDatabase(dbPath: string): AppDatabase {
                  WHERE pa.payment_id = cp.id AND pa.invoice_id = ?
                )
              )
-           ORDER BY cp.payment_date DESC, cp.created_at DESC`,
+           ORDER BY cp.payment_date DESC, cp.created_at DESC, cp.id DESC`,
         )
         .all(
           rowFilter.customerId ?? null,
@@ -2677,7 +2677,7 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR sb.due_date <= ?)
              AND (? IS NULL OR sb.status = ?)
            AND (? IS NULL OR sb.payment_state = ?)
-           ORDER BY sb.bill_date DESC, sb.created_at DESC`,
+           ORDER BY sb.bill_date DESC, sb.created_at DESC, sb.id DESC`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3003,7 +3003,7 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR issue_date <= ?)
              AND (? IS NULL OR expected_delivery_date >= ?)
              AND (? IS NULL OR expected_delivery_date <= ?)
-           ORDER BY issue_date DESC, created_at DESC`,
+           ORDER BY issue_date DESC, created_at DESC, id DESC`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3256,7 +3256,7 @@ export function createDatabase(dbPath: string): AppDatabase {
                  WHERE spa.supplier_payment_id = sp.id AND spa.supplier_bill_id = ?
                )
              )
-           ORDER BY sp.payment_date DESC, sp.created_at DESC`,
+           ORDER BY sp.payment_date DESC, sp.created_at DESC, sp.id DESC`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3303,7 +3303,7 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     listRoles() {
-      const rows = db.prepare('SELECT * FROM roles ORDER BY name ASC').all() as DbRoleRow[];
+      const rows = db.prepare('SELECT * FROM roles ORDER BY name ASC, id ASC').all() as DbRoleRow[];
       return rows.map(mapRoleRow);
     },
 
@@ -3344,7 +3344,7 @@ export function createDatabase(dbPath: string): AppDatabase {
 
     listUsers() {
       const rows = db
-        .prepare('SELECT * FROM users ORDER BY created_at DESC')
+        .prepare('SELECT * FROM users ORDER BY created_at DESC, id DESC')
         .all() as DbUserRow[];
       return rows.map((row) => mapUserRow(row, getRoleIdsForUser(row.id)));
     },
@@ -3369,7 +3369,7 @@ export function createDatabase(dbPath: string): AppDatabase {
     },
 
     listTeams() {
-      const rows = db.prepare('SELECT * FROM teams ORDER BY name ASC').all() as DbTeamRow[];
+      const rows = db.prepare('SELECT * FROM teams ORDER BY name ASC, id ASC').all() as DbTeamRow[];
       return rows.map(mapTeamRow);
     },
 
@@ -3579,7 +3579,7 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM team_memberships tm
            INNER JOIN users u ON u.id = tm.user_id
            WHERE tm.team_id = ?
-           ORDER BY tm.created_at ASC`,
+             ORDER BY tm.created_at ASC, tm.id ASC`,
         )
         .all(teamId) as Array<{
         id: string;
@@ -3837,7 +3837,7 @@ export function createDatabase(dbPath: string): AppDatabase {
 
     listJobs() {
       const rows = db
-        .prepare('SELECT * FROM jobs ORDER BY created_at DESC')
+        .prepare('SELECT * FROM jobs ORDER BY created_at DESC, id DESC')
         .all() as DbJobRow[];
       return rows.map(mapJobRow);
     },
@@ -3915,7 +3915,7 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM job_document_links l
            INNER JOIN documents d ON d.id = l.document_id
            WHERE l.job_id = ?
-           ORDER BY l.created_at DESC`,
+           ORDER BY l.created_at DESC, l.id DESC`,
         )
         .all(jobId) as Array<{
         id: string;
@@ -3979,16 +3979,28 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND status = 'Finalised'
              AND (? IS NULL OR issue_date >= ?)
              AND (? IS NULL OR issue_date <= ?)
-           ORDER BY issue_date ASC, created_at ASC`,
+           ORDER BY issue_date ASC, created_at ASC, id ASC`,
         )
         .all(customerId, from, from, to, to) as CustomerStatementEntry[];
 
       const periodTotal = entries.reduce((sum, entry) => sum + entry.total, 0);
       const closingBalance = openingBalance + periodTotal;
+      const generatedAtRow = db
+        .prepare(
+          `SELECT max(ts) AS ts
+           FROM (
+             SELECT ? AS ts
+             UNION ALL
+             SELECT max(updated_at) AS ts
+             FROM invoices
+             WHERE customer_id = ? AND status = 'Finalised'
+           )`,
+        )
+        .get(customer.updatedAt, customerId) as { ts: string | null };
 
       return {
         customer,
-        generatedAt: nowIso(),
+        generatedAt: generatedAtRow.ts ?? customer.updatedAt,
         period: {
           from,
           to,

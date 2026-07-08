@@ -8,6 +8,7 @@ import {
   removeTeamMemberParamsSchema,
   updateTeamMemberRoleSchema,
 } from '../domain/teams/validation.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 function parseActorUserId(headers: unknown): string | null {
   const parsed = z
@@ -35,9 +36,10 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
     return team;
   });
 
-  app.get('/teams', async () => {
+  app.get('/teams', async (request) => {
+    const pagination = parsePagination(request.query);
     return {
-      teams: app.db.listTeams(),
+      teams: paginateArray(app.db.listTeams(), pagination),
     };
   });
 
@@ -51,8 +53,9 @@ export const teamRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/teams/:teamId/members', async (request) => {
     const params = z.object({ teamId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      members: app.db.listTeamMembers(params.teamId),
+      members: paginateArray(app.db.listTeamMembers(params.teamId), pagination),
     };
   });
 

@@ -7,6 +7,7 @@ import {
 } from '../domain/supplier-payments/validation.js';
 import { renderSupplierPaymentReceiptHtml } from '../services/supplier-payment-service.js';
 import { generateSupplierPaymentReceiptPdfBuffer } from '../services/pdf-service.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/supplier-payments', async (request, reply) => {
@@ -26,27 +27,30 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/supplier-payments', async (request) => {
     const query = listSupplierPaymentsQuerySchema.parse(request.query);
+    const pagination = parsePagination(request.query);
     const filter: { supplierId?: string; supplierBillId?: string; from?: string; to?: string } = {};
     if (query.supplierId) filter.supplierId = query.supplierId;
     if (query.supplierBillId) filter.supplierBillId = query.supplierBillId;
     if (query.from) filter.from = query.from;
     if (query.to) filter.to = query.to;
     return {
-      payments: app.db.listSupplierPayments(filter),
+      payments: paginateArray(app.db.listSupplierPayments(filter), pagination),
     };
   });
 
   app.get('/supplier-payments/suppliers/:supplierId', async (request) => {
     const params = z.object({ supplierId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listSupplierPayments({ supplierId: params.supplierId }),
+      payments: paginateArray(app.db.listSupplierPayments({ supplierId: params.supplierId }), pagination),
     };
   });
 
   app.get('/supplier-payments/bills/:supplierBillId', async (request) => {
     const params = z.object({ supplierBillId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listSupplierPayments({ supplierBillId: params.supplierBillId }),
+      payments: paginateArray(app.db.listSupplierPayments({ supplierBillId: params.supplierBillId }), pagination),
     };
   });
 

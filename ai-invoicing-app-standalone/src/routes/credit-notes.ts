@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createCreditNoteSchema } from '../domain/credit-notes/validation.js';
 import { generateCreditNotePdfBuffer } from '../services/pdf-service.js';
 import { renderCreditNoteHtml } from '../services/credit-note-service.js';
+import { paginateArray, parsePagination } from './pagination.js';
 
 export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
   app.post('/credit-notes', async (request, reply) => {
@@ -22,6 +23,7 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/credit-notes', async (request) => {
+    const pagination = parsePagination(request.query);
     const query = z
       .object({
         customerId: z.string().uuid().optional(),
@@ -36,21 +38,23 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
       filter.linkedInvoiceId = query.invoiceId;
     }
     return {
-      creditNotes: app.db.listCreditNotes(filter),
+      creditNotes: paginateArray(app.db.listCreditNotes(filter), pagination),
     };
   });
 
   app.get('/credit-notes/customers/:customerId', async (request) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      creditNotes: app.db.listCreditNotes({ customerId: params.customerId }),
+      creditNotes: paginateArray(app.db.listCreditNotes({ customerId: params.customerId }), pagination),
     };
   });
 
   app.get('/credit-notes/invoices/:invoiceId', async (request) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
+    const pagination = parsePagination(request.query);
     return {
-      creditNotes: app.db.listCreditNotes({ linkedInvoiceId: params.invoiceId }),
+      creditNotes: paginateArray(app.db.listCreditNotes({ linkedInvoiceId: params.invoiceId }), pagination),
     };
   });
 
