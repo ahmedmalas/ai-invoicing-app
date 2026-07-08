@@ -322,9 +322,17 @@
 - Extended platform snapshot restore to include idempotency persistence rows so backup/restore parity remains exact after Slice 37 hardening.
 - Preserved existing timeline taxonomy keys and document lifecycle contracts; no new business taxonomy events were introduced.
 
+#### Slice 38 — Referential Integrity & Safe Deletion Guardrails
+- Commit: `4a364a4dd008a9a5dfa2f517152f08f8f6ca1fb3`
+- Added deterministic delete guardrails and endpoints for customers, suppliers, users, roles, draft purchase orders, and draft supplier bills with explicit reference checks to prevent orphaned business records.
+- Added deterministic conflict codes for referenced-entity deletion rejection paths (`CUSTOMER_HAS_*`, `SUPPLIER_HAS_*`, `ROLE_HAS_USERS`, `USER_HAS_*`, `PURCHASE_ORDER_HAS_LINKED_SUPPLIER_BILLS`, `SUPPLIER_BILL_HAS_ALLOCATIONS`).
+- Added persistence-level mutation guardrails for immutable cross-document references and allocation immutability (`IMMUTABLE_INVOICE_CUSTOMER_REFERENCE`, `IMMUTABLE_PURCHASE_ORDER_SUPPLIER_REFERENCE`, allocation immutability triggers).
+- Added integration coverage proving referenced entity delete rejection, deterministic concurrent delete rejection, no timeline emission on failed delete/mutation attempts, and unchanged reporting/search outputs after rejected operations.
+- Preserved existing document lifecycle flows, existing timeline taxonomy keys, and existing HTML/PDF rendering behavior.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-37-global-concurrency-idempotency-hardening-19d3`
-- Status at logging: implementation baseline completed through Slice 37 and passing validation gates.
+- Branch: `cursor/slice-38-referential-integrity-safe-deletion-19d3`
+- Status at logging: implementation baseline completed through Slice 38 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
