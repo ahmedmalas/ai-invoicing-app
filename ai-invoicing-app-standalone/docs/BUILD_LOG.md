@@ -304,9 +304,18 @@
 - Added integration coverage proving deterministic repeated responses, deterministic error payload shape/code behavior, deterministic empty-list behavior, deterministic pagination composition, and deterministic concurrent read responses.
 - Preserved timeline taxonomy keys and document lifecycle workflows; no taxonomy additions or lifecycle changes were introduced.
 
+#### Slice 36 — Platform Backup, Restore & Snapshot Integrity
+- Commit: `88ef92b1a5ba4d32c40ff6907ee1a2f8a8b03240`
+- Added deterministic full-platform snapshot export (`GET /platform/backup`) over the existing database architecture, covering all operational entities, timeline history, configuration, and number sequence tables.
+- Added deterministic restore (`POST /platform/restore`) into empty databases only, preserving document numbers, cross-document relationships, timeline records, PO/Supplier Bill linkage, payment allocations, and immutable document state.
+- Added strict restore validation guardrails for malformed payloads, incomplete backups, incompatible snapshot versions, and duplicate restore attempts into non-empty targets.
+- Added derived snapshot metadata for customer statements and explicit products placeholder support without introducing any persisted reporting/materialized values.
+- Added integration coverage proving backup/restore parity (counts, numbers, linkage, timeline), deterministic reporting/search parity after restore, and no additional lifecycle event emission during backup/restore operations.
+- Preserved existing lifecycle rules, timeline taxonomy, and PDF/HTML rendering behavior; no new business taxonomy events were introduced.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-35-global-api-contract-integrity-error-determinism-19d3`
-- Status at logging: implementation baseline completed through Slice 35 and passing validation gates.
+- Branch: `cursor/slice-36-platform-backup-restore-snapshot-integrity-19d3`
+- Status at logging: implementation baseline completed through Slice 36 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
