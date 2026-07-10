@@ -339,9 +339,17 @@
 - Added focused integration coverage proving unauthenticated rejection, unauthorized read/write rejection, permission escalation prevention, role-modification protection, no lifecycle timeline emission on authorization failures, protected reporting/search access, and deterministic concurrent unauthorized behavior.
 - Preserved existing timeline taxonomy keys and existing document lifecycle/rendering behaviors.
 
+#### Slice 40 — Platform Performance, Query Efficiency & Scalability Integrity
+- Commit: `52c30f3903f737a4bf0b63538dc655f99a33c21d`
+- Hardened high-volume read-path pagination by moving credit note, customer payment, supplier bill, supplier payment, and purchase order pagination from route-level array slicing into SQL `LIMIT/OFFSET` execution.
+- Added targeted read indexes for deterministic filtering, ordering, and pagination on reporting/list-heavy tables (`invoices`, `credit_notes`, `customer_payments`, `payment_allocations`, `supplier_bills`, `supplier_payments`, `supplier_payment_allocations`, `purchase_orders`).
+- Refactored reporting read-model aggregation to set-based grouped queries to remove N+1 scaling bottlenecks while preserving existing response contracts and lifecycle behavior.
+- Added integration coverage proving deterministic large-dataset search/timeline/reporting reads, stable pagination composition under load, concurrent creation queryability, and index-backed query plans on key read paths.
+- Preserved existing timeline taxonomy keys and existing document lifecycle/rendering behaviors.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-39-security-authorization-permissions-19d3`
-- Status at logging: implementation baseline completed through Slice 39 and passing validation gates.
+- Branch: `cursor/slice-40-performance-scalability-19d3`
+- Status at logging: implementation baseline completed through Slice 40 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 39 — Security, Authorization & Permission Integrity**
-- Baseline commit: `917260bcb94ff21cecb6f2fa626b96d720beacb7`
-- Active branch at roadmap update: `cursor/slice-39-security-authorization-permissions-19d3`
+- Current implemented slice: **Slice 40 — Platform Performance, Query Efficiency & Scalability Integrity**
+- Baseline commit: `52c30f3903f737a4bf0b63538dc655f99a33c21d`
+- Active branch at roadmap update: `cursor/slice-40-performance-scalability-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -48,15 +48,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 37. **Slice 37 — Global Concurrency & Idempotency Hardening** (implemented)
 38. **Slice 38 — Referential Integrity & Safe Deletion Guardrails** (implemented)
 39. **Slice 39 — Security, Authorization & Permission Integrity** (implemented)
+40. **Slice 40 — Platform Performance, Query Efficiency & Scalability Integrity** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 40 — TBD (placeholder only)
 - Slice 41 — TBD (placeholder only)
 - Slice 42 — TBD (placeholder only)
+- Slice 43 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.
