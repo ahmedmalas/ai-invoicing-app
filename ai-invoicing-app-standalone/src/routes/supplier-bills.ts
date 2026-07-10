@@ -8,7 +8,7 @@ import {
 } from '../domain/supplier-bills/validation.js';
 import { renderSupplierBillHtml } from '../services/supplier-bill-service.js';
 import { generateSupplierBillPdfBuffer } from '../services/pdf-service.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
   app.post('/supplier-bills', async (request, reply) => {
@@ -67,7 +67,7 @@ export const supplierBillRoutes: FastifyPluginAsync = async (app) => {
     if (query.status) filter.status = query.status;
     if (query.paymentState) filter.paymentState = query.paymentState;
     return {
-      bills: paginateArray(app.db.listSupplierBills(filter), pagination),
+      bills: app.db.listSupplierBills(filter, pagination),
     };
   });
 

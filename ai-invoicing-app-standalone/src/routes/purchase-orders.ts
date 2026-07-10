@@ -10,7 +10,7 @@ import {
 } from '../domain/purchase-orders/validation.js';
 import { renderPurchaseOrderHtml } from '../services/purchase-order-service.js';
 import { generatePurchaseOrderPdfBuffer } from '../services/pdf-service.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
   app.post('/purchase-orders', async (request, reply) => {
@@ -89,7 +89,7 @@ export const purchaseOrderRoutes: FastifyPluginAsync = async (app) => {
     if (query.fromExpectedDeliveryDate) filter.fromExpectedDeliveryDate = query.fromExpectedDeliveryDate;
     if (query.toExpectedDeliveryDate) filter.toExpectedDeliveryDate = query.toExpectedDeliveryDate;
     return {
-      purchaseOrders: paginateArray(app.db.listPurchaseOrders(filter), pagination),
+      purchaseOrders: app.db.listPurchaseOrders(filter, pagination),
     };
   });
 

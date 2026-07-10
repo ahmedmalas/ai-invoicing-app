@@ -7,7 +7,7 @@ import {
 } from '../domain/payments/validation.js';
 import { renderPaymentReceiptHtml } from '../services/payment-service.js';
 import { generatePaymentReceiptPdfBuffer } from '../services/pdf-service.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const paymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/payments', async (request, reply) => {
@@ -42,7 +42,7 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
       filter.to = query.to;
     }
     return {
-      payments: paginateArray(app.db.listCustomerPayments(filter), pagination),
+      payments: app.db.listCustomerPayments(filter, pagination),
     };
   });
 
@@ -50,7 +50,7 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: paginateArray(app.db.listCustomerPayments({ customerId: params.customerId }), pagination),
+      payments: app.db.listCustomerPayments({ customerId: params.customerId }, pagination),
     };
   });
 
@@ -58,7 +58,7 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: paginateArray(app.db.listCustomerPayments({ invoiceId: params.invoiceId }), pagination),
+      payments: app.db.listCustomerPayments({ invoiceId: params.invoiceId }, pagination),
     };
   });
 

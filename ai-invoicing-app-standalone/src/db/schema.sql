@@ -426,20 +426,32 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_line_items_order ON purchase_order
 CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
 CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(linked_invoice_id);
+CREATE INDEX IF NOT EXISTS idx_credit_notes_customer_issue_order
+ON credit_notes(customer_id, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice_issue_date
+ON credit_notes(linked_invoice_id, issue_date);
 CREATE INDEX IF NOT EXISTS idx_customer_payments_number ON customer_payments(payment_number);
 CREATE INDEX IF NOT EXISTS idx_customer_payments_customer ON customer_payments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_customer_payments_date ON customer_payments(payment_date);
+CREATE INDEX IF NOT EXISTS idx_customer_payments_customer_payment_order
+ON customer_payments(customer_id, payment_date, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_payment_allocations_payment ON payment_allocations(payment_id);
 CREATE INDEX IF NOT EXISTS idx_payment_allocations_invoice ON payment_allocations(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payment_allocations_invoice_payment
+ON payment_allocations(invoice_id, payment_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_allocations_payment_invoice
 ON payment_allocations(payment_id, invoice_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_number ON supplier_payments(payment_number);
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_date ON supplier_payments(payment_date);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier_payment_order
+ON supplier_payments(supplier_id, payment_date, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payment_allocations_payment
 ON supplier_payment_allocations(supplier_payment_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payment_allocations_bill
 ON supplier_payment_allocations(supplier_bill_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payment_allocations_bill_payment
+ON supplier_payment_allocations(supplier_bill_id, supplier_payment_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_payment_allocations_payment_bill
 ON supplier_payment_allocations(supplier_payment_id, supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
@@ -457,11 +469,26 @@ ON job_document_links(job_id, document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number_not_null
 ON invoices(invoice_number)
 WHERE invoice_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_invoices_customer_status_issue_order
+ON invoices(customer_id, status, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status_issue_order
+ON invoices(status, issue_date, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_number_not_null
 ON supplier_bills(bill_number)
 WHERE bill_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_source_po ON supplier_bills(source_purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_source_po_created_order
+ON supplier_bills(source_purchase_order_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_supplier_bill_order
+ON supplier_bills(supplier_id, bill_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier_issue_order
+ON purchase_orders(supplier_id, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_status_issue_order
+ON purchase_orders(status, issue_date, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entity_order ON timeline_events(entity_type, entity_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_timeline_entity_event_key_order
+ON timeline_events(entity_type, entity_id, coalesce(event_key, event_type), created_at, id);
 CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_requests(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);

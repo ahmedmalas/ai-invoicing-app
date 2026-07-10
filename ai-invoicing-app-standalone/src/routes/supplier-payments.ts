@@ -7,7 +7,7 @@ import {
 } from '../domain/supplier-payments/validation.js';
 import { renderSupplierPaymentReceiptHtml } from '../services/supplier-payment-service.js';
 import { generateSupplierPaymentReceiptPdfBuffer } from '../services/pdf-service.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/supplier-payments', async (request, reply) => {
@@ -34,7 +34,7 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     if (query.from) filter.from = query.from;
     if (query.to) filter.to = query.to;
     return {
-      payments: paginateArray(app.db.listSupplierPayments(filter), pagination),
+      payments: app.db.listSupplierPayments(filter, pagination),
     };
   });
 
@@ -42,7 +42,7 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ supplierId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: paginateArray(app.db.listSupplierPayments({ supplierId: params.supplierId }), pagination),
+      payments: app.db.listSupplierPayments({ supplierId: params.supplierId }, pagination),
     };
   });
 
@@ -50,7 +50,7 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ supplierBillId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: paginateArray(app.db.listSupplierPayments({ supplierBillId: params.supplierBillId }), pagination),
+      payments: app.db.listSupplierPayments({ supplierBillId: params.supplierBillId }, pagination),
     };
   });
 

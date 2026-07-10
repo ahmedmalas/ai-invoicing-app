@@ -604,6 +604,11 @@ interface TimelineQueryOptions {
   offset?: number;
 }
 
+interface ListQueryOptions {
+  limit?: number;
+  offset?: number;
+}
+
 const PLATFORM_SNAPSHOT_VERSION = 1;
 
 const PLATFORM_SNAPSHOT_TABLES = [
@@ -692,10 +697,10 @@ export interface AppDatabase {
   finaliseInvoice(id: string): InvoiceDraft;
   createCreditNote(input: CreateCreditNoteInput): CreditNote;
   getCreditNoteById(id: string): CreditNote | null;
-  listCreditNotes(filter?: ListCreditNotesFilter): CreditNote[];
+  listCreditNotes(filter?: ListCreditNotesFilter, options?: ListQueryOptions): CreditNote[];
   createCustomerPayment(input: CreateCustomerPaymentInput): CustomerPayment;
   getCustomerPaymentById(id: string): CustomerPayment | null;
-  listCustomerPayments(filter?: ListCustomerPaymentsFilter): CustomerPayment[];
+  listCustomerPayments(filter?: ListCustomerPaymentsFilter, options?: ListQueryOptions): CustomerPayment[];
   createSupplierBillDraft(input: CreateSupplierBillDraftInput): SupplierBill;
   createSupplierBillDraftFromPurchaseOrder(
     purchaseOrderId: string,
@@ -705,10 +710,10 @@ export interface AppDatabase {
   updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
   getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
   finaliseSupplierBill(id: string): SupplierBill;
-  listSupplierBills(filter?: ListSupplierBillsFilter): SupplierBill[];
+  listSupplierBills(filter?: ListSupplierBillsFilter, options?: ListQueryOptions): SupplierBill[];
   createSupplierPayment(input: CreateSupplierPaymentInput): SupplierBillPayment;
   getSupplierPaymentById(id: string): SupplierBillPayment | null;
-  listSupplierPayments(filter?: ListSupplierPaymentsFilter): SupplierBillPayment[];
+  listSupplierPayments(filter?: ListSupplierPaymentsFilter, options?: ListQueryOptions): SupplierBillPayment[];
   createPurchaseOrderDraft(input: CreatePurchaseOrderDraftInput): PurchaseOrder;
   deletePurchaseOrderDraft(id: string): void;
   updatePurchaseOrderDraft(id: string, input: UpdatePurchaseOrderDraftInput): PurchaseOrder;
@@ -716,7 +721,7 @@ export interface AppDatabase {
   approvePurchaseOrder(id: string): PurchaseOrder;
   closePurchaseOrder(id: string, input?: ClosePurchaseOrderInput): PurchaseOrder;
   cancelPurchaseOrder(id: string): PurchaseOrder;
-  listPurchaseOrders(filter?: ListPurchaseOrdersFilter): PurchaseOrder[];
+  listPurchaseOrders(filter?: ListPurchaseOrdersFilter, options?: ListQueryOptions): PurchaseOrder[];
   createRole(input: CreateRoleInput): Role;
   deleteRole(id: string): void;
   getRoleById(id: string): Role | null;
@@ -2254,20 +2259,26 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapCreditNoteRow(row) : null;
     },
 
-    listCreditNotes(filter) {
+    listCreditNotes(filter, options) {
       const rowFilter = filter ?? {};
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
         .prepare(
           `SELECT * FROM credit_notes
            WHERE (? IS NULL OR customer_id = ?)
              AND (? IS NULL OR linked_invoice_id = ?)
-           ORDER BY issue_date DESC, created_at DESC, id DESC`,
+           ORDER BY issue_date DESC, created_at DESC, id DESC
+           LIMIT ? OFFSET ?`,
         )
         .all(
           rowFilter.customerId ?? null,
           rowFilter.customerId ?? null,
           rowFilter.linkedInvoiceId ?? null,
           rowFilter.linkedInvoiceId ?? null,
+          limit,
+          offset,
         ) as DbCreditNoteRow[];
       return rows.map(mapCreditNoteRow);
     },
@@ -2429,8 +2440,11 @@ export function createDatabase(dbPath: string): AppDatabase {
       return mapCustomerPaymentRow(row, getAllocationsForPayment(id));
     },
 
-    listCustomerPayments(filter) {
+    listCustomerPayments(filter, options) {
       const rowFilter = filter ?? {};
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
         .prepare(
           `SELECT cp.*
@@ -2444,7 +2458,8 @@ export function createDatabase(dbPath: string): AppDatabase {
                  WHERE pa.payment_id = cp.id AND pa.invoice_id = ?
                )
              )
-           ORDER BY cp.payment_date DESC, cp.created_at DESC, cp.id DESC`,
+           ORDER BY cp.payment_date DESC, cp.created_at DESC, cp.id DESC
+           LIMIT ? OFFSET ?`,
         )
         .all(
           rowFilter.customerId ?? null,
@@ -2455,6 +2470,8 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.to ?? null,
           rowFilter.invoiceId ?? null,
           rowFilter.invoiceId ?? null,
+          limit,
+          offset,
         ) as DbCustomerPaymentRow[];
       return rows.map((row) => mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)));
     },
@@ -3079,8 +3096,11 @@ export function createDatabase(dbPath: string): AppDatabase {
       })(id);
     },
 
-    listSupplierBills(filter) {
+    listSupplierBills(filter, options) {
       const rowFilter = filter ?? {};
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
         .prepare(
           `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
@@ -3095,7 +3115,8 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR sb.due_date <= ?)
              AND (? IS NULL OR sb.status = ?)
            AND (? IS NULL OR sb.payment_state = ?)
-           ORDER BY sb.bill_date DESC, sb.created_at DESC, sb.id DESC`,
+           ORDER BY sb.bill_date DESC, sb.created_at DESC, sb.id DESC
+           LIMIT ? OFFSET ?`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3116,6 +3137,8 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.status ?? null,
           rowFilter.paymentState ?? null,
           rowFilter.paymentState ?? null,
+          limit,
+          offset,
         ) as DbSupplierBillRow[];
       return rows.map(mapSupplierBillRow);
     },
@@ -3462,8 +3485,14 @@ export function createDatabase(dbPath: string): AppDatabase {
       })(id);
     },
 
-    listPurchaseOrders(filter) {
+    listPurchaseOrders(filter, options) {
       const rowFilter = filter ?? {};
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
+      const requiresBillingStatusFilter = Boolean(rowFilter.billingStatus);
+      const queryLimit = requiresBillingStatusFilter ? Number.MAX_SAFE_INTEGER : limit;
+      const queryOffset = requiresBillingStatusFilter ? 0 : offset;
       const rows = db
         .prepare(
           `SELECT *
@@ -3475,7 +3504,8 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR issue_date <= ?)
              AND (? IS NULL OR expected_delivery_date >= ?)
              AND (? IS NULL OR expected_delivery_date <= ?)
-           ORDER BY issue_date DESC, created_at DESC, id DESC`,
+           ORDER BY issue_date DESC, created_at DESC, id DESC
+           LIMIT ? OFFSET ?`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3492,12 +3522,15 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.fromExpectedDeliveryDate ?? null,
           rowFilter.toExpectedDeliveryDate ?? null,
           rowFilter.toExpectedDeliveryDate ?? null,
+          queryLimit,
+          queryOffset,
         ) as DbPurchaseOrderRow[];
       const mapped = rows.map((row) => withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row)));
-      if (!rowFilter.billingStatus) {
+      if (!requiresBillingStatusFilter) {
         return mapped;
       }
-      return mapped.filter((order) => order.billingStatus === rowFilter.billingStatus);
+      const filtered = mapped.filter((order) => order.billingStatus === rowFilter.billingStatus);
+      return filtered.slice(offset, offset + limit);
     },
 
     createSupplierPayment(input) {
@@ -3719,8 +3752,11 @@ export function createDatabase(dbPath: string): AppDatabase {
       return mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(id));
     },
 
-    listSupplierPayments(filter) {
+    listSupplierPayments(filter, options) {
       const rowFilter = filter ?? {};
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
         .prepare(
           `SELECT sp.*
@@ -3734,7 +3770,8 @@ export function createDatabase(dbPath: string): AppDatabase {
                  WHERE spa.supplier_payment_id = sp.id AND spa.supplier_bill_id = ?
                )
              )
-           ORDER BY sp.payment_date DESC, sp.created_at DESC, sp.id DESC`,
+           ORDER BY sp.payment_date DESC, sp.created_at DESC, sp.id DESC
+           LIMIT ? OFFSET ?`,
         )
         .all(
           rowFilter.supplierId ?? null,
@@ -3745,6 +3782,8 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.to ?? null,
           rowFilter.supplierBillId ?? null,
           rowFilter.supplierBillId ?? null,
+          limit,
+          offset,
         ) as DbSupplierPaymentRow[];
       return rows.map((row) => mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(row.id)));
     },
@@ -4541,6 +4580,10 @@ export function createDatabase(dbPath: string): AppDatabase {
       const limit = query.limit ?? 25;
       const offset = query.offset ?? 0;
 
+      const totalsById = (
+        rows: Array<{ id: string; amount: number }>,
+      ): Map<string, number> => new Map(rows.map((row) => [row.id, Number(row.amount ?? 0)]));
+
       const invoiceRows = db
         .prepare(
           `SELECT *
@@ -4552,24 +4595,37 @@ export function createDatabase(dbPath: string): AppDatabase {
         )
         .all(from, from, to, to) as DbInvoiceRow[];
       const pagedInvoiceRows = invoiceRows.slice(offset, offset + limit);
+      const invoiceIds = invoiceRows.map((row) => row.id);
+
+      let invoiceCreditsById = new Map<string, number>();
+      let invoicePaymentsById = new Map<string, number>();
+      if (invoiceIds.length > 0) {
+        const placeholders = invoiceIds.map(() => '?').join(',');
+        invoiceCreditsById = totalsById(
+          db
+            .prepare(
+              `SELECT linked_invoice_id AS id, coalesce(sum(total_credit), 0) AS amount
+               FROM credit_notes
+               WHERE linked_invoice_id IN (${placeholders})
+               GROUP BY linked_invoice_id`,
+            )
+            .all(...invoiceIds) as Array<{ id: string; amount: number }>,
+        );
+        invoicePaymentsById = totalsById(
+          db
+            .prepare(
+              `SELECT pa.invoice_id AS id, coalesce(sum(pa.amount), 0) AS amount
+               FROM payment_allocations pa
+               WHERE pa.invoice_id IN (${placeholders})
+               GROUP BY pa.invoice_id`,
+            )
+            .all(...invoiceIds) as Array<{ id: string; amount: number }>,
+        );
+      }
+
       const invoices = pagedInvoiceRows.map((invoiceRow) => {
-        const creditedRow = db
-          .prepare(
-            `SELECT coalesce(sum(total_credit), 0) AS amount
-             FROM credit_notes
-             WHERE linked_invoice_id = ?`,
-          )
-          .get(invoiceRow.id) as { amount: number };
-        const paidRow = db
-          .prepare(
-            `SELECT coalesce(sum(pa.amount), 0) AS amount
-             FROM payment_allocations pa
-             INNER JOIN customer_payments cp ON cp.id = pa.payment_id
-             WHERE pa.invoice_id = ?`,
-          )
-          .get(invoiceRow.id) as { amount: number };
-        const totalCredited = Number(creditedRow.amount ?? 0);
-        const totalPaid = Number(paidRow.amount ?? 0);
+        const totalCredited = invoiceCreditsById.get(invoiceRow.id) ?? 0;
+        const totalPaid = invoicePaymentsById.get(invoiceRow.id) ?? 0;
         const outstanding = invoiceRow.total - totalCredited - totalPaid;
         return {
           invoiceId: invoiceRow.id,
@@ -4583,27 +4639,8 @@ export function createDatabase(dbPath: string): AppDatabase {
         };
       });
       const arTotalInvoiced = invoiceRows.reduce((sum, row) => sum + row.total, 0);
-      const arTotalCredited = invoiceRows.reduce((sum, row) => {
-        const creditedRow = db
-          .prepare(
-            `SELECT coalesce(sum(total_credit), 0) AS amount
-             FROM credit_notes
-             WHERE linked_invoice_id = ?`,
-          )
-          .get(row.id) as { amount: number };
-        return sum + Number(creditedRow.amount ?? 0);
-      }, 0);
-      const arTotalPaid = invoiceRows.reduce((sum, row) => {
-        const paidRow = db
-          .prepare(
-            `SELECT coalesce(sum(pa.amount), 0) AS amount
-             FROM payment_allocations pa
-             INNER JOIN customer_payments cp ON cp.id = pa.payment_id
-             WHERE pa.invoice_id = ?`,
-          )
-          .get(row.id) as { amount: number };
-        return sum + Number(paidRow.amount ?? 0);
-      }, 0);
+      const arTotalCredited = invoiceRows.reduce((sum, row) => sum + (invoiceCreditsById.get(row.id) ?? 0), 0);
+      const arTotalPaid = invoiceRows.reduce((sum, row) => sum + (invoicePaymentsById.get(row.id) ?? 0), 0);
 
       const customers = db
         .prepare(
@@ -4613,68 +4650,105 @@ export function createDatabase(dbPath: string): AppDatabase {
         )
         .all() as Array<{ id: string; display_name: string }>;
       const pagedCustomers = customers.slice(offset, offset + limit);
-      const customerStatements = pagedCustomers.map((customerRow) => {
-        const openingInvoices = from
-          ? (db
+      const pagedCustomerIds = pagedCustomers.map((row) => row.id);
+
+      const sumByCustomerId = (
+        rows: Array<{ customer_id: string; amount: number }>,
+      ): Map<string, number> => new Map(rows.map((row) => [row.customer_id, Number(row.amount ?? 0)]));
+
+      let openingInvoicesByCustomer = new Map<string, number>();
+      let openingCreditsByCustomer = new Map<string, number>();
+      let openingPaymentsByCustomer = new Map<string, number>();
+      let activityInvoicesByCustomer = new Map<string, number>();
+      let activityCreditsByCustomer = new Map<string, number>();
+      let activityPaymentsByCustomer = new Map<string, number>();
+
+      if (pagedCustomerIds.length > 0) {
+        const placeholders = pagedCustomerIds.map(() => '?').join(',');
+        if (from) {
+          openingInvoicesByCustomer = sumByCustomerId(
+            db
               .prepare(
-                `SELECT coalesce(sum(total), 0) AS amount
+                `SELECT customer_id, coalesce(sum(total), 0) AS amount
                  FROM invoices
-                 WHERE customer_id = ?
+                 WHERE customer_id IN (${placeholders})
                    AND status = 'Finalised'
-                   AND issue_date < ?`,
+                   AND issue_date < ?
+                 GROUP BY customer_id`,
               )
-              .get(customerRow.id, from) as { amount: number }).amount
-          : 0;
-        const openingCredits = from
-          ? (db
+              .all(...pagedCustomerIds, from) as Array<{ customer_id: string; amount: number }>,
+          );
+          openingCreditsByCustomer = sumByCustomerId(
+            db
               .prepare(
-                `SELECT coalesce(sum(cn.total_credit), 0) AS amount
+                `SELECT i.customer_id AS customer_id, coalesce(sum(cn.total_credit), 0) AS amount
                  FROM credit_notes cn
                  INNER JOIN invoices i ON i.id = cn.linked_invoice_id
-                 WHERE i.customer_id = ?
-                   AND cn.issue_date < ?`,
+                 WHERE i.customer_id IN (${placeholders})
+                   AND cn.issue_date < ?
+                 GROUP BY i.customer_id`,
               )
-              .get(customerRow.id, from) as { amount: number }).amount
-          : 0;
-        const openingPayments = from
-          ? (db
+              .all(...pagedCustomerIds, from) as Array<{ customer_id: string; amount: number }>,
+          );
+          openingPaymentsByCustomer = sumByCustomerId(
+            db
               .prepare(
-                `SELECT coalesce(sum(cp.amount), 0) AS amount
-                 FROM customer_payments cp
-                 WHERE cp.customer_id = ?
-                   AND cp.payment_date < ?`,
+                `SELECT customer_id, coalesce(sum(amount), 0) AS amount
+                 FROM customer_payments
+                 WHERE customer_id IN (${placeholders})
+                   AND payment_date < ?
+                 GROUP BY customer_id`,
               )
-              .get(customerRow.id, from) as { amount: number }).amount
-          : 0;
-        const activityInvoices = (db
-          .prepare(
-            `SELECT coalesce(sum(total), 0) AS amount
-             FROM invoices
-             WHERE customer_id = ?
-               AND status = 'Finalised'
-               AND (? IS NULL OR issue_date >= ?)
-               AND (? IS NULL OR issue_date <= ?)`,
-          )
-          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
-        const activityCredits = (db
-          .prepare(
-            `SELECT coalesce(sum(cn.total_credit), 0) AS amount
-             FROM credit_notes cn
-             INNER JOIN invoices i ON i.id = cn.linked_invoice_id
-             WHERE i.customer_id = ?
-               AND (? IS NULL OR cn.issue_date >= ?)
-               AND (? IS NULL OR cn.issue_date <= ?)`,
-          )
-          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
-        const activityPayments = (db
-          .prepare(
-            `SELECT coalesce(sum(amount), 0) AS amount
-             FROM customer_payments
-             WHERE customer_id = ?
-               AND (? IS NULL OR payment_date >= ?)
-               AND (? IS NULL OR payment_date <= ?)`,
-          )
-          .get(customerRow.id, from, from, to, to) as { amount: number }).amount;
+              .all(...pagedCustomerIds, from) as Array<{ customer_id: string; amount: number }>,
+          );
+        }
+        activityInvoicesByCustomer = sumByCustomerId(
+          db
+            .prepare(
+              `SELECT customer_id, coalesce(sum(total), 0) AS amount
+               FROM invoices
+               WHERE customer_id IN (${placeholders})
+                 AND status = 'Finalised'
+                 AND (? IS NULL OR issue_date >= ?)
+                 AND (? IS NULL OR issue_date <= ?)
+               GROUP BY customer_id`,
+            )
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+        );
+        activityCreditsByCustomer = sumByCustomerId(
+          db
+            .prepare(
+              `SELECT i.customer_id AS customer_id, coalesce(sum(cn.total_credit), 0) AS amount
+               FROM credit_notes cn
+               INNER JOIN invoices i ON i.id = cn.linked_invoice_id
+               WHERE i.customer_id IN (${placeholders})
+                 AND (? IS NULL OR cn.issue_date >= ?)
+                 AND (? IS NULL OR cn.issue_date <= ?)
+               GROUP BY i.customer_id`,
+            )
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+        );
+        activityPaymentsByCustomer = sumByCustomerId(
+          db
+            .prepare(
+              `SELECT customer_id, coalesce(sum(amount), 0) AS amount
+               FROM customer_payments
+               WHERE customer_id IN (${placeholders})
+                 AND (? IS NULL OR payment_date >= ?)
+                 AND (? IS NULL OR payment_date <= ?)
+               GROUP BY customer_id`,
+            )
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+        );
+      }
+
+      const customerStatements = pagedCustomers.map((customerRow) => {
+        const openingInvoices = openingInvoicesByCustomer.get(customerRow.id) ?? 0;
+        const openingCredits = openingCreditsByCustomer.get(customerRow.id) ?? 0;
+        const openingPayments = openingPaymentsByCustomer.get(customerRow.id) ?? 0;
+        const activityInvoices = activityInvoicesByCustomer.get(customerRow.id) ?? 0;
+        const activityCredits = activityCreditsByCustomer.get(customerRow.id) ?? 0;
+        const activityPayments = activityPaymentsByCustomer.get(customerRow.id) ?? 0;
 
         const openingBalance = openingInvoices - openingCredits - openingPayments;
         const activity = activityInvoices - activityCredits - activityPayments;
@@ -4698,15 +4772,23 @@ export function createDatabase(dbPath: string): AppDatabase {
         )
         .all(from, from, to, to) as DbPurchaseOrderRow[];
       const pagedPurchaseOrderRows = purchaseOrderRows.slice(offset, offset + limit);
+      const purchaseOrderIds = purchaseOrderRows.map((row) => row.id);
+      let billedByPurchaseOrder = new Map<string, number>();
+      if (purchaseOrderIds.length > 0) {
+        const placeholders = purchaseOrderIds.map(() => '?').join(',');
+        billedByPurchaseOrder = totalsById(
+          db
+            .prepare(
+              `SELECT source_purchase_order_id AS id, coalesce(sum(total), 0) AS amount
+               FROM supplier_bills
+               WHERE source_purchase_order_id IN (${placeholders})
+               GROUP BY source_purchase_order_id`,
+            )
+            .all(...purchaseOrderIds) as Array<{ id: string; amount: number }>,
+        );
+      }
       const purchaseOrders = pagedPurchaseOrderRows.map((purchaseOrderRow) => {
-        const billedRow = db
-          .prepare(
-            `SELECT coalesce(sum(total), 0) AS amount
-             FROM supplier_bills
-             WHERE source_purchase_order_id = ?`,
-          )
-          .get(purchaseOrderRow.id) as { amount: number };
-        const totalBilled = Number(billedRow.amount ?? 0);
+        const totalBilled = billedByPurchaseOrder.get(purchaseOrderRow.id) ?? 0;
         const remainingValue = purchaseOrderRow.total - totalBilled;
         return {
           purchaseOrderId: purchaseOrderRow.id,
@@ -4729,16 +4811,23 @@ export function createDatabase(dbPath: string): AppDatabase {
         )
         .all(from, from, to, to) as DbSupplierBillRow[];
       const pagedSupplierBillRows = supplierBillRows.slice(offset, offset + limit);
+      const supplierBillIds = supplierBillRows.map((row) => row.id);
+      let paymentsBySupplierBill = new Map<string, number>();
+      if (supplierBillIds.length > 0) {
+        const placeholders = supplierBillIds.map(() => '?').join(',');
+        paymentsBySupplierBill = totalsById(
+          db
+            .prepare(
+              `SELECT supplier_bill_id AS id, coalesce(sum(amount), 0) AS amount
+               FROM supplier_payment_allocations
+               WHERE supplier_bill_id IN (${placeholders})
+               GROUP BY supplier_bill_id`,
+            )
+            .all(...supplierBillIds) as Array<{ id: string; amount: number }>,
+        );
+      }
       const supplierBills = pagedSupplierBillRows.map((supplierBillRow) => {
-        const paidRow = db
-          .prepare(
-            `SELECT coalesce(sum(spa.amount), 0) AS amount
-             FROM supplier_payment_allocations spa
-             INNER JOIN supplier_payments sp ON sp.id = spa.supplier_payment_id
-             WHERE spa.supplier_bill_id = ?`,
-          )
-          .get(supplierBillRow.id) as { amount: number };
-        const totalPaid = Number(paidRow.amount ?? 0);
+        const totalPaid = paymentsBySupplierBill.get(supplierBillRow.id) ?? 0;
         const outstanding = supplierBillRow.total - totalPaid;
         return {
           supplierBillId: supplierBillRow.id,
@@ -4763,16 +4852,10 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR sp.payment_date <= ?)`,
         )
         .get(from, from, to, to) as { amount: number }).amount;
-      const apRemainingOrderedValue = purchaseOrderRows.reduce((sum, row) => {
-        const billedRow = db
-          .prepare(
-            `SELECT coalesce(sum(total), 0) AS amount
-             FROM supplier_bills
-             WHERE source_purchase_order_id = ?`,
-          )
-          .get(row.id) as { amount: number };
-        return sum + (row.total - Number(billedRow.amount ?? 0));
-      }, 0);
+      const apRemainingOrderedValue = purchaseOrderRows.reduce(
+        (sum, row) => sum + (row.total - (billedByPurchaseOrder.get(row.id) ?? 0)),
+        0,
+      );
       const generatedAtRow = db
         .prepare(
           `SELECT max(ts) AS ts
