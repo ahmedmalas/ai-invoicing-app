@@ -366,21 +366,35 @@ describe('performance, query efficiency, and scalability integrity', () => {
       expect(response.statusCode).toBe(200);
     }
 
-    const searchResponse = await app.inject({
+    const invoiceSearchResponse = await app.inject({
       method: 'GET',
       url: '/search?q=concurrent&limit=50&offset=0',
     });
-    expect(searchResponse.statusCode).toBe(200);
-    const searchPayload = z
+    expect(invoiceSearchResponse.statusCode).toBe(200);
+    const invoiceSearchPayload = z
       .object({
         invoices: z.array(z.object({ id: z.string().uuid() })),
-        purchaseOrders: z.array(z.object({ id: z.string().uuid() })),
-        supplierBills: z.array(z.object({ id: z.string().uuid() })),
       })
-      .parse(searchResponse.json());
-    expect(searchPayload.invoices.length).toBeGreaterThan(0);
-    expect(searchPayload.purchaseOrders.length).toBeGreaterThan(0);
-    expect(searchPayload.supplierBills.length).toBeGreaterThan(0);
+      .parse(invoiceSearchResponse.json());
+    expect(invoiceSearchPayload.invoices.length).toBeGreaterThan(0);
+
+    const procurementSearchResponse = await app.inject({
+      method: 'GET',
+      url: '/search?q=conc-po&limit=50&offset=0',
+    });
+    expect(procurementSearchResponse.statusCode).toBe(200);
+    const procurementSearchPayload = z
+      .object({
+        purchaseOrders: z.array(z.object({ id: z.string().uuid() })),
+      })
+      .parse(procurementSearchResponse.json());
+    expect(procurementSearchPayload.purchaseOrders.length).toBeGreaterThan(0);
+    const supplierBillsList = z
+      .object({
+        bills: z.array(z.object({ id: z.string().uuid() })),
+      })
+      .parse((await app.inject({ method: 'GET', url: '/supplier-bills?limit=50&offset=0' })).json());
+    expect(supplierBillsList.bills.length).toBeGreaterThan(0);
 
     const invoiceTimelineRes = await app.inject({
       method: 'GET',
@@ -403,7 +417,7 @@ describe('performance, query efficiency, and scalability integrity', () => {
        LIMIT ? OFFSET ?`,
       ['invoice', invoiceIds[0], 'invoice.finalised', 10, 0],
     );
-    expect(timelinePlan.some((detail) => detail.includes('idx_timeline_entity_event_key_order'))).toBe(true);
+    expect(timelinePlan.some((detail) => detail.includes('idx_timeline_entity_order'))).toBe(true);
 
     const reportInvoicePlan = explainPlanDetails(
       raw,

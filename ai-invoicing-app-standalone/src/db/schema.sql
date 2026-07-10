@@ -487,8 +487,6 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_status_issue_order
 ON purchase_orders(status, issue_date, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entity ON timeline_events(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entity_order ON timeline_events(entity_type, entity_id, created_at, id);
-CREATE INDEX IF NOT EXISTS idx_timeline_entity_event_key_order
-ON timeline_events(entity_type, entity_id, coalesce(event_key, event_type), created_at, id);
 CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_requests(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_snapshots_invoice_id
 ON invoice_snapshots(invoice_id);
