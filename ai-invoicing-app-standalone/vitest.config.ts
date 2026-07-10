@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    env: {
+      AI_BUSINESS_OS_TEST_AUTH_BYPASS: '1',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

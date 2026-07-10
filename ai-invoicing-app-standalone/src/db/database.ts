@@ -1468,6 +1468,18 @@ export function createDatabase(dbPath: string): AppDatabase {
     if (!actorUserId) {
       throw new Error('TEAM_PERMISSION_DENIED');
     }
+    const globalAdminRole = db
+      .prepare(
+        `SELECT 1
+         FROM user_role_links url
+         INNER JOIN roles r ON r.id = url.role_id
+         WHERE url.user_id = ? AND r.can_manage_assignments = 1
+         LIMIT 1`,
+      )
+      .get(actorUserId);
+    if (globalAdminRole) {
+      return;
+    }
     const actorRole = getMembershipRole(teamId, actorUserId);
     if (!actorRole) {
       throw new Error('TEAM_PERMISSION_DENIED');

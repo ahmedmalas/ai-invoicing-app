@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { ZodError } from 'zod';
+import { z } from 'zod';
 
 import { createDatabase } from './db/database.js';
 import { healthRoutes } from './routes/health.js';
@@ -29,15 +30,26 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: AppDatabase;
   }
+
+  interface FastifyRequest {
+    auth: {
+      userId: string;
+      isAdmin: boolean;
+      canWrite: boolean;
+    };
+  }
 }
 
 export interface BuildAppOptions {
   dbPath: string;
+  authBypassForTesting?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({ logger: false });
   const db = createDatabase(options.dbPath);
+  const authBypassForTesting =
+    options.authBypassForTesting ?? process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1';
 
   app.decorate('db', db);
 
@@ -62,6 +74,72 @@ export async function buildApp(options: BuildAppOptions) {
     code: machineCodeFromMessage(message, status === 500 ? 'INTERNAL_SERVER_ERROR' : 'API_ERROR'),
     message,
     ...(details !== undefined ? { details } : {}),
+  });
+
+  const adminOnlyRoutes = new Set(['/roles', '/roles/:roleId', '/users', '/users/:userId', '/platform/backup', '/platform/restore']);
+
+  app.addHook('onRequest', async (request) => {
+    if (request.url === '/health') {
+      return;
+    }
+
+    const actorHeaderValue = request.headers['x-actor-user-id'];
+    const actorHeader = Array.isArray(actorHeaderValue) ? actorHeaderValue[0] : actorHeaderValue;
+    if (!actorHeader) {
+      if (authBypassForTesting) {
+        request.auth = {
+          userId: '00000000-0000-0000-0000-000000000001',
+          isAdmin: true,
+          canWrite: true,
+        };
+        return;
+      }
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+
+    const parsedActorId = z.string().uuid().safeParse(actorHeader);
+    if (!parsedActorId.success) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+
+    const actor = db.getUserById(parsedActorId.data);
+    if (!actor || !actor.isActive) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+
+    const roleRecords = actor.roleIds
+      .map((roleId) => db.getRoleById(roleId))
+      .filter((role): role is NonNullable<typeof role> => role !== null);
+    const isAdmin = roleRecords.some((role) => role.canManageAssignments);
+    const canWrite = roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned);
+    request.auth = {
+      userId: actor.id,
+      isAdmin,
+      canWrite,
+    };
+  });
+
+  app.addHook('preHandler', async (request) => {
+    if (request.url === '/health') {
+      return;
+    }
+    const routeUrl = request.routeOptions.url;
+    if (routeUrl && adminOnlyRoutes.has(routeUrl)) {
+      if (!request.auth.isAdmin) {
+        throw new Error('AUTH_FORBIDDEN');
+      }
+      return;
+    }
+
+    const method = request.method.toUpperCase();
+    const isWriteMethod = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+    if (!isWriteMethod) {
+      return;
+    }
+
+    if (!request.auth.canWrite) {
+      throw new Error('AUTH_FORBIDDEN');
+    }
   });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -91,6 +169,13 @@ export async function buildApp(options: BuildAppOptions) {
     }
 
     if (
+      errorMessage.includes('AUTH_UNAUTHENTICATED')
+    ) {
+      return reply.code(401).send(standardizeErrorPayload(401, errorMessage));
+    }
+
+    if (
+      errorMessage.includes('AUTH_FORBIDDEN') ||
       errorMessage.includes('TEAM_PERMISSION_DENIED') ||
       errorMessage.includes('TEAM_OWNER_MODIFICATION_FORBIDDEN')
     ) {
