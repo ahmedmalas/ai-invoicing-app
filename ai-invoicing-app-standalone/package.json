@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "smoke:release": "npm run build && node dist/src/scripts/release-smoke.js",
     "lint": "eslint .",
     "format": "prettier --write .",
