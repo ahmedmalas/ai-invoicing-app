@@ -2,7 +2,6 @@ import Fastify, { LogController } from 'fastify';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 
-import { createDatabase } from './db/database.js';
 import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
@@ -86,24 +85,20 @@ export async function buildApp(options: BuildAppOptions) {
     logController: new LogController({ disableRequestLogging: true }),
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
-  const db =
-    options.dbPath !== undefined
-      ? createDatabase(options.dbPath, {
-          ...(options.dbBusyTimeoutMs !== undefined
-            ? { busyTimeoutMs: options.dbBusyTimeoutMs }
-            : {}),
-        })
-      : databaseUrl
-        ? await (
-            await import('./db/postgres-database.js')
-          ).createPostgresDatabase(databaseUrl, {
-            ...(options.dbPoolMax !== undefined ? { maxConnections: options.dbPoolMax } : {}),
-          })
-        : createDatabase('./data/slice1.db', {
-            ...(options.dbBusyTimeoutMs !== undefined
-              ? { busyTimeoutMs: options.dbBusyTimeoutMs }
-              : {}),
-          });
+  let db: AppDatabase;
+  if (options.dbPath !== undefined) {
+    const { createDatabase } = await import('./db/database.js');
+    db = createDatabase(options.dbPath, {
+      ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
+    });
+  } else if (databaseUrl) {
+    const { createPostgresDatabase } = await import('./db/postgres-database.js');
+    db = await createPostgresDatabase(databaseUrl, {
+      ...(options.dbPoolMax !== undefined ? { maxConnections: options.dbPoolMax } : {}),
+    });
+  } else {
+    throw new Error('DATABASE_URL_REQUIRED');
+  }
   const requestStartedAt = new WeakMap<object, bigint>();
   const authBypassForTesting =
     options.authBypassForTesting ??

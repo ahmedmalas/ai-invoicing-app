@@ -59,6 +59,65 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       expect(new Set(finalised.map((invoice) => invoice.invoiceNumber)).size).toBe(2);
       expect(finalised.every((invoice) => invoice.status === 'Finalised')).toBe(true);
 
+      const creditNote = await db.createCreditNote({
+        linkedInvoiceId: finalised[0]!.id,
+        issueDate: '2026-07-11',
+        reason: 'PostgreSQL adjustment',
+        type: 'Partial',
+        lineItems: [{ description: 'Adjustment', amount: 10 }],
+      });
+      const payment = await db.createCustomerPayment({
+        customerId: first.id,
+        paymentDate: '2026-07-12',
+        paymentMethod: 'Bank Transfer',
+        reference: 'PG-CUSTOMER-PAYMENT',
+        amount: 25,
+        allocations: [{ invoiceId: finalised[1]!.id, amount: 25 }],
+      });
+
+      const supplier = await db.createSupplier({ displayName: 'PostgreSQL Supplier' });
+      const purchaseOrder = await db.createPurchaseOrderDraft({
+        supplierId: supplier.id,
+        issueDate: '2026-07-10',
+        expectedDeliveryDate: '2026-07-20',
+        supplierReference: 'PG-PO-REF',
+        currency: 'AUD',
+        lineItems: [{ description: 'Materials', quantity: 2, unitPrice: 40, gstApplicable: true }],
+      });
+      await db.approvePurchaseOrder(purchaseOrder.id);
+      const billDraft = await db.createSupplierBillDraftFromPurchaseOrder(purchaseOrder.id);
+      const bill = await db.finaliseSupplierBill(billDraft.id);
+      const supplierPayment = await db.createSupplierPayment({
+        supplierId: supplier.id,
+        paymentDate: '2026-07-12',
+        paymentMethod: 'Bank Transfer',
+        reference: 'PG-SUPPLIER-PAYMENT',
+        amount: 20,
+        allocations: [{ supplierBillId: bill.id, amount: 20 }],
+      });
+
+      const role = await db.createRole({
+        name: 'PostgreSQL Assignee',
+        canBeAssigned: true,
+        canManageAssignments: true,
+      });
+      const user = await db.createUser({
+        displayName: 'PostgreSQL User',
+        roleIds: [role.id],
+      });
+      const team = await db.createTeam({ name: 'PostgreSQL Team' });
+      await db.addTeamMember(team.id, user.id, 'owner', user.id);
+      const job = await db.createJob({
+        title: 'PostgreSQL Job',
+        customerId: first.id,
+        status: 'Draft',
+        priority: 'Normal',
+        assignedUserId: user.id,
+        assignedUserName: user.displayName,
+        teamId: team.id,
+      });
+      await db.linkDocumentToJob(job.id, finalised[0]!.id);
+
       const timeline = await db.getTimelineForEntity('invoice', drafts[0]!.id);
       expect(timeline.map((event) => event.eventKey)).toEqual([
         'invoice.draft_created',
@@ -66,7 +125,14 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       ]);
       expect((await db.search('PostgreSQL')).customers).toEqual([first]);
       expect((await db.getReportingReadModel()).accountsReceivable.invoices).toHaveLength(2);
-      expect((await db.exportPlatformSnapshot()).entities.invoices).toHaveLength(2);
+      expect(await db.getCustomerPaymentById(payment.id)).toEqual(payment);
+      expect(await db.getCreditNoteById(creditNote.id)).toEqual(creditNote);
+      expect(await db.getSupplierPaymentById(supplierPayment.id)).toEqual(supplierPayment);
+      expect(await db.listJobDocuments(job.id)).toHaveLength(1);
+      const snapshot = await db.exportPlatformSnapshot();
+      expect(snapshot.entities.invoices).toHaveLength(2);
+      expect(snapshot.entities.purchase_orders).toHaveLength(1);
+      expect(snapshot.entities.jobs).toHaveLength(1);
       expect(await db.getOperationalDiagnostics()).toMatchObject({
         migration: { compatible: true },
         runtime: { journalMode: 'postgresql', foreignKeysEnabled: true, quickCheck: 'ok' },
@@ -93,6 +159,35 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       );
     } finally {
       await target.close();
+    }
+  });
+
+  it('selects PostgreSQL in buildApp when only databaseUrl is provided', async () => {
+    const { buildApp } = await import('../../src/app.js');
+    const app = await buildApp({
+      databaseUrl: connectionString!,
+      authBypassForTesting: true,
+      nodeEnv: 'test',
+    });
+    try {
+      expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
+      const created = await app.inject({
+        method: 'POST',
+        url: '/customers',
+        payload: { displayName: 'PostgreSQL Route Customer' },
+      });
+      expect(created.statusCode).toBe(201);
+      const customer = created.json<{ id: string }>();
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/customers/${customer.id}`,
+          })
+        ).json(),
+      ).toMatchObject({ id: customer.id, displayName: 'PostgreSQL Route Customer' });
+    } finally {
+      await app.close();
     }
   });
 });

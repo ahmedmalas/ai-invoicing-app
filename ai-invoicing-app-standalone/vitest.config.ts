@@ -17,6 +17,7 @@ export default defineConfig({
         'vitest.config.ts',
         'src/index.ts',
         'src/config/env.ts',
+        'src/db/postgres-database.ts',
         'src/types/**',
         'src/domain/documents/interfaces.ts',
       ],
