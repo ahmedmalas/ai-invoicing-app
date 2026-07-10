@@ -17,7 +17,3 @@ export function parsePagination(query: unknown): PaginationParams {
     offset: parsed.offset ?? 0,
   };
 }
-
-export function paginateArray<T>(items: T[], pagination: PaginationParams): T[] {
-  return items.slice(pagination.offset, pagination.offset + pagination.limit);
-}

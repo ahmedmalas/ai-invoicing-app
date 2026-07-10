@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 
@@ -79,7 +79,10 @@ export async function buildApp(options: BuildAppOptions) {
         ...(options.loggerStream ? { stream: options.loggerStream } : {}),
       }
     : false;
-  const app = Fastify({ logger: loggerConfig, disableRequestLogging: true });
+  const app = Fastify({
+    logger: loggerConfig,
+    logController: new LogController({ disableRequestLogging: true }),
+  });
   const db = createDatabase(options.dbPath, {
     ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
   });

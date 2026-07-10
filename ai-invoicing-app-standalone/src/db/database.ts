@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
@@ -49,7 +49,18 @@ import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purch
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
-const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+function loadSchemaSql(): string {
+  try {
+    return readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return readFileSync(resolve(process.cwd(), 'src/db/schema.sql'), 'utf8');
+    }
+    throw error;
+  }
+}
+
+const schemaSql = loadSchemaSql();
 
 interface DbInvoiceLineItem {
   description: string;
