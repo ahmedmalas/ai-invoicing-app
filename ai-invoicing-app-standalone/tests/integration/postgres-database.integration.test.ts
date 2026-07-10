@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { PLATFORM_SNAPSHOT_TABLES } from '../../src/db/database.js';
+import { PLATFORM_SNAPSHOT_TABLES, createDatabase } from '../../src/db/database.js';
+import { migrateToPostgres } from '../../src/migration/postgres-migration.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const describePostgres = connectionString ? describe : describe.skip;
@@ -188,6 +193,44 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       ).toMatchObject({ id: customer.id, displayName: 'PostgreSQL Route Customer' });
     } finally {
       await app.close();
+    }
+  });
+
+  it('migrates SQLite or JSON snapshots and refuses a populated target', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'postgres-migration-'));
+    const sqlitePath = join(tempDir, 'source.db');
+    const snapshotPath = join(tempDir, 'snapshot.json');
+    const source = createDatabase(sqlitePath);
+    try {
+      const customer = source.createCustomer({ displayName: 'Migration Customer' });
+      const invoice = source.createInvoiceDraft({
+        customerId: customer.id,
+        title: 'Migration Invoice',
+        issueDate: '2026-07-10',
+        dueDate: '2026-07-24',
+        lineItems: [{ description: 'Migration', quantity: 1, unitPrice: 100, gstApplicable: true }],
+      });
+      source.finaliseInvoice(invoice.id);
+      writeFileSync(snapshotPath, JSON.stringify(source.exportPlatformSnapshot()), 'utf8');
+    } finally {
+      source.close();
+    }
+
+    try {
+      const sqliteResult = await migrateToPostgres({ sqlitePath }, connectionString);
+      expect(sqliteResult.tableCounts.customers).toBe(1);
+      expect(sqliteResult.tableCounts.invoices).toBe(1);
+      expect(sqliteResult.timelineReferenceCount).toBeGreaterThan(0);
+
+      await expect(migrateToPostgres({ snapshotPath }, connectionString)).rejects.toThrow(
+        'PostgreSQL target is not empty; migration refused.',
+      );
+
+      await reset();
+      const snapshotResult = await migrateToPostgres({ snapshotPath }, connectionString);
+      expect(snapshotResult.tableCounts).toEqual(sqliteResult.tableCounts);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
