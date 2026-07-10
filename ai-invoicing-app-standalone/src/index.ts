@@ -20,6 +20,8 @@ async function start(): Promise<void> {
     nodeEnv: env.NODE_ENV,
     dbBusyTimeoutMs: env.DB_BUSY_TIMEOUT_MS,
     dbPoolMax: env.DB_POOL_MAX,
+    corsOrigin: env.CORS_ORIGIN,
+    requestBodyLimit: env.REQUEST_BODY_LIMIT,
   });
 
   try {

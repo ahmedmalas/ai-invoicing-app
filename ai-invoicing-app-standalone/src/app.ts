@@ -1,4 +1,6 @@
 import Fastify, { LogController } from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 
@@ -62,6 +64,8 @@ export interface BuildAppOptions {
   nodeEnv?: string;
   dbBusyTimeoutMs?: number;
   dbPoolMax?: number;
+  corsOrigin?: string;
+  requestBodyLimit?: number;
   loggerStream?: NodeJS.WritableStream;
 }
 
@@ -83,6 +87,7 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
+    bodyLimit: options.requestBodyLimit ?? 1_048_576,
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   let db: AppDatabase;
@@ -116,6 +121,14 @@ export async function buildApp(options: BuildAppOptions) {
     databaseFailureCount: 0,
     unexpectedErrorCount: 0,
   });
+
+  await app.register(helmet);
+  if (options.corsOrigin !== undefined) {
+    await app.register(cors, {
+      origin: options.corsOrigin,
+      methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    });
+  }
 
   const machineCodeFromMessage = (message: string, fallback: string): string => {
     const trimmed = message.trim();
@@ -240,6 +253,15 @@ export async function buildApp(options: BuildAppOptions) {
   app.setErrorHandler((error, request, reply) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const normalizedMessage = errorMessage.toLowerCase();
+    const errorStatusCode =
+      typeof error === 'object' && error !== null && 'statusCode' in error
+        ? error.statusCode
+        : undefined;
+
+    if (errorStatusCode === 413) {
+      app.opsMetrics.validationFailureCount += 1;
+      return reply.code(413).send(standardizeErrorPayload(413, 'Request body too large'));
+    }
 
     if (error instanceof ZodError) {
       app.opsMetrics.validationFailureCount += 1;
