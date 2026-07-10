@@ -1,0 +1,274 @@
+export type UUID = string;
+
+export type DocumentType =
+  | 'invoice'
+  | 'supplier_bill'
+  | 'quote'
+  | 'receipt'
+  | 'purchase_order'
+  | 'delivery_docket'
+  | 'contract'
+  | 'custom';
+
+export type PaymentState = 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
+
+export type ReminderState = 'None' | 'Scheduled' | 'Paused' | 'Stopped';
+export type JobStatus =
+  | 'Draft'
+  | 'Scheduled'
+  | 'In Progress'
+  | 'On Hold'
+  | 'Completed'
+  | 'Cancelled';
+export type JobPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
+
+import type { TimelineEventKey } from '../domain/timeline/taxonomy.js';
+
+export type TimelineEventType = string;
+export type { TimelineEventKey };
+
+export interface DocumentRecord {
+  id: UUID;
+  documentType: DocumentType;
+  title: string;
+  entityId: UUID;
+  searchableText: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Customer {
+  id: UUID;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  abnTaxId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Role {
+  id: UUID;
+  name: string;
+  canBeAssigned: boolean;
+  canManageAssignments: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface User {
+  id: UUID;
+  displayName: string;
+  email: string | null;
+  isActive: boolean;
+  roleIds: UUID[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Team {
+  id: UUID;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TeamMembershipRole = 'owner' | 'manager' | 'member';
+
+export interface BrandingProfile {
+  id: UUID;
+  companyName: string;
+  legalName: string | null;
+  abnTaxId: string | null;
+  address: string | null;
+  email: string | null;
+  phone: string | null;
+  logoReference: string | null;
+  primaryColor: string;
+  secondaryColor: string;
+  updatedAt: string;
+}
+
+export interface LineItemInput {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  gstApplicable: boolean;
+}
+
+export interface InvoiceTotals {
+  subtotal: number;
+  gstTotal: number;
+  total: number;
+}
+
+export interface InvoiceDraft {
+  id: UUID;
+  customerId: UUID;
+  title: string;
+  issueDate: string;
+  dueDate: string;
+  notes: string | null;
+  paymentTerms: string | null;
+  invoiceNumber: string | null;
+  status: 'Draft' | 'Finalised';
+  paymentState: PaymentState;
+  reminderState: ReminderState;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Job {
+  id: UUID;
+  jobNumber: string;
+  title: string;
+  description: string | null;
+  customerId: UUID;
+  status: JobStatus;
+  priority: JobPriority;
+  scheduledStartAt: string | null;
+  scheduledEndAt: string | null;
+  assignedUserId: string | null;
+  assignedUserName: string | null;
+  teamId: string | null;
+  completedDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreditNoteType = 'Full' | 'Partial';
+export type CreditNoteStatus = 'Issued';
+
+export interface CreditNoteLineItem {
+  description: string;
+  amount: number;
+}
+
+export interface CreditNote {
+  id: UUID;
+  creditNoteNumber: string;
+  linkedInvoiceId: UUID;
+  customerId: UUID;
+  issueDate: string;
+  reason: string;
+  type: CreditNoteType;
+  status: CreditNoteStatus;
+  totalCredit: number;
+  lineItems: CreditNoteLineItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentAllocation {
+  invoiceId: UUID;
+  amount: number;
+}
+
+export interface CustomerPayment {
+  id: UUID;
+  paymentNumber: string;
+  customerId: UUID;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
+  allocations: PaymentAllocation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Supplier {
+  id: UUID;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SupplierBillStatus = 'Draft' | 'Finalised';
+
+export interface SupplierBillLineItemInput {
+  id?: UUID | undefined;
+  sourcePurchaseOrderLineItemId?: UUID | undefined;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  gstApplicable: boolean;
+}
+
+export interface SupplierBill {
+  id: UUID;
+  supplierId: UUID;
+  sourcePurchaseOrderId: UUID | null;
+  sourcePurchaseOrderNumber: string | null;
+  billNumber: string | null;
+  billDate: string;
+  dueDate: string;
+  supplierReference: string | null;
+  currency: string;
+  notes: string | null;
+  status: SupplierBillStatus;
+  paymentState: PaymentState;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierPaymentAllocation {
+  supplierBillId: UUID;
+  amount: number;
+}
+
+export interface SupplierBillPayment {
+  id: UUID;
+  paymentNumber: string;
+  supplierId: UUID;
+  paymentDate: string;
+  paymentMethod: string;
+  reference: string;
+  amount: number;
+  notes: string | null;
+  allocations: SupplierPaymentAllocation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PurchaseOrderStatus = 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
+export type PurchaseOrderBillingStatus = 'unbilled' | 'partially_billed' | 'fully_billed';
+
+export interface PurchaseOrderLineItemInput {
+  id?: UUID;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  gstApplicable: boolean;
+}
+
+export interface PurchaseOrder {
+  id: UUID;
+  purchaseOrderNumber: string;
+  supplierId: UUID;
+  issueDate: string;
+  expectedDeliveryDate: string | null;
+  supplierReference: string | null;
+  currency: string;
+  notes: string | null;
+  status: PurchaseOrderStatus;
+  closeReason: string | null;
+  closedDate: string | null;
+  closedBy: string | null;
+  billingStatus: PurchaseOrderBillingStatus;
+  totalBilledAmount: number;
+  remainingUnbilledAmount: number;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
