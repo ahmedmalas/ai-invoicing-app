@@ -686,7 +686,7 @@ export interface AppDatabase {
   createSupplier(input: CreateSupplierInput): Supplier;
   deleteSupplier(id: string): void;
   getSupplierById(id: string): Supplier | null;
-  listSuppliers(): Supplier[];
+  listSuppliers(options?: ListQueryOptions): Supplier[];
   upsertBusinessProfile(input: UpsertBusinessProfileInput): BrandingProfile;
   getBusinessProfile(): BrandingProfile | null;
   upsertPreference(key: string, value: unknown): void;
@@ -725,14 +725,14 @@ export interface AppDatabase {
   createRole(input: CreateRoleInput): Role;
   deleteRole(id: string): void;
   getRoleById(id: string): Role | null;
-  listRoles(): Role[];
+  listRoles(options?: ListQueryOptions): Role[];
   createUser(input: CreateUserInput): User;
   deleteUser(id: string): void;
   getUserById(id: string): User | null;
-  listUsers(): User[];
+  listUsers(options?: ListQueryOptions): User[];
   createTeam(input: CreateTeamInput): Team;
   getTeamById(id: string): Team | null;
-  listTeams(): Team[];
+  listTeams(options?: ListQueryOptions): Team[];
   deleteTeam(teamId: string, actorUserId?: string | null): void;
   addTeamMember(
     teamId: string,
@@ -747,13 +747,13 @@ export interface AppDatabase {
     role: TeamMembershipRole,
     actorUserId?: string | null,
   ): TeamMembershipRecord;
-  listTeamMembers(teamId: string): TeamMembershipRecord[];
+  listTeamMembers(teamId: string, options?: ListQueryOptions): TeamMembershipRecord[];
   createJob(input: CreateJobInput): Job;
   updateJob(id: string, input: UpdateJobInput): Job;
   getJobById(id: string): Job | null;
-  listJobs(): Job[];
+  listJobs(options?: ListQueryOptions): Job[];
   linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
-  listJobDocuments(jobId: string): JobDocumentLinkRecord[];
+  listJobDocuments(jobId: string, options?: ListQueryOptions): JobDocumentLinkRecord[];
   getCustomerStatement(customerId: string, from?: string | null, to?: string | null): CustomerStatementReport;
   getReportingReadModel(options?: ReportingReadModelQueryOptions): ReportingReadModel;
   getTimelineForEntity(
@@ -1298,12 +1298,34 @@ export function createDatabase(dbPath: string): AppDatabase {
   }
 
   const listRoleIdsForUser = db.prepare(
-    'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC',
+    'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
   );
 
   function getRoleIdsForUser(userId: string): string[] {
     const rows = listRoleIdsForUser.all(userId) as Array<{ role_id: string }>;
     return rows.map((row) => row.role_id);
+  }
+
+  function getRoleIdsForUsers(userIds: string[]): Map<string, string[]> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const placeholders = userIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT user_id, role_id
+         FROM user_role_links
+         WHERE user_id IN (${placeholders})
+         ORDER BY user_id ASC, created_at ASC, id ASC`,
+      )
+      .all(...userIds) as Array<{ user_id: string; role_id: string }>;
+    const roleIdsByUser = new Map<string, string[]>();
+    for (const row of rows) {
+      const existing = roleIdsByUser.get(row.user_id) ?? [];
+      existing.push(row.role_id);
+      roleIdsByUser.set(row.user_id, existing);
+    }
+    return roleIdsByUser;
   }
 
   function getAllocationsForPayment(paymentId: string): PaymentAllocation[] {
@@ -1312,7 +1334,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         `SELECT invoice_id, amount
          FROM payment_allocations
          WHERE payment_id = ?
-         ORDER BY created_at ASC`,
+         ORDER BY created_at ASC, id ASC`,
       )
       .all(paymentId) as Array<{ invoice_id: string; amount: number }>;
     return rows.map((row) => ({
@@ -1327,7 +1349,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         `SELECT supplier_bill_id, amount
          FROM supplier_payment_allocations
          WHERE supplier_payment_id = ?
-         ORDER BY created_at ASC`,
+         ORDER BY created_at ASC, id ASC`,
       )
       .all(supplierPaymentId) as Array<{ supplier_bill_id: string; amount: number }>;
     return rows.map((row) => ({
@@ -1369,6 +1391,72 @@ export function createDatabase(dbPath: string): AppDatabase {
       ...purchaseOrder,
       ...summary,
     };
+  }
+
+  function mapBilledAmountByPurchaseOrderId(purchaseOrderIds: string[]): Map<string, number> {
+    if (purchaseOrderIds.length === 0) {
+      return new Map();
+    }
+    const placeholders = purchaseOrderIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT source_purchase_order_id AS purchase_order_id, coalesce(sum(total), 0) AS total_billed
+         FROM supplier_bills
+         WHERE source_purchase_order_id IN (${placeholders})
+         GROUP BY source_purchase_order_id`,
+      )
+      .all(...purchaseOrderIds) as Array<{ purchase_order_id: string; total_billed: number }>;
+    return new Map(rows.map((row) => [row.purchase_order_id, Number(row.total_billed ?? 0)]));
+  }
+
+  function mapPaymentAllocationsByPaymentId(paymentIds: string[]): Map<string, PaymentAllocation[]> {
+    if (paymentIds.length === 0) {
+      return new Map();
+    }
+    const placeholders = paymentIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT payment_id, invoice_id, amount
+         FROM payment_allocations
+         WHERE payment_id IN (${placeholders})
+         ORDER BY payment_id ASC, created_at ASC, id ASC`,
+      )
+      .all(...paymentIds) as Array<{ payment_id: string; invoice_id: string; amount: number }>;
+    const allocationsByPaymentId = new Map<string, PaymentAllocation[]>();
+    for (const row of rows) {
+      const existing = allocationsByPaymentId.get(row.payment_id) ?? [];
+      existing.push({ invoiceId: row.invoice_id, amount: row.amount });
+      allocationsByPaymentId.set(row.payment_id, existing);
+    }
+    return allocationsByPaymentId;
+  }
+
+  function mapSupplierPaymentAllocationsByPaymentId(
+    supplierPaymentIds: string[],
+  ): Map<string, SupplierPaymentAllocation[]> {
+    if (supplierPaymentIds.length === 0) {
+      return new Map();
+    }
+    const placeholders = supplierPaymentIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT supplier_payment_id, supplier_bill_id, amount
+         FROM supplier_payment_allocations
+         WHERE supplier_payment_id IN (${placeholders})
+         ORDER BY supplier_payment_id ASC, created_at ASC, id ASC`,
+      )
+      .all(...supplierPaymentIds) as Array<{
+      supplier_payment_id: string;
+      supplier_bill_id: string;
+      amount: number;
+    }>;
+    const allocationsByPaymentId = new Map<string, SupplierPaymentAllocation[]>();
+    for (const row of rows) {
+      const existing = allocationsByPaymentId.get(row.supplier_payment_id) ?? [];
+      existing.push({ supplierBillId: row.supplier_bill_id, amount: row.amount });
+      allocationsByPaymentId.set(row.supplier_payment_id, existing);
+    }
+    return allocationsByPaymentId;
   }
 
   function loadAssignableUserOrThrow(
@@ -1856,10 +1944,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapSupplierRow(row) : null;
     },
 
-    listSuppliers() {
+    listSuppliers(options) {
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
-        .prepare('SELECT * FROM suppliers ORDER BY created_at DESC, id DESC')
-        .all() as DbSupplierRow[];
+        .prepare('SELECT * FROM suppliers ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(limit, offset) as DbSupplierRow[];
       return rows.map(mapSupplierRow);
     },
 
@@ -2473,7 +2564,8 @@ export function createDatabase(dbPath: string): AppDatabase {
           limit,
           offset,
         ) as DbCustomerPaymentRow[];
-      return rows.map((row) => mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)));
+      const allocationsByPaymentId = mapPaymentAllocationsByPaymentId(rows.map((row) => row.id));
+      return rows.map((row) => mapCustomerPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []));
     },
 
     createSupplierBillDraft(input) {
@@ -3490,13 +3582,21 @@ export function createDatabase(dbPath: string): AppDatabase {
       const pagination = options ?? {};
       const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
       const offset = pagination.offset ?? 0;
-      const requiresBillingStatusFilter = Boolean(rowFilter.billingStatus);
-      const queryLimit = requiresBillingStatusFilter ? Number.MAX_SAFE_INTEGER : limit;
-      const queryOffset = requiresBillingStatusFilter ? 0 : offset;
       const rows = db
         .prepare(
-          `SELECT *
-           FROM purchase_orders
+          `WITH po_with_billed AS (
+             SELECT
+               po.*,
+               coalesce(sb.total_billed, 0) AS total_billed
+             FROM purchase_orders po
+             LEFT JOIN (
+               SELECT source_purchase_order_id, coalesce(sum(total), 0) AS total_billed
+               FROM supplier_bills
+               GROUP BY source_purchase_order_id
+             ) sb ON sb.source_purchase_order_id = po.id
+           )
+           SELECT *
+           FROM po_with_billed
            WHERE (? IS NULL OR supplier_id = ?)
              AND (? IS NULL OR purchase_order_number = ?)
              AND (? IS NULL OR status = ?)
@@ -3504,6 +3604,14 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR issue_date <= ?)
              AND (? IS NULL OR expected_delivery_date >= ?)
              AND (? IS NULL OR expected_delivery_date <= ?)
+             AND (
+               ? IS NULL
+               OR CASE
+                    WHEN total_billed <= 0 THEN 'unbilled'
+                    WHEN total_billed < total THEN 'partially_billed'
+                    ELSE 'fully_billed'
+                  END = ?
+             )
            ORDER BY issue_date DESC, created_at DESC, id DESC
            LIMIT ? OFFSET ?`,
         )
@@ -3522,15 +3630,29 @@ export function createDatabase(dbPath: string): AppDatabase {
           rowFilter.fromExpectedDeliveryDate ?? null,
           rowFilter.toExpectedDeliveryDate ?? null,
           rowFilter.toExpectedDeliveryDate ?? null,
-          queryLimit,
-          queryOffset,
+          rowFilter.billingStatus ?? null,
+          rowFilter.billingStatus ?? null,
+          limit,
+          offset,
         ) as DbPurchaseOrderRow[];
-      const mapped = rows.map((row) => withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row)));
-      if (!requiresBillingStatusFilter) {
-        return mapped;
-      }
-      const filtered = mapped.filter((order) => order.billingStatus === rowFilter.billingStatus);
-      return filtered.slice(offset, offset + limit);
+      const billedByPurchaseOrderId = mapBilledAmountByPurchaseOrderId(rows.map((row) => row.id));
+      return rows.map((row) => {
+        const purchaseOrder = mapPurchaseOrderRow(row);
+        const totalBilledAmount = billedByPurchaseOrderId.get(row.id) ?? 0;
+        const remainingUnbilledAmount = Math.max(purchaseOrder.totals.total - totalBilledAmount, 0);
+        let billingStatus: PurchaseOrderBillingStatus = 'unbilled';
+        if (totalBilledAmount > 0 && remainingUnbilledAmount > 0) {
+          billingStatus = 'partially_billed';
+        } else if (totalBilledAmount > 0 && remainingUnbilledAmount <= 0) {
+          billingStatus = 'fully_billed';
+        }
+        return {
+          ...purchaseOrder,
+          totalBilledAmount,
+          remainingUnbilledAmount,
+          billingStatus,
+        };
+      });
     },
 
     createSupplierPayment(input) {
@@ -3785,7 +3907,8 @@ export function createDatabase(dbPath: string): AppDatabase {
           limit,
           offset,
         ) as DbSupplierPaymentRow[];
-      return rows.map((row) => mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(row.id)));
+      const allocationsByPaymentId = mapSupplierPaymentAllocationsByPaymentId(rows.map((row) => row.id));
+      return rows.map((row) => mapSupplierPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []));
     },
 
     createRole(input) {
@@ -3835,8 +3958,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapRoleRow(row) : null;
     },
 
-    listRoles() {
-      const rows = db.prepare('SELECT * FROM roles ORDER BY name ASC, id ASC').all() as DbRoleRow[];
+    listRoles(options) {
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
+      const rows = db
+        .prepare('SELECT * FROM roles ORDER BY name ASC, id ASC LIMIT ? OFFSET ?')
+        .all(limit, offset) as DbRoleRow[];
       return rows.map(mapRoleRow);
     },
 
@@ -3901,11 +4029,15 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapUserRow(row, getRoleIdsForUser(id)) : null;
     },
 
-    listUsers() {
+    listUsers(options) {
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
-        .prepare('SELECT * FROM users ORDER BY created_at DESC, id DESC')
-        .all() as DbUserRow[];
-      return rows.map((row) => mapUserRow(row, getRoleIdsForUser(row.id)));
+        .prepare('SELECT * FROM users ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(limit, offset) as DbUserRow[];
+      const roleIdsByUser = getRoleIdsForUsers(rows.map((row) => row.id));
+      return rows.map((row) => mapUserRow(row, roleIdsByUser.get(row.id) ?? []));
     },
 
     createTeam(input) {
@@ -3927,8 +4059,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapTeamRow(row) : null;
     },
 
-    listTeams() {
-      const rows = db.prepare('SELECT * FROM teams ORDER BY name ASC, id ASC').all() as DbTeamRow[];
+    listTeams(options) {
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
+      const rows = db
+        .prepare('SELECT * FROM teams ORDER BY name ASC, id ASC LIMIT ? OFFSET ?')
+        .all(limit, offset) as DbTeamRow[];
       return rows.map(mapTeamRow);
     },
 
@@ -4119,8 +4256,11 @@ export function createDatabase(dbPath: string): AppDatabase {
       };
     },
 
-    listTeamMembers(teamId) {
+    listTeamMembers(teamId, options) {
       ensureTeamExistsOrThrow(teamId);
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
         .prepare(
           `SELECT
@@ -4138,9 +4278,10 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM team_memberships tm
            INNER JOIN users u ON u.id = tm.user_id
            WHERE tm.team_id = ?
-             ORDER BY tm.created_at ASC, tm.id ASC`,
+           ORDER BY tm.created_at ASC, tm.id ASC
+           LIMIT ? OFFSET ?`,
         )
-        .all(teamId) as Array<{
+        .all(teamId, limit, offset) as Array<{
         id: string;
         team_id: string;
         user_id: string;
@@ -4153,6 +4294,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         user_created_at: string;
         user_updated_at: string;
       }>;
+      const roleIdsByUser = getRoleIdsForUsers(rows.map((row) => row.user_id_ref));
 
       return rows.map((row) => ({
         id: row.id,
@@ -4169,7 +4311,7 @@ export function createDatabase(dbPath: string): AppDatabase {
             created_at: row.user_created_at,
             updated_at: row.user_updated_at,
           },
-          getRoleIdsForUser(row.user_id_ref),
+          roleIdsByUser.get(row.user_id_ref) ?? [],
         ),
       }));
     },
@@ -4394,10 +4536,13 @@ export function createDatabase(dbPath: string): AppDatabase {
       return row ? mapJobRow(row) : null;
     },
 
-    listJobs() {
+    listJobs(options) {
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
       const rows = db
-        .prepare('SELECT * FROM jobs ORDER BY created_at DESC, id DESC')
-        .all() as DbJobRow[];
+        .prepare('SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(limit, offset) as DbJobRow[];
       return rows.map(mapJobRow);
     },
 
@@ -4451,11 +4596,14 @@ export function createDatabase(dbPath: string): AppDatabase {
       };
     },
 
-    listJobDocuments(jobId) {
+    listJobDocuments(jobId, options) {
       const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(jobId);
       if (!job) {
         throw new Error('Job not found');
       }
+      const pagination = options ?? {};
+      const limit = pagination.limit ?? Number.MAX_SAFE_INTEGER;
+      const offset = pagination.offset ?? 0;
 
       const rows = db
         .prepare(
@@ -4474,9 +4622,10 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM job_document_links l
            INNER JOIN documents d ON d.id = l.document_id
            WHERE l.job_id = ?
-           ORDER BY l.created_at DESC, l.id DESC`,
+           ORDER BY l.created_at DESC, l.id DESC
+           LIMIT ? OFFSET ?`,
         )
-        .all(jobId) as Array<{
+        .all(jobId, limit, offset) as Array<{
         id: string;
         jobId: string;
         documentId: string;
@@ -4591,10 +4740,10 @@ export function createDatabase(dbPath: string): AppDatabase {
            WHERE status = 'Finalised'
              AND (? IS NULL OR issue_date >= ?)
              AND (? IS NULL OR issue_date <= ?)
-           ORDER BY issue_date ASC, created_at ASC, id ASC`,
+           ORDER BY issue_date ASC, created_at ASC, id ASC
+           LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to) as DbInvoiceRow[];
-      const pagedInvoiceRows = invoiceRows.slice(offset, offset + limit);
+        .all(from, from, to, to, limit, offset) as DbInvoiceRow[];
       const invoiceIds = invoiceRows.map((row) => row.id);
 
       let invoiceCreditsById = new Map<string, number>();
@@ -4623,7 +4772,7 @@ export function createDatabase(dbPath: string): AppDatabase {
         );
       }
 
-      const invoices = pagedInvoiceRows.map((invoiceRow) => {
+      const invoices = invoiceRows.map((invoiceRow) => {
         const totalCredited = invoiceCreditsById.get(invoiceRow.id) ?? 0;
         const totalPaid = invoicePaymentsById.get(invoiceRow.id) ?? 0;
         const outstanding = invoiceRow.total - totalCredited - totalPaid;
@@ -4638,18 +4787,51 @@ export function createDatabase(dbPath: string): AppDatabase {
           outstanding,
         };
       });
-      const arTotalInvoiced = invoiceRows.reduce((sum, row) => sum + row.total, 0);
-      const arTotalCredited = invoiceRows.reduce((sum, row) => sum + (invoiceCreditsById.get(row.id) ?? 0), 0);
-      const arTotalPaid = invoiceRows.reduce((sum, row) => sum + (invoicePaymentsById.get(row.id) ?? 0), 0);
+      const arTotalInvoiced = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM invoices
+             WHERE status = 'Finalised'
+               AND (? IS NULL OR issue_date >= ?)
+               AND (? IS NULL OR issue_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
+      const arTotalCredited = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(cn.total_credit), 0) AS amount
+             FROM credit_notes cn
+             INNER JOIN invoices i ON i.id = cn.linked_invoice_id
+             WHERE i.status = 'Finalised'
+               AND (? IS NULL OR i.issue_date >= ?)
+               AND (? IS NULL OR i.issue_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
+      const arTotalPaid = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(pa.amount), 0) AS amount
+             FROM payment_allocations pa
+             INNER JOIN invoices i ON i.id = pa.invoice_id
+             WHERE i.status = 'Finalised'
+               AND (? IS NULL OR i.issue_date >= ?)
+               AND (? IS NULL OR i.issue_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
 
       const customers = db
         .prepare(
           `SELECT id, display_name
            FROM customers
-           ORDER BY display_name ASC, id ASC`,
+           ORDER BY display_name ASC, id ASC
+           LIMIT ? OFFSET ?`,
         )
-        .all() as Array<{ id: string; display_name: string }>;
-      const pagedCustomers = customers.slice(offset, offset + limit);
+        .all(limit, offset) as Array<{ id: string; display_name: string }>;
+      const pagedCustomers = customers;
       const pagedCustomerIds = pagedCustomers.map((row) => row.id);
 
       const sumByCustomerId = (
@@ -4768,10 +4950,10 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM purchase_orders
            WHERE (? IS NULL OR issue_date >= ?)
              AND (? IS NULL OR issue_date <= ?)
-           ORDER BY issue_date ASC, created_at ASC, id ASC`,
+           ORDER BY issue_date ASC, created_at ASC, id ASC
+           LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to) as DbPurchaseOrderRow[];
-      const pagedPurchaseOrderRows = purchaseOrderRows.slice(offset, offset + limit);
+        .all(from, from, to, to, limit, offset) as DbPurchaseOrderRow[];
       const purchaseOrderIds = purchaseOrderRows.map((row) => row.id);
       let billedByPurchaseOrder = new Map<string, number>();
       if (purchaseOrderIds.length > 0) {
@@ -4787,7 +4969,7 @@ export function createDatabase(dbPath: string): AppDatabase {
             .all(...purchaseOrderIds) as Array<{ id: string; amount: number }>,
         );
       }
-      const purchaseOrders = pagedPurchaseOrderRows.map((purchaseOrderRow) => {
+      const purchaseOrders = purchaseOrderRows.map((purchaseOrderRow) => {
         const totalBilled = billedByPurchaseOrder.get(purchaseOrderRow.id) ?? 0;
         const remainingValue = purchaseOrderRow.total - totalBilled;
         return {
@@ -4807,10 +4989,10 @@ export function createDatabase(dbPath: string): AppDatabase {
            FROM supplier_bills
            WHERE (? IS NULL OR bill_date >= ?)
              AND (? IS NULL OR bill_date <= ?)
-           ORDER BY bill_date ASC, created_at ASC, id ASC`,
+           ORDER BY bill_date ASC, created_at ASC, id ASC
+           LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to) as DbSupplierBillRow[];
-      const pagedSupplierBillRows = supplierBillRows.slice(offset, offset + limit);
+        .all(from, from, to, to, limit, offset) as DbSupplierBillRow[];
       const supplierBillIds = supplierBillRows.map((row) => row.id);
       let paymentsBySupplierBill = new Map<string, number>();
       if (supplierBillIds.length > 0) {
@@ -4826,7 +5008,7 @@ export function createDatabase(dbPath: string): AppDatabase {
             .all(...supplierBillIds) as Array<{ id: string; amount: number }>,
         );
       }
-      const supplierBills = pagedSupplierBillRows.map((supplierBillRow) => {
+      const supplierBills = supplierBillRows.map((supplierBillRow) => {
         const totalPaid = paymentsBySupplierBill.get(supplierBillRow.id) ?? 0;
         const outstanding = supplierBillRow.total - totalPaid;
         return {
@@ -4841,8 +5023,26 @@ export function createDatabase(dbPath: string): AppDatabase {
         };
       });
 
-      const apTotalOrdered = purchaseOrderRows.reduce((sum, row) => sum + row.total, 0);
-      const apTotalBilled = supplierBillRows.reduce((sum, row) => sum + row.total, 0);
+      const apTotalOrdered = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM purchase_orders
+             WHERE (? IS NULL OR issue_date >= ?)
+               AND (? IS NULL OR issue_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
+      const apTotalBilled = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(total), 0) AS amount
+             FROM supplier_bills
+             WHERE (? IS NULL OR bill_date >= ?)
+               AND (? IS NULL OR bill_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
       const apTotalPaid = (db
         .prepare(
           `SELECT coalesce(sum(spa.amount), 0) AS amount
@@ -4852,10 +5052,21 @@ export function createDatabase(dbPath: string): AppDatabase {
              AND (? IS NULL OR sp.payment_date <= ?)`,
         )
         .get(from, from, to, to) as { amount: number }).amount;
-      const apRemainingOrderedValue = purchaseOrderRows.reduce(
-        (sum, row) => sum + (row.total - (billedByPurchaseOrder.get(row.id) ?? 0)),
-        0,
-      );
+      const apRemainingOrderedValue = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(po.total - coalesce(sb.total_billed, 0)), 0) AS amount
+             FROM purchase_orders po
+             LEFT JOIN (
+               SELECT source_purchase_order_id, coalesce(sum(total), 0) AS total_billed
+               FROM supplier_bills
+               GROUP BY source_purchase_order_id
+             ) sb ON sb.source_purchase_order_id = po.id
+             WHERE (? IS NULL OR po.issue_date >= ?)
+               AND (? IS NULL OR po.issue_date <= ?)`,
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
       const generatedAtRow = db
         .prepare(
           `SELECT max(ts) AS ts
@@ -4994,28 +5205,47 @@ export function createDatabase(dbPath: string): AppDatabase {
             )
             .all(wildcard, wildcard, limit, offset) as DbInvoiceRow[])
         : [];
-      const invoices = invoiceRows.map((row) => {
-        const creditNoteIds = db
+      const invoiceCreditNoteIds = new Map<string, string[]>();
+      const invoiceCustomerPaymentIds = new Map<string, string[]>();
+      if (invoiceRows.length > 0) {
+        const placeholders = invoiceRows.map(() => '?').join(',');
+        const invoiceIds = invoiceRows.map((row) => row.id);
+        const creditNoteRows = db
           .prepare(
-            `SELECT id
+            `SELECT linked_invoice_id AS invoice_id, id
              FROM credit_notes
-             WHERE linked_invoice_id = ?
-             ORDER BY created_at ASC, id ASC`,
+             WHERE linked_invoice_id IN (${placeholders})
+             ORDER BY linked_invoice_id ASC, created_at ASC, id ASC`,
           )
-          .all(row.id) as Array<{ id: string }>;
-        const customerPaymentIds = db
+          .all(...invoiceIds) as Array<{ invoice_id: string; id: string }>;
+        for (const creditNoteRow of creditNoteRows) {
+          const existing = invoiceCreditNoteIds.get(creditNoteRow.invoice_id) ?? [];
+          existing.push(creditNoteRow.id);
+          invoiceCreditNoteIds.set(creditNoteRow.invoice_id, existing);
+        }
+
+        const paymentRows = db
           .prepare(
-            `SELECT distinct p.id AS id
-             FROM customer_payments p
-             INNER JOIN payment_allocations pa ON pa.payment_id = p.id
-             WHERE pa.invoice_id = ?
-             ORDER BY p.created_at ASC, p.id ASC`,
+            `SELECT pa.invoice_id AS invoice_id, p.id AS payment_id
+             FROM payment_allocations pa
+             INNER JOIN customer_payments p ON p.id = pa.payment_id
+             WHERE pa.invoice_id IN (${placeholders})
+             ORDER BY pa.invoice_id ASC, p.created_at ASC, p.id ASC`,
           )
-          .all(row.id) as Array<{ id: string }>;
+          .all(...invoiceIds) as Array<{ invoice_id: string; payment_id: string }>;
+        for (const paymentRow of paymentRows) {
+          const existing = invoiceCustomerPaymentIds.get(paymentRow.invoice_id) ?? [];
+          if (!existing.includes(paymentRow.payment_id)) {
+            existing.push(paymentRow.payment_id);
+            invoiceCustomerPaymentIds.set(paymentRow.invoice_id, existing);
+          }
+        }
+      }
+      const invoices = invoiceRows.map((row) => {
         return {
           ...mapInvoiceRow(row),
-          creditNoteIds: creditNoteIds.map((item) => item.id),
-          customerPaymentIds: customerPaymentIds.map((item) => item.id),
+          creditNoteIds: invoiceCreditNoteIds.get(row.id) ?? [],
+          customerPaymentIds: invoiceCustomerPaymentIds.get(row.id) ?? [],
         };
       });
 
@@ -5043,10 +5273,14 @@ export function createDatabase(dbPath: string): AppDatabase {
                ORDER BY updated_at DESC, id DESC
                LIMIT ? OFFSET ?`,
             )
-            .all(wildcard, wildcard, wildcard, limit, offset) as DbCustomerPaymentRow[]).map((row) =>
-            mapCustomerPaymentRow(row, getAllocationsForPayment(row.id)),
-          )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbCustomerPaymentRow[])
         : [];
+      const customerPaymentAllocationsByPaymentId = mapPaymentAllocationsByPaymentId(
+        customerPayments.map((row) => row.id),
+      );
+      const mappedCustomerPayments = customerPayments.map((row) =>
+        mapCustomerPaymentRow(row, customerPaymentAllocationsByPaymentId.get(row.id) ?? []),
+      );
 
       const purchaseOrderRows = requestedEntityTypes.has('purchaseOrders')
         ? (db
@@ -5061,18 +5295,41 @@ export function createDatabase(dbPath: string): AppDatabase {
             )
             .all(wildcard, wildcard, wildcard, limit, offset) as DbPurchaseOrderRow[])
         : [];
-      const purchaseOrders = purchaseOrderRows.map((row) => {
-        const supplierBillIds = db
+      const purchaseOrderBilledById = mapBilledAmountByPurchaseOrderId(purchaseOrderRows.map((row) => row.id));
+      const purchaseOrderSupplierBillIds = new Map<string, string[]>();
+      if (purchaseOrderRows.length > 0) {
+        const placeholders = purchaseOrderRows.map(() => '?').join(',');
+        const purchaseOrderIds = purchaseOrderRows.map((row) => row.id);
+        const supplierBillRows = db
           .prepare(
-            `SELECT id
+            `SELECT source_purchase_order_id AS purchase_order_id, id
              FROM supplier_bills
-             WHERE source_purchase_order_id = ?
-             ORDER BY created_at ASC, id ASC`,
+             WHERE source_purchase_order_id IN (${placeholders})
+             ORDER BY source_purchase_order_id ASC, created_at ASC, id ASC`,
           )
-          .all(row.id) as Array<{ id: string }>;
+          .all(...purchaseOrderIds) as Array<{ purchase_order_id: string; id: string }>;
+        for (const supplierBillRow of supplierBillRows) {
+          const existing = purchaseOrderSupplierBillIds.get(supplierBillRow.purchase_order_id) ?? [];
+          existing.push(supplierBillRow.id);
+          purchaseOrderSupplierBillIds.set(supplierBillRow.purchase_order_id, existing);
+        }
+      }
+      const purchaseOrders = purchaseOrderRows.map((row) => {
+        const purchaseOrder = mapPurchaseOrderRow(row);
+        const totalBilledAmount = purchaseOrderBilledById.get(row.id) ?? 0;
+        const remainingUnbilledAmount = Math.max(purchaseOrder.totals.total - totalBilledAmount, 0);
+        let billingStatus: PurchaseOrderBillingStatus = 'unbilled';
+        if (totalBilledAmount > 0 && remainingUnbilledAmount > 0) {
+          billingStatus = 'partially_billed';
+        } else if (totalBilledAmount > 0 && remainingUnbilledAmount <= 0) {
+          billingStatus = 'fully_billed';
+        }
         return {
-          ...withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row)),
-          supplierBillIds: supplierBillIds.map((item) => item.id),
+          ...purchaseOrder,
+          totalBilledAmount,
+          remainingUnbilledAmount,
+          billingStatus,
+          supplierBillIds: purchaseOrderSupplierBillIds.get(row.id) ?? [],
         };
       });
 
@@ -5102,10 +5359,14 @@ export function createDatabase(dbPath: string): AppDatabase {
                ORDER BY updated_at DESC, id DESC
                LIMIT ? OFFSET ?`,
             )
-            .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierPaymentRow[]).map((row) =>
-            mapSupplierPaymentRow(row, getAllocationsForSupplierPayment(row.id)),
-          )
+            .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierPaymentRow[])
         : [];
+      const supplierPaymentAllocationsByPaymentId = mapSupplierPaymentAllocationsByPaymentId(
+        supplierPayments.map((row) => row.id),
+      );
+      const mappedSupplierPayments = supplierPayments.map((row) =>
+        mapSupplierPaymentRow(row, supplierPaymentAllocationsByPaymentId.get(row.id) ?? []),
+      );
 
       const documents = requestedEntityTypes.has('documents')
         ? (db
@@ -5146,24 +5407,91 @@ export function createDatabase(dbPath: string): AppDatabase {
         suppliers,
         invoices,
         creditNotes,
-        customerPayments,
+        customerPayments: mappedCustomerPayments,
         purchaseOrders,
         supplierBills,
-        supplierPayments,
+        supplierPayments: mappedSupplierPayments,
         documents,
         jobs,
       };
     },
 
     exportPlatformSnapshot() {
-      const customerIds = (
-        db.prepare('SELECT id FROM customers ORDER BY id ASC').all() as Array<{ id: string }>
-      ).map((row) => row.id);
+      const customerRows = db
+        .prepare('SELECT * FROM customers ORDER BY id ASC')
+        .all() as Array<Record<string, unknown>>;
+      const finalisedInvoiceRows = db
+        .prepare(
+          `SELECT
+             customer_id,
+             id AS invoice_id,
+             coalesce(invoice_number, id) AS invoice_number,
+             issue_date,
+             due_date,
+             title,
+             total,
+             updated_at
+           FROM invoices
+           WHERE status = 'Finalised'
+           ORDER BY customer_id ASC, issue_date ASC, created_at ASC, id ASC`,
+        )
+        .all() as Array<{
+        customer_id: string;
+        invoice_id: string;
+        invoice_number: string;
+        issue_date: string;
+        due_date: string;
+        title: string;
+        total: number;
+        updated_at: string;
+      }>;
+      const entriesByCustomerId = new Map<string, CustomerStatementEntry[]>();
+      const latestInvoiceUpdatedAtByCustomerId = new Map<string, string>();
+      for (const invoiceRow of finalisedInvoiceRows) {
+        const existingEntries = entriesByCustomerId.get(invoiceRow.customer_id) ?? [];
+        existingEntries.push({
+          invoiceId: invoiceRow.invoice_id,
+          invoiceNumber: invoiceRow.invoice_number,
+          issueDate: invoiceRow.issue_date,
+          dueDate: invoiceRow.due_date,
+          title: invoiceRow.title,
+          total: invoiceRow.total,
+        });
+        entriesByCustomerId.set(invoiceRow.customer_id, existingEntries);
+        const latestUpdatedAt = latestInvoiceUpdatedAtByCustomerId.get(invoiceRow.customer_id);
+        if (!latestUpdatedAt || invoiceRow.updated_at > latestUpdatedAt) {
+          latestInvoiceUpdatedAtByCustomerId.set(invoiceRow.customer_id, invoiceRow.updated_at);
+        }
+      }
 
-      const customerStatements = customerIds.map((customerId) => ({
-        customerId,
-        statement: this.getCustomerStatement(customerId, null, null),
-      }));
+      const customerStatements = customerRows.map((customerRow) => {
+        const customer = mapCustomerRow(customerRow);
+        const entries = entriesByCustomerId.get(customer.id) ?? [];
+        const periodTotal = entries.reduce((sum, entry) => sum + entry.total, 0);
+        const latestInvoiceUpdatedAt = latestInvoiceUpdatedAtByCustomerId.get(customer.id);
+        const generatedAt =
+          latestInvoiceUpdatedAt && latestInvoiceUpdatedAt > customer.updatedAt
+            ? latestInvoiceUpdatedAt
+            : customer.updatedAt;
+        const statement: CustomerStatementReport = {
+          customer,
+          generatedAt,
+          period: {
+            from: null,
+            to: null,
+          },
+          openingBalance: 0,
+          periodTotal,
+          closingBalance: periodTotal,
+          entries,
+          creditsSupported: false,
+          creditsOmittedReason: 'Credits are not supported in the current invoice architecture.',
+        };
+        return {
+          customerId: customer.id,
+          statement,
+        };
+      });
 
       const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
       for (const table of PLATFORM_SNAPSHOT_TABLES) {

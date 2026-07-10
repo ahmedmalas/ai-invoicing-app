@@ -387,8 +387,10 @@ CREATE TABLE IF NOT EXISTS reminder_states (
 
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
 CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(display_name);
+CREATE INDEX IF NOT EXISTS idx_suppliers_created_order ON suppliers(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_roles_name ON roles(name);
 CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
+CREATE INDEX IF NOT EXISTS idx_users_created_order ON users(created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_not_null
 ON users(email)
 WHERE email IS NOT NULL;
@@ -399,6 +401,8 @@ ON user_role_links(user_id, role_id);
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team_created_order
+ON team_memberships(team_id, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user
 ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
@@ -408,9 +412,11 @@ CREATE INDEX IF NOT EXISTS idx_supplier_bills_supplier ON supplier_bills(supplie
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_status ON supplier_bills(status);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_bill_date ON supplier_bills(bill_date);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_due_date ON supplier_bills(due_date);
+CREATE INDEX IF NOT EXISTS idx_supplier_bills_bill_date_order ON supplier_bills(bill_date, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null
 ON supplier_bills(supplier_id, supplier_reference)
 WHERE supplier_reference IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_invoice_line_items_invoice ON invoice_line_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line
 ON supplier_bill_line_items(source_purchase_order_line_item_id);
@@ -418,6 +424,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_number ON purchase_orders(purchas
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_issue_date ON purchase_orders(issue_date);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_issue_date_order ON purchase_orders(issue_date, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_expected_delivery_date ON purchase_orders(expected_delivery_date);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_supplier_reference_not_null
 ON purchase_orders(supplier_id, supplier_reference)
@@ -458,11 +465,14 @@ CREATE INDEX IF NOT EXISTS idx_jobs_number ON jobs(job_number);
 CREATE INDEX IF NOT EXISTS idx_jobs_customer ON jobs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_order ON jobs(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_job ON job_document_links(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_document_links_job_created_order
+ON job_document_links(job_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_job_document_links_document ON job_document_links(document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_job_document_link_pair
 ON job_document_links(job_id, document_id);

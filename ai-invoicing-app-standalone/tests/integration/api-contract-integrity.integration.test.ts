@@ -204,6 +204,96 @@ describe('global api contract integrity and error determinism', () => {
       supplierFull.suppliers.map((row) => row.id),
     );
 
+    const teams = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        app.inject({
+          method: 'POST',
+          url: '/teams',
+          payload: { name: `Deterministic Team ${index + 1}` },
+        }),
+      ),
+    );
+    for (const response of teams) {
+      expect(response.statusCode).toBe(201);
+    }
+    const teamIds = teams.map((response) => z.object({ id: z.string().uuid() }).parse(response.json()).id);
+
+    const teamsPage0 = z.object({ teams: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/teams?limit=2&offset=0' })).json(),
+    );
+    const teamsPage1 = z.object({ teams: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/teams?limit=2&offset=2' })).json(),
+    );
+    const teamsFull = z.object({ teams: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/teams?limit=4&offset=0' })).json(),
+    );
+    expect([...teamsPage0.teams, ...teamsPage1.teams].map((row) => row.id)).toEqual(
+      teamsFull.teams.map((row) => row.id),
+    );
+
+    const firstUserId = z.object({ id: z.string().uuid() }).parse(users[0]!.json()).id;
+    for (const teamId of teamIds) {
+      const addMemberResponse = await app.inject({
+        method: 'POST',
+        url: `/teams/${teamId}/members`,
+        payload: { userId: firstUserId, role: 'owner' },
+      });
+      expect(addMemberResponse.statusCode).toBe(201);
+    }
+    const teamMembersPage = z.object({ members: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: `/teams/${teamIds[0]}/members?limit=1&offset=0` })).json(),
+    );
+    expect(teamMembersPage.members).toHaveLength(1);
+
+    const customerForJobs = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/customers',
+          payload: { displayName: 'Deterministic Job Customer' },
+        })
+      ).json(),
+    );
+    const jobs = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        app.inject({
+          method: 'POST',
+          url: '/jobs',
+          payload: {
+            title: `Deterministic Job ${index + 1}`,
+            customerId: customerForJobs.id,
+            status: 'Draft',
+            priority: 'Normal',
+          },
+        }),
+      ),
+    );
+    for (const response of jobs) {
+      expect(response.statusCode).toBe(201);
+    }
+    const jobIds = jobs.map((response) => z.object({ id: z.string().uuid() }).parse(response.json()).id);
+
+    const jobsPage0 = z.object({ jobs: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/jobs?limit=2&offset=0' })).json(),
+    );
+    const jobsPage1 = z.object({ jobs: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/jobs?limit=2&offset=2' })).json(),
+    );
+    const jobsFull = z.object({ jobs: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (await app.inject({ method: 'GET', url: '/jobs?limit=4&offset=0' })).json(),
+    );
+    expect([...jobsPage0.jobs, ...jobsPage1.jobs].map((row) => row.id)).toEqual(jobsFull.jobs.map((row) => row.id));
+
+    const documentsPage = z.object({ documents: z.array(z.object({ id: z.string().uuid() })) }).parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/jobs/${jobIds[0]}/documents?limit=2&offset=0`,
+        })
+      ).json(),
+    );
+    expect(documentsPage.documents).toEqual([]);
+
     const concurrentReads = await Promise.all(
       Array.from({ length: 6 }, () => app.inject({ method: 'GET', url: '/roles?limit=50&offset=0' })),
     );

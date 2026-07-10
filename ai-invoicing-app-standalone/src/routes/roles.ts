@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { createRoleSchema } from '../domain/users/validation.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const roleRoutes: FastifyPluginAsync = async (app) => {
   app.post('/roles', async (request, reply) => {
@@ -23,7 +23,7 @@ export const roleRoutes: FastifyPluginAsync = async (app) => {
   app.get('/roles', async (request) => {
     const pagination = parsePagination(request.query);
     return {
-      roles: paginateArray(app.db.listRoles(), pagination),
+      roles: app.db.listRoles(pagination),
     };
   });
 

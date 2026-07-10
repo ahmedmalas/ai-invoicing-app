@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { createUserSchema } from '../domain/users/validation.js';
-import { paginateArray, parsePagination } from './pagination.js';
+import { parsePagination } from './pagination.js';
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
   app.post('/users', async (request, reply) => {
@@ -23,7 +23,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   app.get('/users', async (request) => {
     const pagination = parsePagination(request.query);
     return {
-      users: paginateArray(app.db.listUsers(), pagination),
+      users: app.db.listUsers(pagination),
     };
   });
 
