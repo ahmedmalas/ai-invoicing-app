@@ -373,9 +373,25 @@
 - Reduced sensitive runtime-error exposure in logs by omitting raw unexpected-error messages and replacing DB failure raw-message logging with deterministic error codes.
 - Added focused integration coverage for production bypass prevention, cross-tenant read/write denial, diagnostics admin-only enforcement, no-mutation/no-timeline guarantees on authorization failures, and sensitive query redaction in logs/diagnostics.
 
+#### Slice 44 — Failure Injection & Recovery Testing
+- Commit: `0a12034c73855cfea3acced56d5fb19dd81663ab`
+- Added controlled failure-injection integration coverage across critical write workflows using existing failpoints (`create_customer_after_insert`, `create_supplier_after_insert`, `create_invoice_after_line_items`, `create_credit_note_after_insert`, `create_customer_payment_after_allocations`).
+- Verified deterministic rollback behavior with snapshot equality checks proving no partial writes, no orphaned relationships, and no timeline mutation on rolled-back operations.
+- Added database lock/contention resilience test using an exclusive SQLite transaction to validate deterministic 500 error behavior during lock and successful recovery after lock release.
+- Added unsupported schema-version startup test (`PRAGMA user_version` future version) proving deterministic startup rejection with `DB_SCHEMA_VERSION_UNSUPPORTED`.
+- Added readiness degradation contract test proving `/health/ready` returns deterministic `503 not_ready` when diagnostics indicate incompatible/degraded DB state.
+- Added interrupted backup/restore safety coverage: interrupted backup and restore internal failures return deterministic 500 without partial restoration; malformed and incompatible snapshots are rejected safely; valid snapshot restore recovers deterministically.
+
+#### Slice 45 — Concurrency & Large-Dataset Stress Validation
+- Commit: `0a12034c73855cfea3acced56d5fb19dd81663ab`
+- Added high-concurrency integration coverage for invoices, credit notes, customer payments, purchase orders, supplier bills, and supplier payments with deterministic idempotency and unique-number assertions under contention.
+- Added allocation integrity verification under concurrent writes, proving no orphan allocations or broken cross-document references via backup snapshot checks.
+- Added deterministic pagination and read-consistency stress coverage against large seeded datasets while concurrent writes are occurring, including search, timeline, reporting, and list endpoints.
+- Added dedicated benchmark harness `tests/benchmarks/slice45-stress-benchmark.ts` with avg/min/max and P95/P99 metrics for reporting, search, pagination, timeline, and concurrent read-during-write workloads.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/slice-43-security-auth-audit-19d3`
-- Status at logging: implementation baseline completed through Slice 43 and pending final gate re-validation for this slice.
+- Status at logging: implementation baseline completed through Slice 45 and pending final gate re-validation for this slice.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
