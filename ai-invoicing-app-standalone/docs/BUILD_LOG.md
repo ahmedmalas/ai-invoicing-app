@@ -330,9 +330,18 @@
 - Added integration coverage proving referenced entity delete rejection, deterministic concurrent delete rejection, no timeline emission on failed delete/mutation attempts, and unchanged reporting/search outputs after rejected operations.
 - Preserved existing document lifecycle flows, existing timeline taxonomy keys, and existing HTML/PDF rendering behavior.
 
+#### Slice 39 — Security, Authorization & Permission Integrity
+- Commit: `917260bcb94ff21cecb6f2fa626b96d720beacb7`
+- Added shared authentication and authorization enforcement hooks so non-health endpoints require a valid actor identity with deterministic `AUTH_UNAUTHENTICATED` rejection.
+- Added deterministic permission gating by route and method, including admin-only controls for security-sensitive user/role/platform snapshot endpoints and write-permission controls for mutating operations.
+- Added deterministic `AUTH_FORBIDDEN` denial behavior across unauthorized read/write and role/permission management paths while preserving existing lifecycle guardrails.
+- Added global-admin override support in team authorization checks so administrator-level users retain expected access while preserving team-level authorization rules.
+- Added focused integration coverage proving unauthenticated rejection, unauthorized read/write rejection, permission escalation prevention, role-modification protection, no lifecycle timeline emission on authorization failures, protected reporting/search access, and deterministic concurrent unauthorized behavior.
+- Preserved existing timeline taxonomy keys and existing document lifecycle/rendering behaviors.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-38-referential-integrity-safe-deletion-19d3`
-- Status at logging: implementation baseline completed through Slice 38 and passing validation gates.
+- Branch: `cursor/slice-39-security-authorization-permissions-19d3`
+- Status at logging: implementation baseline completed through Slice 39 and passing validation gates.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
