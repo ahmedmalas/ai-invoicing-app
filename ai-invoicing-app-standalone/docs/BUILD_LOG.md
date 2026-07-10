@@ -355,7 +355,7 @@
 - Added benchmark coverage and contract-level regression checks to prove performance improvements without API contract or business lifecycle changes.
 
 #### Slice 42 — Operations & Production Readiness
-- Commit: `TBD`
+- Commit: `380d3ad3d6f1e934c73509a21c7ff5cbd07dd446`
 - Added production health endpoint set: `/health`, `/health/live`, `/health/ready`, and admin diagnostics endpoint `/health/diagnostics`.
 - Added structured operational diagnostics exposing migration/schema compatibility, SQLite runtime status (`journal_mode`, `foreign_keys`, `busy_timeout`, `quick_check`), snapshot version/table coverage, process metadata, and request metrics.
 - Added structured logging hooks for request lifecycle and failure classes (authorization failures, validation failures, database failures, unexpected runtime errors) while preserving existing API payload contracts.

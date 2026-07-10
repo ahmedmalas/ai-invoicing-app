@@ -5,7 +5,7 @@ This roadmap is the canonical planning index for implementation slices in this r
 
 ## Current Implemented Baseline
 - Current implemented slice: **Slice 42 — Operations & Production Readiness**
-- Baseline commit: `TBD`
+- Baseline commit: `380d3ad3d6f1e934c73509a21c7ff5cbd07dd446`
 - Active branch at roadmap update: `cursor/slice-42-operations-readiness-19d3`
 
 ## Completed Slices (Canonical History)

@@ -4,7 +4,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/slice-42-operations-readiness-19d3`
-- Current commit (Slice 42 implementation): `TBD`
+- Current commit (Slice 42 implementation): `380d3ad3d6f1e934c73509a21c7ff5cbd07dd446`
 - Current implemented slice: **Slice 42 — Operations & Production Readiness**
 - Documentation baseline:
   - `docs/ROADMAP.md`
