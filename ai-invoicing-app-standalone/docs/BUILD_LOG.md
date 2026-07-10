@@ -404,9 +404,22 @@
 - Added release governance docs: `docs/RELEASE_CANDIDATE_CHECKLIST.md` and runbook updates in `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` for deployment checks, rollback checks, smoke procedure, and shutdown procedure.
 - Verified dependency audit (`npm audit`) with zero known vulnerabilities.
 
+#### Slice 48 — Final End-to-End Acceptance Validation
+- Commit: `a9f7e7714f4f1ec78684ff1912a467cd38b3ee53`
+- Added full clean-db production-style acceptance walkthrough coverage in `tests/integration/final-acceptance-slice48.integration.test.ts`.
+- Validated end-to-end module coverage for CRUD flows, document lifecycles, reporting, search, timeline, HTML/PDF rendering, backup/restore parity, health/readiness/diagnostics authorization behavior, and deterministic rejection/no-side-effect guarantees.
+- Confirmed acceptance module status pass across foundation, customers, suppliers, users/roles/teams, jobs, invoicing, credit notes, customer payments/statements, procurement/supplier bills, supplier payments, reporting/search/timeline, and backup/restore.
+
+#### Slice 49 — v1.0 Release Finalization
+- Commit: `a9f7e7714f4f1ec78684ff1912a467cd38b3ee53` (code baseline) and docs finalization commit for release artifacts.
+- Added `docs/FINAL_ACCEPTANCE_REPORT_v1.0_RC.md` with module-by-module pass/fail acceptance matrix.
+- Added `docs/RELEASE_NOTES_v1.0_RC.md` capturing v1.0 RC scope and validation summary.
+- Added `docs/PRODUCTION_READINESS_REPORT_v1.0_RC.md` with final release readiness audit and recommendation.
+- Finalized roadmap/readiness metadata to reflect Slice 49 completion and v1.0 RC status.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/slice-43-security-auth-audit-19d3`
-- Status at logging: implementation baseline completed through Slice 47 with mandatory gates and release smoke validation passing.
+- Status at logging: implementation baseline completed through Slice 49 (v1.0 Release Candidate finalization) with mandatory gates, release smoke, and acceptance validation passing.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
