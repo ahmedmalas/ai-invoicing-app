@@ -24,7 +24,7 @@ const envSchema = z
       .string()
       .url()
       .refine((value) => new URL(value).origin === value, 'CORS_ORIGIN must be a URL origin')
-      .default('http://localhost:3000'),
+      .default('https://ai-invoicing-app.vercel.app'),
     REQUEST_BODY_LIMIT: z.coerce.number().int().min(1024).max(10_485_760).default(1_048_576),
   })
   .superRefine((value, context) => {
