@@ -9,13 +9,13 @@ import { parsePagination } from './pagination.js';
 export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
   app.post('/credit-notes', async (request, reply) => {
     const body = createCreditNoteSchema.parse(request.body);
-    const creditNote = app.db.createCreditNote(body);
+    const creditNote = await app.db.createCreditNote(body);
     return reply.code(201).send(creditNote);
   });
 
   app.get('/credit-notes/:creditNoteId', async (request, reply) => {
     const params = z.object({ creditNoteId: z.string().uuid() }).parse(request.params);
-    const creditNote = app.db.getCreditNoteById(params.creditNoteId);
+    const creditNote = await app.db.getCreditNoteById(params.creditNoteId);
     if (!creditNote) {
       return reply.code(404).send({ message: 'CREDIT_NOTE_NOT_FOUND' });
     }
@@ -38,7 +38,7 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
       filter.linkedInvoiceId = query.invoiceId;
     }
     return {
-      creditNotes: app.db.listCreditNotes(filter, pagination),
+      creditNotes: await app.db.listCreditNotes(filter, pagination),
     };
   });
 
@@ -46,7 +46,7 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      creditNotes: app.db.listCreditNotes({ customerId: params.customerId }, pagination),
+      creditNotes: await app.db.listCreditNotes({ customerId: params.customerId }, pagination),
     };
   });
 
@@ -54,17 +54,17 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      creditNotes: app.db.listCreditNotes({ linkedInvoiceId: params.invoiceId }, pagination),
+      creditNotes: await app.db.listCreditNotes({ linkedInvoiceId: params.invoiceId }, pagination),
     };
   });
 
   app.get('/credit-notes/:creditNoteId/html', async (request, reply) => {
     const params = z.object({ creditNoteId: z.string().uuid() }).parse(request.params);
-    const creditNote = app.db.getCreditNoteById(params.creditNoteId);
+    const creditNote = await app.db.getCreditNoteById(params.creditNoteId);
     if (!creditNote) {
       return reply.code(404).send({ message: 'CREDIT_NOTE_NOT_FOUND' });
     }
-    const customer = app.db.getCustomerById(creditNote.customerId);
+    const customer = await app.db.getCustomerById(creditNote.customerId);
     if (!customer) {
       return reply.code(404).send({ message: 'Customer not found' });
     }
@@ -74,15 +74,15 @@ export const creditNoteRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/credit-notes/:creditNoteId/pdf', async (request, reply) => {
     const params = z.object({ creditNoteId: z.string().uuid() }).parse(request.params);
-    const creditNote = app.db.getCreditNoteById(params.creditNoteId);
+    const creditNote = await app.db.getCreditNoteById(params.creditNoteId);
     if (!creditNote) {
       return reply.code(404).send({ message: 'CREDIT_NOTE_NOT_FOUND' });
     }
-    const customer = app.db.getCustomerById(creditNote.customerId);
+    const customer = await app.db.getCustomerById(creditNote.customerId);
     if (!customer) {
       return reply.code(404).send({ message: 'Customer not found' });
     }
-    const businessProfile = app.db.getBusinessProfile();
+    const businessProfile = await app.db.getBusinessProfile();
     const pdfBuffer = await generateCreditNotePdfBuffer({
       creditNote,
       customer,

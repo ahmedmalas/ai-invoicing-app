@@ -23,7 +23,7 @@ const reportQuerySchema = z
 export const reportRoutes: FastifyPluginAsync = async (app) => {
   app.get('/reports/read-model', async (request, reply) => {
     const query = reportQuerySchema.parse(request.query);
-    const report = app.db.getReportingReadModel({
+    const report = await app.db.getReportingReadModel({
       ...(query.from !== undefined ? { from: query.from } : {}),
       ...(query.to !== undefined ? { to: query.to } : {}),
       ...(query.limit !== undefined ? { limit: query.limit } : {}),

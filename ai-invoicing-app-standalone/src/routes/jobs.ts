@@ -7,19 +7,19 @@ import { parsePagination } from './pagination.js';
 export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post('/jobs', async (request, reply) => {
     const body = createJobSchema.parse(request.body);
-    const job = app.db.createJob(body);
+    const job = await app.db.createJob(body);
     return reply.code(201).send(job);
   });
 
   app.put('/jobs/:jobId', async (request) => {
     const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
     const body = updateJobSchema.parse(request.body);
-    return app.db.updateJob(params.jobId, body);
+    return await app.db.updateJob(params.jobId, body);
   });
 
   app.get('/jobs/:jobId', async (request, reply) => {
     const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
-    const job = app.db.getJobById(params.jobId);
+    const job = await app.db.getJobById(params.jobId);
     if (!job) {
       return reply.code(404).send({ message: 'Job not found' });
     }
@@ -29,14 +29,14 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.get('/jobs', async (request) => {
     const pagination = parsePagination(request.query);
     return {
-      jobs: app.db.listJobs(pagination),
+      jobs: await app.db.listJobs(pagination),
     };
   });
 
   app.post('/jobs/:jobId/documents', async (request, reply) => {
     const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
     const body = linkJobDocumentSchema.parse(request.body);
-    const link = app.db.linkDocumentToJob(params.jobId, body.documentId);
+    const link = await app.db.linkDocumentToJob(params.jobId, body.documentId);
     return reply.code(201).send(link);
   });
 
@@ -44,7 +44,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      documents: app.db.listJobDocuments(params.jobId, pagination),
+      documents: await app.db.listJobDocuments(params.jobId, pagination),
     };
   });
 };

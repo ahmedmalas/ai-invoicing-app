@@ -4,9 +4,9 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 49 — v1.0 Release Finalization**
-- Baseline commit: `a9f7e7714f4f1ec78684ff1912a467cd38b3ee53`
-- Active branch at roadmap update: `cursor/slice-43-security-auth-audit-19d3`
+- Current implemented slice: **Slice 53 — Vercel Runtime Conversion & Production Deployment**
+- Baseline implementation commit: `91522b0`
+- Active branch at roadmap update: `cursor/postgres-vercel-migration-19d3`
 
 ## Completed Slices (Canonical History)
 1. **Slice 1 — Invoice Vertical Foundation** (implemented)
@@ -58,14 +58,18 @@ This roadmap is the canonical planning index for implementation slices in this r
 47. **Slice 47 — Release Candidate Cleanup & Deployment Readiness** (implemented)
 48. **Slice 48 — Final End-to-End Acceptance Validation** (implemented)
 49. **Slice 49 — v1.0 Release Finalization** (implemented)
+50. **Slice 50 — Production Deployment** (implemented locally; superseded by Vercel deployment)
+51. **Slice 51 — Live User Acceptance & Post-Deployment Verification** (implemented locally; superseded by Vercel deployment)
+52. **Slice 52 — PostgreSQL Migration** (implemented and parity-validated)
+53. **Slice 53 — Vercel Runtime Conversion & Production Deployment** (implemented; live validation required)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 50 — TBD (placeholder only)
-- Slice 51 — TBD (placeholder only)
+- Slice 54 — TBD (placeholder only)
+- Slice 55 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

@@ -3,15 +3,15 @@
 This matrix tracks implementation readiness at module level without prescribing unapproved detailed future implementation.
 
 ## Current Project Snapshot
-- Current branch: `cursor/slice-43-security-auth-audit-19d3`
-- Current commit (Slice 49 implementation baseline): `a9f7e7714f4f1ec78684ff1912a467cd38b3ee53`
-- Current implemented slice: **Slice 49 — v1.0 Release Finalization**
+- Current branch: `cursor/postgres-vercel-migration-19d3`
+- Current implementation commit: `91522b0`
+- Current implemented slice: **Slice 53 — Vercel Runtime Conversion & Production Deployment**
 - Documentation baseline:
   - `docs/ROADMAP.md`
   - `docs/BUILD_LOG.md`
   - `docs/DOCUMENTATION_GOVERNANCE.md`
   - `docs/PROJECT_OPERATING_MANUAL.md`
-- Validation status: baseline currently passing required gates (`typecheck`, `lint`, `test`, `build`), release smoke validation (`smoke:release`), dependency audit (`npm audit`), and final acceptance validation (Slice 48).
+- Validation status: baseline passing required gates, direct PostgreSQL parity tests, Vercel runtime tests, `release:verify`, `release:acceptance`, and dependency audit; production redeployment persistence proof remains required.
 
 ## Status Legend
 - Implemented
@@ -22,7 +22,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 ## Matrix
 | Module | Status | Current Implemented Slice | Dependencies | Next Planned Work | Risks | Notes |
 |---|---|---|---|---|---|---|
-| Foundation | Implemented | Slice 1-49 | Core runtime, DB, timeline taxonomy, validation gates | TBD | Scope drift risk if standards are bypassed | Baseline architecture and workflow controls are present, including shared transactional document-number sequencing safeguards, deterministic timeline ordering/pagination hardening, deterministic global search filtering/pagination hardening, deterministic reporting read-model derivation controls, deterministic API contract/error-shape/pagination hardening, deterministic full-platform backup/restore snapshot integrity guardrails, transaction/idempotency hardening for duplicate/rollback-safe writes, deterministic referential-integrity safe-deletion guardrails for referenced entities, deterministic authentication/authorization permission enforcement across route read/write surfaces, read-path query/index performance hardening for production-scale list/report workloads, Slice 42 operational readiness controls (health/readiness/diagnostics endpoints, structured logging hooks, schema-version compatibility checks, validated runtime configuration), Slice 43 security hardening (test-only auth bypass gating, organization-context mismatch denial, sensitive-path log redaction), Slice 44/45 resilience+concurrency validation coverage proving deterministic rollback/recovery and stress behavior under contention, Slice 46/47 release-candidate controls (deprecation-safe logging configuration, route-surface regression audit coverage, production startup smoke validation, deployment/rollback checklist governance), and Slice 48/49 final acceptance + release artifact governance for v1.0 RC readiness. |
+| Foundation | Implemented | Slice 1-53 | Core runtime, DB, timeline taxonomy, validation gates | Production persistence validation | Scope drift risk if standards are bypassed | Existing deterministic platform controls are preserved; Slice 52 replaces production SQLite with direct pooled PostgreSQL and verified migration/snapshot parity, while Slice 53 adds the Vercel Node runtime, security headers, CORS/body limits, and deployment configuration. SQLite remains explicit test/local support only. |
 | Jobs | Partial | Slice 4-13 | Customers, Documents, Timeline, Search, Users/Roles, Teams | TBD | Workflow complexity growth | CRUD, linkage, scheduling, assignment, transitions, assignment integrity, team-scope assignment controls, membership lifecycle safeguards, team role authorization, and team deletion safeguards exist. |
 | Customers | Partial | Slice 1 | Foundation, Timeline, Search | TBD | Data model expansion without governance | Core customer lifecycle exists. |
 | Quotes | Not Started | N/A | Customers, Documents, Timeline, Numbering, PDF | TBD | Contract drift with invoice model | Placeholder only. |

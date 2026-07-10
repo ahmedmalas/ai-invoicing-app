@@ -417,9 +417,25 @@
 - Added `docs/PRODUCTION_READINESS_REPORT_v1.0_RC.md` with final release readiness audit and recommendation.
 - Finalized roadmap/readiness metadata to reflect Slice 49 completion and v1.0 RC status.
 
+#### Slice 52 — PostgreSQL Migration
+- Commits: `5d2fbee`, `fb12a1b`, `6c5551a`, `074f991`, `d5973ef`.
+- Added direct pooled PostgreSQL persistence with asynchronous `AppDatabase` parity while retaining SQLite for explicit local/test use.
+- Ported platform tables, indexes, constraints, immutability triggers, taxonomy enforcement, document sequences, transactions, idempotency, reporting, search, timeline, and snapshot import/export to PostgreSQL.
+- Added safe SQLite/snapshot-to-PostgreSQL migration tooling with count and relationship verification.
+- Added PostgreSQL parity coverage for clean initialization, CRUD/lifecycles, concurrent numbering, idempotency, reporting/search/timeline, diagnostics, snapshot restore, and migration refusal against populated targets.
+
+#### Slice 53 — Vercel Runtime Conversion & Production Deployment
+- Commits: `d4f47bf`, `91522b0`.
+- Added a reusable catch-all Vercel Node Function handler that lazily initializes Fastify without calling `listen()`.
+- Added minimal `vercel.json` routing/build configuration and packaged the PostgreSQL schema asset.
+- Added pooled `DATABASE_URL`, CORS origin, request body limit, Helmet security headers, and production environment validation.
+- Restored `release:verify` and `release:acceptance` commands.
+- Production target: dedicated Vercel project `ai-invoicing-app`, repository `ahmedmalas/ai-invoicing-app`, root directory `ai-invoicing-app-standalone`, URL `https://ai-invoicing-app.vercel.app`.
+- Database target: dedicated Supabase organization `AI Invoicing App`, project `ai-invoicing-app-production`, Sydney region; credentials remain only in Vercel environment variables.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-43-security-auth-audit-19d3`
-- Status at logging: implementation baseline completed through Slice 49 (v1.0 Release Candidate finalization) with mandatory gates, release smoke, and acceptance validation passing.
+- Branch: `cursor/postgres-vercel-migration-19d3`
+- Status at logging: implementation completed through Slice 53 with local PostgreSQL and Vercel runtime gates passing; production deployment and persistence validation follow the GitHub `main` push.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

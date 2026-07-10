@@ -1,8 +1,9 @@
 import Fastify, { LogController } from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 
-import { createDatabase } from './db/database.js';
 import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
@@ -53,7 +54,8 @@ declare module 'fastify' {
 }
 
 export interface BuildAppOptions {
-  dbPath: string;
+  dbPath?: string;
+  databaseUrl?: string;
   authBypassForTesting?: boolean;
   enableStructuredLogging?: boolean;
   logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
@@ -61,6 +63,9 @@ export interface BuildAppOptions {
   organizationId?: string;
   nodeEnv?: string;
   dbBusyTimeoutMs?: number;
+  dbPoolMax?: number;
+  corsOrigin?: string;
+  requestBodyLimit?: number;
   loggerStream?: NodeJS.WritableStream;
 }
 
@@ -82,10 +87,23 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
+    bodyLimit: options.requestBodyLimit ?? 1_048_576,
   });
-  const db = createDatabase(options.dbPath, {
-    ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
-  });
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+  let db: AppDatabase;
+  if (options.dbPath !== undefined) {
+    const { createDatabase } = await import('./db/database.js');
+    db = createDatabase(options.dbPath, {
+      ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
+    });
+  } else if (databaseUrl) {
+    const { createPostgresDatabase } = await import('./db/postgres-database.js');
+    db = await createPostgresDatabase(databaseUrl, {
+      ...(options.dbPoolMax !== undefined ? { maxConnections: options.dbPoolMax } : {}),
+    });
+  } else {
+    throw new Error('DATABASE_URL_REQUIRED');
+  }
   const requestStartedAt = new WeakMap<object, bigint>();
   const authBypassForTesting =
     options.authBypassForTesting ??
@@ -103,6 +121,14 @@ export async function buildApp(options: BuildAppOptions) {
     databaseFailureCount: 0,
     unexpectedErrorCount: 0,
   });
+
+  await app.register(helmet);
+  if (options.corsOrigin !== undefined) {
+    await app.register(cors, {
+      origin: options.corsOrigin,
+      methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    });
+  }
 
   const machineCodeFromMessage = (message: string, fallback: string): string => {
     const trimmed = message.trim();
@@ -182,14 +208,16 @@ export async function buildApp(options: BuildAppOptions) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
-    const actor = db.getUserById(parsedActorId.data);
+    const actor = await db.getUserById(parsedActorId.data);
     if (!actor || !actor.isActive) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
-    const roleRecords = actor.roleIds
-      .map((roleId) => db.getRoleById(roleId))
-      .filter((role): role is NonNullable<typeof role> => role !== null);
+    const roleRecords = [];
+    for (const roleId of actor.roleIds) {
+      const role = await db.getRoleById(roleId);
+      if (role) roleRecords.push(role);
+    }
     const isAdmin = roleRecords.some((role) => role.canManageAssignments);
     const canWrite = roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned);
     request.auth = {
@@ -225,6 +253,15 @@ export async function buildApp(options: BuildAppOptions) {
   app.setErrorHandler((error, request, reply) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const normalizedMessage = errorMessage.toLowerCase();
+    const errorStatusCode =
+      typeof error === 'object' && error !== null && 'statusCode' in error
+        ? error.statusCode
+        : undefined;
+
+    if (errorStatusCode === 413) {
+      app.opsMetrics.validationFailureCount += 1;
+      return reply.code(413).send(standardizeErrorPayload(413, 'Request body too large'));
+    }
 
     if (error instanceof ZodError) {
       app.opsMetrics.validationFailureCount += 1;
@@ -259,9 +296,7 @@ export async function buildApp(options: BuildAppOptions) {
       return reply.code(404).send(standardizeErrorPayload(404, errorMessage));
     }
 
-    if (
-      errorMessage.includes('AUTH_UNAUTHENTICATED')
-    ) {
+    if (errorMessage.includes('AUTH_UNAUTHENTICATED')) {
       app.opsMetrics.authFailureCount += 1;
       app.log.warn(
         {
@@ -425,7 +460,11 @@ export async function buildApp(options: BuildAppOptions) {
       return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
 
-    if (error instanceof Error && error.name === 'SqliteError') {
+    if (
+      error instanceof Error &&
+      (error.name === 'SqliteError' ||
+        ('severity' in error && typeof (error as { code?: unknown }).code === 'string'))
+    ) {
       app.opsMetrics.databaseFailureCount += 1;
       app.log.error(
         {
@@ -434,7 +473,7 @@ export async function buildApp(options: BuildAppOptions) {
           method: request.method,
           url: sanitizePath(request.url),
           name: error.name,
-          code: (error as { code?: string }).code ?? 'SQLITE_ERROR',
+          code: (error as { code?: string }).code ?? 'DATABASE_ERROR',
         },
         'database operation failed',
       );
@@ -493,7 +532,9 @@ export async function buildApp(options: BuildAppOptions) {
   app.addHook('onResponse', async (request, reply) => {
     const started = requestStartedAt.get(request);
     const durationMs =
-      started === undefined ? undefined : Number((process.hrtime.bigint() - started) / BigInt(1_000_000));
+      started === undefined
+        ? undefined
+        : Number((process.hrtime.bigint() - started) / BigInt(1_000_000));
     if (reply.statusCode >= 500) {
       app.opsMetrics.serverErrorCount += 1;
     } else if (reply.statusCode >= 400) {
@@ -515,7 +556,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('onClose', async () => {
-    db.close();
+    await db.close();
   });
 
   await app.register(healthRoutes);

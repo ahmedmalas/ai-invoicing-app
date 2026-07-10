@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "src/db/postgres-schema.sql"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ]
+}

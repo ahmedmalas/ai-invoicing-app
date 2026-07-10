@@ -12,13 +12,13 @@ import { parsePagination } from './pagination.js';
 export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/supplier-payments', async (request, reply) => {
     const body = createSupplierPaymentSchema.parse(request.body);
-    const payment = app.db.createSupplierPayment(body);
+    const payment = await app.db.createSupplierPayment(body);
     return reply.code(201).send(payment);
   });
 
   app.get('/supplier-payments/:paymentId', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getSupplierPaymentById(params.paymentId);
+    const payment = await app.db.getSupplierPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'SUPPLIER_PAYMENT_NOT_FOUND' });
     }
@@ -34,7 +34,7 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     if (query.from) filter.from = query.from;
     if (query.to) filter.to = query.to;
     return {
-      payments: app.db.listSupplierPayments(filter, pagination),
+      payments: await app.db.listSupplierPayments(filter, pagination),
     };
   });
 
@@ -42,7 +42,7 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ supplierId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listSupplierPayments({ supplierId: params.supplierId }, pagination),
+      payments: await app.db.listSupplierPayments({ supplierId: params.supplierId }, pagination),
     };
   });
 
@@ -50,17 +50,20 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ supplierBillId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listSupplierPayments({ supplierBillId: params.supplierBillId }, pagination),
+      payments: await app.db.listSupplierPayments(
+        { supplierBillId: params.supplierBillId },
+        pagination,
+      ),
     };
   });
 
   app.get('/supplier-payments/:paymentId/html', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getSupplierPaymentById(params.paymentId);
+    const payment = await app.db.getSupplierPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'SUPPLIER_PAYMENT_NOT_FOUND' });
     }
-    const supplier = app.db.getSupplierById(payment.supplierId);
+    const supplier = await app.db.getSupplierById(payment.supplierId);
     if (!supplier) {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
@@ -70,15 +73,15 @@ export const supplierPaymentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/supplier-payments/:paymentId/pdf', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getSupplierPaymentById(params.paymentId);
+    const payment = await app.db.getSupplierPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'SUPPLIER_PAYMENT_NOT_FOUND' });
     }
-    const supplier = app.db.getSupplierById(payment.supplierId);
+    const supplier = await app.db.getSupplierById(payment.supplierId);
     if (!supplier) {
       return reply.code(404).send({ message: 'Supplier not found' });
     }
-    const businessProfile = app.db.getBusinessProfile();
+    const businessProfile = await app.db.getBusinessProfile();
     const pdfBuffer = await generateSupplierPaymentReceiptPdfBuffer({
       payment,
       supplier,

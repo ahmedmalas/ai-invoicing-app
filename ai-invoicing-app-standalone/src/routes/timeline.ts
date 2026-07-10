@@ -24,7 +24,7 @@ export const timelineRoutes: FastifyPluginAsync = async (app) => {
     };
 
     return {
-      events: app.db.getTimelineForEntity(params.entityType, params.entityId, options),
+      events: await app.db.getTimelineForEntity(params.entityType, params.entityId, options),
     };
   });
 };
