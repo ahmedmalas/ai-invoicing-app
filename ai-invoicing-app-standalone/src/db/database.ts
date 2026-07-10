@@ -609,6 +609,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
+const DATABASE_SCHEMA_VERSION = 42;
 const PLATFORM_SNAPSHOT_VERSION = 1;
 
 const PLATFORM_SNAPSHOT_TABLES = [
@@ -663,6 +664,24 @@ export interface PlatformSnapshot {
   entities: Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
 }
 
+export interface DatabaseOperationalDiagnostics {
+  migration: {
+    schemaVersion: number;
+    userVersion: number;
+    compatible: boolean;
+  };
+  runtime: {
+    journalMode: string;
+    foreignKeysEnabled: boolean;
+    busyTimeoutMs: number;
+    quickCheck: string;
+  };
+  backupRestore: {
+    snapshotVersion: number;
+    tableCount: number;
+  };
+}
+
 const platformSnapshotSchema = z.object({
   version: z.number().int(),
   products: z.array(z.record(z.string(), z.unknown())),
@@ -679,6 +698,7 @@ const platformSnapshotSchema = z.object({
 
 export interface AppDatabase {
   close(): void;
+  getOperationalDiagnostics(): DatabaseOperationalDiagnostics;
   createCustomer(input: CreateCustomerInput): Customer;
   updateCustomer(id: string, input: UpdateCustomerInput): Customer;
   deleteCustomer(id: string): void;
@@ -764,6 +784,10 @@ export interface AppDatabase {
   search(query: string, options?: SearchQueryOptions): SearchResults;
   exportPlatformSnapshot(): PlatformSnapshot;
   restorePlatformSnapshot(snapshot: unknown): void;
+}
+
+interface DatabaseInitOptions {
+  busyTimeoutMs?: number;
 }
 
 function nowIso(): string {
@@ -995,14 +1019,33 @@ function mapTeamRow(row: DbTeamRow): Team {
   };
 }
 
-export function createDatabase(dbPath: string): AppDatabase {
+export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}): AppDatabase {
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });
   }
 
   const db = new Database(dbPath);
+  const busyTimeoutMs = Math.max(1000, Math.trunc(options.busyTimeoutMs ?? 5000));
+  db.pragma(`busy_timeout = ${busyTimeoutMs}`);
+  db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
+
+  function ensureSchemaVersionCompatibilityOrThrow(): { schemaVersion: number; userVersion: number } {
+    const userVersionRaw = db.pragma('user_version', { simple: true });
+    const userVersion = typeof userVersionRaw === 'number' ? userVersionRaw : Number(userVersionRaw ?? 0);
+    if (userVersion > DATABASE_SCHEMA_VERSION) {
+      throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+    }
+    if (userVersion < DATABASE_SCHEMA_VERSION) {
+      db.pragma(`user_version = ${DATABASE_SCHEMA_VERSION}`);
+    }
+    return {
+      schemaVersion: DATABASE_SCHEMA_VERSION,
+      userVersion: Math.max(userVersion, DATABASE_SCHEMA_VERSION),
+    };
+  }
+  let schemaVersionState = ensureSchemaVersionCompatibilityOrThrow();
 
   const jobColumns = db.prepare("SELECT name FROM pragma_table_info('jobs')").all() as Array<{
     name: string;
@@ -1781,6 +1824,35 @@ export function createDatabase(dbPath: string): AppDatabase {
   return {
     close() {
       db.close();
+    },
+
+    getOperationalDiagnostics() {
+      schemaVersionState = ensureSchemaVersionCompatibilityOrThrow();
+      const journalModeRaw = db.pragma('journal_mode', { simple: true });
+      const foreignKeysRaw = db.pragma('foreign_keys', { simple: true });
+      const quickCheckRow = db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
+      return {
+        migration: {
+          schemaVersion: schemaVersionState.schemaVersion,
+          userVersion: schemaVersionState.userVersion,
+          compatible: schemaVersionState.schemaVersion === schemaVersionState.userVersion,
+        },
+        runtime: {
+          journalMode:
+            typeof journalModeRaw === 'string'
+              ? journalModeRaw
+              : typeof journalModeRaw === 'number'
+                ? `${journalModeRaw}`
+                : 'unknown',
+          foreignKeysEnabled: Number(foreignKeysRaw ?? 0) === 1,
+          busyTimeoutMs,
+          quickCheck: quickCheckRow?.quick_check ?? 'unknown',
+        },
+        backupRestore: {
+          snapshotVersion: PLATFORM_SNAPSHOT_VERSION,
+          tableCount: PLATFORM_SNAPSHOT_TABLES.length,
+        },
+      };
     },
 
     createCustomer(input) {

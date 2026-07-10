@@ -25,10 +25,23 @@ import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 
 import type { AppDatabase } from './db/database.js';
+import type { FastifyRequest } from 'fastify';
+
+interface OperationalMetrics {
+  requestCount: number;
+  successCount: number;
+  clientErrorCount: number;
+  serverErrorCount: number;
+  authFailureCount: number;
+  validationFailureCount: number;
+  databaseFailureCount: number;
+  unexpectedErrorCount: number;
+}
 
 declare module 'fastify' {
   interface FastifyInstance {
     db: AppDatabase;
+    opsMetrics: OperationalMetrics;
   }
 
   interface FastifyRequest {
@@ -43,15 +56,43 @@ declare module 'fastify' {
 export interface BuildAppOptions {
   dbPath: string;
   authBypassForTesting?: boolean;
+  enableStructuredLogging?: boolean;
+  logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
+  serviceName?: string;
+  nodeEnv?: string;
+  dbBusyTimeoutMs?: number;
+  loggerStream?: NodeJS.WritableStream;
 }
 
 export async function buildApp(options: BuildAppOptions) {
-  const app = Fastify({ logger: false });
-  const db = createDatabase(options.dbPath);
+  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV ?? 'development';
+  const enableStructuredLogging = options.enableStructuredLogging ?? false;
+  const loggerConfig = enableStructuredLogging
+    ? {
+        level: options.logLevel ?? 'info',
+        base: { service: options.serviceName ?? 'ai-business-os', environment: nodeEnv },
+        ...(options.loggerStream ? { stream: options.loggerStream } : {}),
+      }
+    : false;
+  const app = Fastify({ logger: loggerConfig });
+  const db = createDatabase(options.dbPath, {
+    ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
+  });
+  const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
   const authBypassForTesting =
     options.authBypassForTesting ?? process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1';
 
   app.decorate('db', db);
+  app.decorate('opsMetrics', {
+    requestCount: 0,
+    successCount: 0,
+    clientErrorCount: 0,
+    serverErrorCount: 0,
+    authFailureCount: 0,
+    validationFailureCount: 0,
+    databaseFailureCount: 0,
+    unexpectedErrorCount: 0,
+  });
 
   const machineCodeFromMessage = (message: string, fallback: string): string => {
     const trimmed = message.trim();
@@ -76,10 +117,31 @@ export async function buildApp(options: BuildAppOptions) {
     ...(details !== undefined ? { details } : {}),
   });
 
-  const adminOnlyRoutes = new Set(['/roles', '/roles/:roleId', '/users', '/users/:userId', '/platform/backup', '/platform/restore']);
+  const adminOnlyRoutes = new Set([
+    '/roles',
+    '/roles/:roleId',
+    '/users',
+    '/users/:userId',
+    '/platform/backup',
+    '/platform/restore',
+    '/health/diagnostics',
+  ]);
+  const isPublicHealthRoute = (url: string): boolean =>
+    ['/health', '/health/live', '/health/ready'].includes(url.split('?')[0] ?? url);
 
   app.addHook('onRequest', async (request) => {
-    if (request.url === '/health') {
+    app.opsMetrics.requestCount += 1;
+    requestStartedAt.set(request, process.hrtime.bigint());
+    app.log.info(
+      {
+        event: 'request.received',
+        requestId: request.id,
+        method: request.method,
+        url: request.url,
+      },
+      'request received',
+    );
+    if (isPublicHealthRoute(request.url)) {
       return;
     }
 
@@ -120,7 +182,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('preHandler', async (request) => {
-    if (request.url === '/health') {
+    if (isPublicHealthRoute(request.url)) {
       return;
     }
     const routeUrl = request.routeOptions.url;
@@ -142,11 +204,22 @@ export async function buildApp(options: BuildAppOptions) {
     }
   });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const normalizedMessage = errorMessage.toLowerCase();
 
     if (error instanceof ZodError) {
+      app.opsMetrics.validationFailureCount += 1;
+      app.log.warn(
+        {
+          event: 'validation.failure',
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          issues: error.issues,
+        },
+        'validation failed',
+      );
       return reply.code(400).send({
         status: 400,
         code: 'VALIDATION_FAILED',
@@ -171,6 +244,17 @@ export async function buildApp(options: BuildAppOptions) {
     if (
       errorMessage.includes('AUTH_UNAUTHENTICATED')
     ) {
+      app.opsMetrics.authFailureCount += 1;
+      app.log.warn(
+        {
+          event: 'authorization.failure',
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          code: 'AUTH_UNAUTHENTICATED',
+        },
+        'unauthenticated request rejected',
+      );
       return reply.code(401).send(standardizeErrorPayload(401, errorMessage));
     }
 
@@ -179,6 +263,17 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('TEAM_PERMISSION_DENIED') ||
       errorMessage.includes('TEAM_OWNER_MODIFICATION_FORBIDDEN')
     ) {
+      app.opsMetrics.authFailureCount += 1;
+      app.log.warn(
+        {
+          event: 'authorization.failure',
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          code: 'AUTH_FORBIDDEN',
+        },
+        'forbidden request rejected',
+      );
       return reply.code(403).send(standardizeErrorPayload(403, errorMessage));
     }
 
@@ -306,10 +401,40 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('Only draft invoices can be edited') ||
       errorMessage.includes('already finalised') ||
       errorMessage.includes('BACKUP_RESTORE_INCOMPATIBLE_VERSION') ||
-      errorMessage.includes('BACKUP_RESTORE_TARGET_NOT_EMPTY')
+      errorMessage.includes('BACKUP_RESTORE_TARGET_NOT_EMPTY') ||
+      errorMessage.includes('DB_SCHEMA_VERSION_UNSUPPORTED')
     ) {
       return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
+
+    if (error instanceof Error && error.name === 'SqliteError') {
+      app.opsMetrics.databaseFailureCount += 1;
+      app.log.error(
+        {
+          event: 'database.failure',
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          name: error.name,
+          message: error.message,
+        },
+        'database operation failed',
+      );
+      return reply.code(500).send(standardizeErrorPayload(500, 'Internal server error'));
+    }
+
+    app.opsMetrics.unexpectedErrorCount += 1;
+    app.log.error(
+      {
+        event: 'runtime.unexpected_error',
+        requestId: request.id,
+        method: request.method,
+        url: request.url,
+        name: error instanceof Error ? error.name : 'UnknownError',
+        message: errorMessage,
+      },
+      'unexpected runtime error',
+    );
 
     return reply.code(500).send(standardizeErrorPayload(500, 'Internal server error'));
   });
@@ -346,6 +471,30 @@ export async function buildApp(options: BuildAppOptions) {
       (normalized.issues !== undefined ? { issues: normalized.issues } : undefined);
     const standardized = standardizeErrorPayload(reply.statusCode, normalized.message, details);
     return typeof payload === 'string' ? JSON.stringify(standardized) : standardized;
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const started = requestStartedAt.get(request);
+    const durationMs =
+      started === undefined ? undefined : Number((process.hrtime.bigint() - started) / BigInt(1_000_000));
+    if (reply.statusCode >= 500) {
+      app.opsMetrics.serverErrorCount += 1;
+    } else if (reply.statusCode >= 400) {
+      app.opsMetrics.clientErrorCount += 1;
+    } else {
+      app.opsMetrics.successCount += 1;
+    }
+    app.log.info(
+      {
+        event: 'request.completed',
+        requestId: request.id,
+        method: request.method,
+        url: request.url,
+        statusCode: reply.statusCode,
+        durationMs,
+      },
+      'request completed',
+    );
   });
 
   app.addHook('onClose', async () => {

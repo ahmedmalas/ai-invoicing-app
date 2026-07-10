@@ -347,9 +347,26 @@
 - Added integration coverage proving deterministic large-dataset search/timeline/reporting reads, stable pagination composition under load, concurrent creation queryability, and index-backed query plans on key read paths.
 - Preserved existing timeline taxonomy keys and existing document lifecycle/rendering behaviors.
 
+#### Slice 41 — Platform Query Audit
+- Commit: `7779016bbe3c3418e63f22811783a0a662c59dcb`
+- Completed repository-wide query-path audit and removed remaining N+1 patterns in search enrichment, payment allocation hydration, role hydration, PO billing summaries, and snapshot statement derivation.
+- Moved remaining list endpoints to SQL-native pagination (`LIMIT/OFFSET`) and removed route-level array pagination dependencies for teams, team members, users, roles, jobs, and job documents.
+- Added targeted indexes to stabilize deterministic ordering and high-volume list pagination (`suppliers`, `users`, `team_memberships`, `supplier_bills`, `invoice_line_items`, `purchase_orders`, `jobs`, `job_document_links`).
+- Added benchmark coverage and contract-level regression checks to prove performance improvements without API contract or business lifecycle changes.
+
+#### Slice 42 — Operations & Production Readiness
+- Commit: `TBD`
+- Added production health endpoint set: `/health`, `/health/live`, `/health/ready`, and admin diagnostics endpoint `/health/diagnostics`.
+- Added structured operational diagnostics exposing migration/schema compatibility, SQLite runtime status (`journal_mode`, `foreign_keys`, `busy_timeout`, `quick_check`), snapshot version/table coverage, process metadata, and request metrics.
+- Added structured logging hooks for request lifecycle and failure classes (authorization failures, validation failures, database failures, unexpected runtime errors) while preserving existing API payload contracts.
+- Hardened configuration loading with validated operational environment controls (`NODE_ENV`, `LOG_LEVEL`, `SERVICE_NAME`, `DB_BUSY_TIMEOUT_MS`, `ENABLE_STRUCTURED_LOGGING`).
+- Added migration/version compatibility safeguards via SQLite `PRAGMA user_version` with deterministic rejection of unsupported future schema versions.
+- Added operational smoke/integration coverage for health/readiness/diagnostics and backup/restore post-restore readiness checks.
+- Added `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` with deployment, health-check, diagnostics, backup/restore, and incident response procedures.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-40-performance-scalability-19d3`
-- Status at logging: implementation baseline completed through Slice 40 and passing validation gates.
+- Branch: `cursor/slice-42-operations-readiness-19d3`
+- Status at logging: implementation baseline completed through Slice 42 and pending final gate re-validation for this slice.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.
