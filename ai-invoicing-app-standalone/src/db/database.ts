@@ -487,10 +487,12 @@ export interface ListPurchaseOrdersFilter {
 }
 
 export interface CreateSupplierBillFromPurchaseOrderInput {
-  lineItems?: Array<{
-    purchaseOrderLineItemId: string;
-    quantity: number;
-  }> | undefined;
+  lineItems?:
+    | Array<{
+        purchaseOrderLineItemId: string;
+        quantity: number;
+      }>
+    | undefined;
 }
 
 export interface ClosePurchaseOrderInput {
@@ -620,10 +622,10 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-const DATABASE_SCHEMA_VERSION = 42;
-const PLATFORM_SNAPSHOT_VERSION = 1;
+export const DATABASE_SCHEMA_VERSION = 42;
+export const PLATFORM_SNAPSHOT_VERSION = 1;
 
-const PLATFORM_SNAPSHOT_TABLES = [
+export const PLATFORM_SNAPSHOT_TABLES = [
   'business_profile',
   'preferences',
   'customers',
@@ -707,99 +709,152 @@ const platformSnapshotSchema = z.object({
   entities: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
 });
 
+export type DatabaseResult<T> = T | Promise<T>;
+
 export interface AppDatabase {
-  close(): void;
-  getOperationalDiagnostics(): DatabaseOperationalDiagnostics;
-  createCustomer(input: CreateCustomerInput): Customer;
-  updateCustomer(id: string, input: UpdateCustomerInput): Customer;
-  deleteCustomer(id: string): void;
-  getCustomerById(id: string): Customer | null;
-  createSupplier(input: CreateSupplierInput): Supplier;
-  deleteSupplier(id: string): void;
-  getSupplierById(id: string): Supplier | null;
-  listSuppliers(options?: ListQueryOptions): Supplier[];
-  upsertBusinessProfile(input: UpsertBusinessProfileInput): BrandingProfile;
-  getBusinessProfile(): BrandingProfile | null;
-  upsertPreference(key: string, value: unknown): void;
-  getPreference(key: string): unknown;
-  createInvoiceDraft(input: CreateInvoiceDraftInput): InvoiceDraft;
-  updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): InvoiceDraft;
-  getInvoiceById(id: string): (InvoiceDraft & { lineItems: LineItemInput[] }) | null;
-  finaliseInvoice(id: string): InvoiceDraft;
-  createCreditNote(input: CreateCreditNoteInput): CreditNote;
-  getCreditNoteById(id: string): CreditNote | null;
-  listCreditNotes(filter?: ListCreditNotesFilter, options?: ListQueryOptions): CreditNote[];
-  createCustomerPayment(input: CreateCustomerPaymentInput): CustomerPayment;
-  getCustomerPaymentById(id: string): CustomerPayment | null;
-  listCustomerPayments(filter?: ListCustomerPaymentsFilter, options?: ListQueryOptions): CustomerPayment[];
-  createSupplierBillDraft(input: CreateSupplierBillDraftInput): SupplierBill;
+  close(): DatabaseResult<void>;
+  getOperationalDiagnostics(): DatabaseResult<DatabaseOperationalDiagnostics>;
+  createCustomer(input: CreateCustomerInput): DatabaseResult<Customer>;
+  updateCustomer(id: string, input: UpdateCustomerInput): DatabaseResult<Customer>;
+  deleteCustomer(id: string): DatabaseResult<void>;
+  getCustomerById(id: string): DatabaseResult<Customer | null>;
+  createSupplier(input: CreateSupplierInput): DatabaseResult<Supplier>;
+  deleteSupplier(id: string): DatabaseResult<void>;
+  getSupplierById(id: string): DatabaseResult<Supplier | null>;
+  listSuppliers(options?: ListQueryOptions): DatabaseResult<Supplier[]>;
+  upsertBusinessProfile(input: UpsertBusinessProfileInput): DatabaseResult<BrandingProfile>;
+  getBusinessProfile(): DatabaseResult<BrandingProfile | null>;
+  upsertPreference(key: string, value: unknown): DatabaseResult<void>;
+  getPreference(key: string): DatabaseResult<unknown>;
+  createInvoiceDraft(input: CreateInvoiceDraftInput): DatabaseResult<InvoiceDraft>;
+  updateInvoiceDraft(id: string, input: UpdateInvoiceDraftInput): DatabaseResult<InvoiceDraft>;
+  getInvoiceById(
+    id: string,
+  ): DatabaseResult<(InvoiceDraft & { lineItems: LineItemInput[] }) | null>;
+  finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
+  createCreditNote(input: CreateCreditNoteInput): DatabaseResult<CreditNote>;
+  getCreditNoteById(id: string): DatabaseResult<CreditNote | null>;
+  listCreditNotes(
+    filter?: ListCreditNotesFilter,
+    options?: ListQueryOptions,
+  ): DatabaseResult<CreditNote[]>;
+  createCustomerPayment(input: CreateCustomerPaymentInput): DatabaseResult<CustomerPayment>;
+  getCustomerPaymentById(id: string): DatabaseResult<CustomerPayment | null>;
+  listCustomerPayments(
+    filter?: ListCustomerPaymentsFilter,
+    options?: ListQueryOptions,
+  ): DatabaseResult<CustomerPayment[]>;
+  createSupplierBillDraft(input: CreateSupplierBillDraftInput): DatabaseResult<SupplierBill>;
   createSupplierBillDraftFromPurchaseOrder(
     purchaseOrderId: string,
     input?: CreateSupplierBillFromPurchaseOrderInput,
-  ): SupplierBill;
-  deleteSupplierBillDraft(id: string): void;
-  updateSupplierBillDraft(id: string, input: UpdateSupplierBillDraftInput): SupplierBill;
-  getSupplierBillById(id: string): (SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null;
-  finaliseSupplierBill(id: string): SupplierBill;
-  listSupplierBills(filter?: ListSupplierBillsFilter, options?: ListQueryOptions): SupplierBill[];
-  createSupplierPayment(input: CreateSupplierPaymentInput): SupplierBillPayment;
-  getSupplierPaymentById(id: string): SupplierBillPayment | null;
-  listSupplierPayments(filter?: ListSupplierPaymentsFilter, options?: ListQueryOptions): SupplierBillPayment[];
-  createPurchaseOrderDraft(input: CreatePurchaseOrderDraftInput): PurchaseOrder;
-  deletePurchaseOrderDraft(id: string): void;
-  updatePurchaseOrderDraft(id: string, input: UpdatePurchaseOrderDraftInput): PurchaseOrder;
-  getPurchaseOrderById(id: string): (PurchaseOrder & { lineItems: PurchaseOrderLineItemInput[] }) | null;
-  approvePurchaseOrder(id: string): PurchaseOrder;
-  closePurchaseOrder(id: string, input?: ClosePurchaseOrderInput): PurchaseOrder;
-  cancelPurchaseOrder(id: string): PurchaseOrder;
-  listPurchaseOrders(filter?: ListPurchaseOrdersFilter, options?: ListQueryOptions): PurchaseOrder[];
-  createRole(input: CreateRoleInput): Role;
-  deleteRole(id: string): void;
-  getRoleById(id: string): Role | null;
-  listRoles(options?: ListQueryOptions): Role[];
-  createUser(input: CreateUserInput): User;
-  deleteUser(id: string): void;
-  getUserById(id: string): User | null;
-  listUsers(options?: ListQueryOptions): User[];
-  createTeam(input: CreateTeamInput): Team;
-  getTeamById(id: string): Team | null;
-  listTeams(options?: ListQueryOptions): Team[];
-  deleteTeam(teamId: string, actorUserId?: string | null): void;
+  ): DatabaseResult<SupplierBill>;
+  deleteSupplierBillDraft(id: string): DatabaseResult<void>;
+  updateSupplierBillDraft(
+    id: string,
+    input: UpdateSupplierBillDraftInput,
+  ): DatabaseResult<SupplierBill>;
+  getSupplierBillById(
+    id: string,
+  ): DatabaseResult<(SupplierBill & { lineItems: SupplierBillLineItemInput[] }) | null>;
+  finaliseSupplierBill(id: string): DatabaseResult<SupplierBill>;
+  listSupplierBills(
+    filter?: ListSupplierBillsFilter,
+    options?: ListQueryOptions,
+  ): DatabaseResult<SupplierBill[]>;
+  createSupplierPayment(input: CreateSupplierPaymentInput): DatabaseResult<SupplierBillPayment>;
+  getSupplierPaymentById(id: string): DatabaseResult<SupplierBillPayment | null>;
+  listSupplierPayments(
+    filter?: ListSupplierPaymentsFilter,
+    options?: ListQueryOptions,
+  ): DatabaseResult<SupplierBillPayment[]>;
+  createPurchaseOrderDraft(input: CreatePurchaseOrderDraftInput): DatabaseResult<PurchaseOrder>;
+  deletePurchaseOrderDraft(id: string): DatabaseResult<void>;
+  updatePurchaseOrderDraft(
+    id: string,
+    input: UpdatePurchaseOrderDraftInput,
+  ): DatabaseResult<PurchaseOrder>;
+  getPurchaseOrderById(
+    id: string,
+  ): DatabaseResult<(PurchaseOrder & { lineItems: PurchaseOrderLineItemInput[] }) | null>;
+  approvePurchaseOrder(id: string): DatabaseResult<PurchaseOrder>;
+  closePurchaseOrder(id: string, input?: ClosePurchaseOrderInput): DatabaseResult<PurchaseOrder>;
+  cancelPurchaseOrder(id: string): DatabaseResult<PurchaseOrder>;
+  listPurchaseOrders(
+    filter?: ListPurchaseOrdersFilter,
+    options?: ListQueryOptions,
+  ): DatabaseResult<PurchaseOrder[]>;
+  createRole(input: CreateRoleInput): DatabaseResult<Role>;
+  deleteRole(id: string): DatabaseResult<void>;
+  getRoleById(id: string): DatabaseResult<Role | null>;
+  listRoles(options?: ListQueryOptions): DatabaseResult<Role[]>;
+  createUser(input: CreateUserInput): DatabaseResult<User>;
+  deleteUser(id: string): DatabaseResult<void>;
+  getUserById(id: string): DatabaseResult<User | null>;
+  listUsers(options?: ListQueryOptions): DatabaseResult<User[]>;
+  createTeam(input: CreateTeamInput): DatabaseResult<Team>;
+  getTeamById(id: string): DatabaseResult<Team | null>;
+  listTeams(options?: ListQueryOptions): DatabaseResult<Team[]>;
+  deleteTeam(teamId: string, actorUserId?: string | null): DatabaseResult<void>;
   addTeamMember(
     teamId: string,
     userId: string,
     role?: TeamMembershipRole,
     actorUserId?: string | null,
-  ): TeamMembershipRecord;
-  removeTeamMember(teamId: string, userId: string, actorUserId?: string | null): void;
+  ): DatabaseResult<TeamMembershipRecord>;
+  removeTeamMember(
+    teamId: string,
+    userId: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<void>;
   updateTeamMemberRole(
     teamId: string,
     userId: string,
     role: TeamMembershipRole,
     actorUserId?: string | null,
-  ): TeamMembershipRecord;
-  listTeamMembers(teamId: string, options?: ListQueryOptions): TeamMembershipRecord[];
-  createJob(input: CreateJobInput): Job;
-  updateJob(id: string, input: UpdateJobInput): Job;
-  getJobById(id: string): Job | null;
-  listJobs(options?: ListQueryOptions): Job[];
-  linkDocumentToJob(jobId: string, documentId: string): JobDocumentLinkRecord;
-  listJobDocuments(jobId: string, options?: ListQueryOptions): JobDocumentLinkRecord[];
-  getCustomerStatement(customerId: string, from?: string | null, to?: string | null): CustomerStatementReport;
-  getReportingReadModel(options?: ReportingReadModelQueryOptions): ReportingReadModel;
+  ): DatabaseResult<TeamMembershipRecord>;
+  listTeamMembers(
+    teamId: string,
+    options?: ListQueryOptions,
+  ): DatabaseResult<TeamMembershipRecord[]>;
+  createJob(input: CreateJobInput): DatabaseResult<Job>;
+  updateJob(id: string, input: UpdateJobInput): DatabaseResult<Job>;
+  getJobById(id: string): DatabaseResult<Job | null>;
+  listJobs(options?: ListQueryOptions): DatabaseResult<Job[]>;
+  linkDocumentToJob(jobId: string, documentId: string): DatabaseResult<JobDocumentLinkRecord>;
+  listJobDocuments(
+    jobId: string,
+    options?: ListQueryOptions,
+  ): DatabaseResult<JobDocumentLinkRecord[]>;
+  getCustomerStatement(
+    customerId: string,
+    from?: string | null,
+    to?: string | null,
+  ): DatabaseResult<CustomerStatementReport>;
+  getReportingReadModel(
+    options?: ReportingReadModelQueryOptions,
+  ): DatabaseResult<ReportingReadModel>;
   getTimelineForEntity(
     entityType: string,
     entityId: string,
     options?: TimelineQueryOptions,
-  ): Array<Record<string, unknown>>;
-  search(query: string, options?: SearchQueryOptions): SearchResults;
-  exportPlatformSnapshot(): PlatformSnapshot;
-  restorePlatformSnapshot(snapshot: unknown): void;
+  ): DatabaseResult<Array<Record<string, unknown>>>;
+  search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
+  exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
+  restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
 
-interface DatabaseInitOptions {
+export interface DatabaseInitOptions {
   busyTimeoutMs?: number;
 }
+
+export type SqliteAppDatabase = {
+  [Method in keyof AppDatabase]: AppDatabase[Method] extends (
+    ...args: infer Arguments
+  ) => DatabaseResult<infer Result>
+    ? (...args: Arguments) => Result
+    : never;
+};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1030,7 +1085,10 @@ function mapTeamRow(row: DbTeamRow): Team {
   };
 }
 
-export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}): AppDatabase {
+export function createDatabase(
+  dbPath: string,
+  options: DatabaseInitOptions = {},
+): SqliteAppDatabase {
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });
   }
@@ -1042,9 +1100,13 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
 
-  function ensureSchemaVersionCompatibilityOrThrow(): { schemaVersion: number; userVersion: number } {
+  function ensureSchemaVersionCompatibilityOrThrow(): {
+    schemaVersion: number;
+    userVersion: number;
+  } {
     const userVersionRaw = db.pragma('user_version', { simple: true });
-    const userVersion = typeof userVersionRaw === 'number' ? userVersionRaw : Number(userVersionRaw ?? 0);
+    const userVersion =
+      typeof userVersionRaw === 'number' ? userVersionRaw : Number(userVersionRaw ?? 0);
     if (userVersion > DATABASE_SCHEMA_VERSION) {
       throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
     }
@@ -1087,7 +1149,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_start ON jobs(scheduled_start_at);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_assigned_user ON jobs(assigned_user_id);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_jobs_team_assigned_user ON jobs(team_id, assigned_user_id);',
+  );
 
   const teamMembershipColumns = db
     .prepare("SELECT name FROM pragma_table_info('team_memberships')")
@@ -1130,9 +1194,13 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
   const supplierBillLineItemColumns = db
     .prepare("SELECT name FROM pragma_table_info('supplier_bill_line_items')")
     .all() as Array<{ name: string }>;
-  const supplierBillLineItemColumnSet = new Set(supplierBillLineItemColumns.map((column) => column.name));
+  const supplierBillLineItemColumnSet = new Set(
+    supplierBillLineItemColumns.map((column) => column.name),
+  );
   if (!supplierBillLineItemColumnSet.has('source_purchase_order_line_item_id')) {
-    db.exec('ALTER TABLE supplier_bill_line_items ADD COLUMN source_purchase_order_line_item_id TEXT;');
+    db.exec(
+      'ALTER TABLE supplier_bill_line_items ADD COLUMN source_purchase_order_line_item_id TEXT;',
+    );
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line
@@ -1280,8 +1348,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
   function upsertDocument(id: UUID, title: string, type: string, searchableText: string): void {
     const now = nowIso();
     const existing = db.prepare('SELECT 1 FROM documents WHERE id = ?').get(id) as
-      | { 1: number }
-      | undefined;
+      { 1: number } | undefined;
     db.prepare(
       `INSERT INTO documents (id, document_type, title, entity_id, searchable_text, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1313,7 +1380,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     | 'supplier_payment_sequences';
 
   const getNextDocumentSequence = db.transaction(
-    (table: DocumentSequenceTable, fallbackPrefix: string): { prefix: string; year: number; sequence: number } => {
+    (
+      table: DocumentSequenceTable,
+      fallbackPrefix: string,
+    ): { prefix: string; year: number; sequence: number } => {
       const currentYear = new Date().getUTCFullYear();
       db.prepare(
         `INSERT INTO ${table} (id, prefix, year, next_sequence)
@@ -1321,9 +1391,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
          ON CONFLICT(id) DO NOTHING`,
       ).run(fallbackPrefix, currentYear);
 
-      const sequenceRow = db.prepare(`SELECT prefix, year, next_sequence FROM ${table} WHERE id = 1`).get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
+      const sequenceRow = db
+        .prepare(`SELECT prefix, year, next_sequence FROM ${table} WHERE id = 1`)
+        .get() as { prefix: string; year: number; next_sequence: number } | undefined;
       if (!sequenceRow) {
         throw new Error('DOCUMENT_NUMBER_SEQUENCE_INVALID_STATE');
       }
@@ -1337,7 +1407,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
       if (sequenceRow.year !== currentYear) {
         sequence = 1;
-        db.prepare(`UPDATE ${table} SET year = ?, next_sequence = ? WHERE id = 1`).run(currentYear, 2);
+        db.prepare(`UPDATE ${table} SET year = ?, next_sequence = ? WHERE id = 1`).run(
+          currentYear,
+          2,
+        );
       } else {
         db.prepare(`UPDATE ${table} SET next_sequence = ? WHERE id = 1`).run(sequence + 1);
       }
@@ -1397,7 +1470,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     }));
   }
 
-  function getAllocationsForSupplierPayment(supplierPaymentId: string): SupplierPaymentAllocation[] {
+  function getAllocationsForSupplierPayment(
+    supplierPaymentId: string,
+  ): SupplierPaymentAllocation[] {
     const rows = db
       .prepare(
         `SELECT supplier_bill_id, amount
@@ -1412,7 +1487,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     }));
   }
 
-  function getPurchaseOrderBillingSummary(purchaseOrderId: string, purchaseOrderTotal: number): {
+  function getPurchaseOrderBillingSummary(
+    purchaseOrderId: string,
+    purchaseOrderTotal: number,
+  ): {
     totalBilledAmount: number;
     remainingUnbilledAmount: number;
     billingStatus: PurchaseOrderBillingStatus;
@@ -1463,7 +1541,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     return new Map(rows.map((row) => [row.purchase_order_id, Number(row.total_billed ?? 0)]));
   }
 
-  function mapPaymentAllocationsByPaymentId(paymentIds: string[]): Map<string, PaymentAllocation[]> {
+  function mapPaymentAllocationsByPaymentId(
+    paymentIds: string[],
+  ): Map<string, PaymentAllocation[]> {
     if (paymentIds.length === 0) {
       return new Map();
     }
@@ -1724,7 +1804,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     if (Array.isArray(value)) {
       return `[${value.map((item) => stableStringify(item)).join(',')}]`;
     }
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
     return `{${entries
       .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
       .join(',')}}`;
@@ -1776,9 +1858,15 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     insertSnapshotRows('team_memberships', snapshot.entities.team_memberships);
     insertSnapshotRows('documents', snapshot.entities.documents);
 
-    insertSnapshotRows('invoices', snapshot.entities.invoices, (row) => ({ ...row, status: 'Draft' }));
+    insertSnapshotRows('invoices', snapshot.entities.invoices, (row) => ({
+      ...row,
+      status: 'Draft',
+    }));
     insertSnapshotRows('invoice_line_items', snapshot.entities.invoice_line_items);
-    insertSnapshotRows('purchase_orders', snapshot.entities.purchase_orders, (row) => ({ ...row, status: 'Draft' }));
+    insertSnapshotRows('purchase_orders', snapshot.entities.purchase_orders, (row) => ({
+      ...row,
+      status: 'Draft',
+    }));
     insertSnapshotRows('purchase_order_line_items', snapshot.entities.purchase_order_line_items);
     insertSnapshotRows('supplier_bills', snapshot.entities.supplier_bills, (row) => ({
       ...row,
@@ -1792,7 +1880,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     insertSnapshotRows('customer_payments', snapshot.entities.customer_payments);
     insertSnapshotRows('payment_allocations', snapshot.entities.payment_allocations);
     insertSnapshotRows('supplier_payments', snapshot.entities.supplier_payments);
-    insertSnapshotRows('supplier_payment_allocations', snapshot.entities.supplier_payment_allocations);
+    insertSnapshotRows(
+      'supplier_payment_allocations',
+      snapshot.entities.supplier_payment_allocations,
+    );
 
     insertSnapshotRows('invoice_sequences', snapshot.entities.invoice_sequences);
     insertSnapshotRows('credit_note_sequences', snapshot.entities.credit_note_sequences);
@@ -1826,7 +1917,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
     insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
 
-    const foreignKeyViolations = db.prepare('PRAGMA foreign_key_check').all() as Array<Record<string, unknown>>;
+    const foreignKeyViolations = db.prepare('PRAGMA foreign_key_check').all() as Array<
+      Record<string, unknown>
+    >;
     if (foreignKeyViolations.length > 0) {
       throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
     }
@@ -1841,7 +1934,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
       schemaVersionState = ensureSchemaVersionCompatibilityOrThrow();
       const journalModeRaw = db.pragma('journal_mode', { simple: true });
       const foreignKeysRaw = db.pragma('foreign_keys', { simple: true });
-      const quickCheckRow = db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
+      const quickCheckRow = db.prepare('PRAGMA quick_check').get() as
+        { quick_check?: string } | undefined;
       return {
         migration: {
           schemaVersion: schemaVersionState.schemaVersion,
@@ -1886,7 +1980,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             now,
           );
           assertNoInjectedFailure('create_customer_after_insert');
-          const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
+          const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<
+            string,
+            unknown
+          >;
           timeline('customer.created', id, { displayName: txInput.displayName });
           return mapCustomerRow(row);
         }),
@@ -1913,7 +2010,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         nowIso(),
         id,
       );
-      const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<string, unknown>;
+      const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Record<
+        string,
+        unknown
+      >;
       timeline('customer.updated', id, { displayName: input.displayName });
       return mapCustomerRow(row);
     },
@@ -1959,8 +2059,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     getCustomerById(id) {
       const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       return row ? mapCustomerRow(row) : null;
     },
 
@@ -2023,7 +2122,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     },
 
     getSupplierById(id) {
-      const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as DbSupplierRow | undefined;
+      const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as
+        DbSupplierRow | undefined;
       return row ? mapSupplierRow(row) : null;
     },
 
@@ -2068,10 +2168,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         now,
       );
 
-      const row = db.prepare('SELECT * FROM business_profile WHERE id = ?').get(profileId) as Record<
-        string,
-        unknown
-      >;
+      const row = db
+        .prepare('SELECT * FROM business_profile WHERE id = ?')
+        .get(profileId) as Record<string, unknown>;
       timeline('business_profile.updated', profileId, {
         companyName: input.companyName,
       });
@@ -2079,9 +2178,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     },
 
     getBusinessProfile() {
-      const row = db.prepare('SELECT * FROM business_profile WHERE id = ?').get('business-profile') as
-        | Record<string, unknown>
-        | undefined;
+      const row = db
+        .prepare('SELECT * FROM business_profile WHERE id = ?')
+        .get('business-profile') as Record<string, unknown> | undefined;
       return row ? mapBusinessProfileRow(row) : null;
     },
 
@@ -2106,7 +2205,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     createInvoiceDraft(input) {
       return db.transaction((txInput: CreateInvoiceDraftInput) =>
         withIdempotentCreate<InvoiceDraft>('createInvoiceDraft', txInput, () => {
-          const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+          const customer = db
+            .prepare('SELECT id FROM customers WHERE id = ?')
+            .get(txInput.customerId);
           if (!customer) {
             throw new Error('Customer not found');
           }
@@ -2169,8 +2270,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     updateInvoiceDraft(id, input) {
       return db.transaction((invoiceId: string, txInput: UpdateInvoiceDraftInput) => {
         const existing = db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId) as
-          | { status: string }
-          | undefined;
+          { status: string } | undefined;
         if (!existing) {
           throw new Error('Invoice not found');
         }
@@ -2217,16 +2317,27 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           );
         }
 
-        upsertDocument(invoiceId, txInput.title, 'invoice', `${txInput.title} ${txInput.notes ?? ''}`);
-        timeline('invoice.draft_updated', invoiceId, { totals, lineItems: txInput.lineItems.length });
+        upsertDocument(
+          invoiceId,
+          txInput.title,
+          'invoice',
+          `${txInput.title} ${txInput.notes ?? ''}`,
+        );
+        timeline('invoice.draft_updated', invoiceId, {
+          totals,
+          lineItems: txInput.lineItems.length,
+        });
 
-        const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as DbInvoiceRow;
+        const row = db
+          .prepare('SELECT * FROM invoices WHERE id = ?')
+          .get(invoiceId) as DbInvoiceRow;
         return mapInvoiceRow(row);
       })(id, input);
     },
 
     getInvoiceById(id) {
-      const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow | undefined;
+      const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as
+        DbInvoiceRow | undefined;
       if (!row) {
         return null;
       }
@@ -2307,9 +2418,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     createCreditNote(input) {
       return db.transaction((txInput: CreateCreditNoteInput) =>
         withIdempotentCreate<CreditNote>('createCreditNote', txInput, () => {
-          const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(txInput.linkedInvoiceId) as
-            | DbInvoiceRow
-            | undefined;
+          const invoice = db
+            .prepare('SELECT * FROM invoices WHERE id = ?')
+            .get(txInput.linkedInvoiceId) as DbInvoiceRow | undefined;
           if (!invoice) {
             throw new Error('Invoice not found');
           }
@@ -2422,14 +2533,17 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             totalCredit,
           });
 
-          const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow;
+          const row = db
+            .prepare('SELECT * FROM credit_notes WHERE id = ?')
+            .get(id) as DbCreditNoteRow;
           return mapCreditNoteRow(row);
         }),
       )(input);
     },
 
     getCreditNoteById(id) {
-      const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as DbCreditNoteRow | undefined;
+      const row = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(id) as
+        DbCreditNoteRow | undefined;
       return row ? mapCreditNoteRow(row) : null;
     },
 
@@ -2460,7 +2574,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     createCustomerPayment(input) {
       return db.transaction((txInput: CreateCustomerPaymentInput) =>
         withIdempotentCreate<CustomerPayment>('createCustomerPayment', txInput, () => {
-          const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+          const customer = db
+            .prepare('SELECT id FROM customers WHERE id = ?')
+            .get(txInput.customerId);
           if (!customer) {
             throw new Error('Customer not found');
           }
@@ -2468,12 +2584,17 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             throw new Error('PAYMENT_ALLOCATIONS_REQUIRED');
           }
 
-          const allocationInvoiceSet = new Set(txInput.allocations.map((allocation) => allocation.invoiceId));
+          const allocationInvoiceSet = new Set(
+            txInput.allocations.map((allocation) => allocation.invoiceId),
+          );
           if (allocationInvoiceSet.size !== txInput.allocations.length) {
             throw new Error('PAYMENT_DUPLICATE_ALLOCATION_INVOICE');
           }
 
-          const allocationTotal = txInput.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+          const allocationTotal = txInput.allocations.reduce(
+            (sum, allocation) => sum + allocation.amount,
+            0,
+          );
           if (allocationTotal > txInput.amount) {
             throw new Error('PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
           }
@@ -2483,9 +2604,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
               throw new Error('PAYMENT_ALLOCATION_AMOUNT_INVALID');
             }
 
-            const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as
-              | DbInvoiceRow
-              | undefined;
+            const invoice = db
+              .prepare('SELECT * FROM invoices WHERE id = ?')
+              .get(allocation.invoiceId) as DbInvoiceRow | undefined;
             if (!invoice) {
               throw new Error('Invoice not found');
             }
@@ -2564,7 +2685,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
           assertNoInjectedFailure('create_customer_payment_after_allocations');
           for (const allocation of txInput.allocations) {
-            const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(allocation.invoiceId) as DbInvoiceRow;
+            const invoice = db
+              .prepare('SELECT * FROM invoices WHERE id = ?')
+              .get(allocation.invoiceId) as DbInvoiceRow;
             const totalAllocated = db
               .prepare(
                 `SELECT coalesce(sum(pa.amount), 0) AS total
@@ -2572,7 +2695,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  WHERE pa.invoice_id = ?`,
               )
               .get(allocation.invoiceId) as { total: number };
-            const nextState: PaymentState = totalAllocated.total >= invoice.total ? 'Paid' : 'Awaiting Payment';
+            const nextState: PaymentState =
+              totalAllocated.total >= invoice.total ? 'Paid' : 'Awaiting Payment';
             db.prepare('UPDATE invoices SET payment_state = ?, updated_at = ? WHERE id = ?').run(
               nextState,
               nowIso(),
@@ -2606,8 +2730,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     getCustomerPaymentById(id) {
       const row = db.prepare('SELECT * FROM customer_payments WHERE id = ?').get(id) as
-        | DbCustomerPaymentRow
-        | undefined;
+        DbCustomerPaymentRow | undefined;
       if (!row) {
         return null;
       }
@@ -2648,22 +2771,26 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           offset,
         ) as DbCustomerPaymentRow[];
       const allocationsByPaymentId = mapPaymentAllocationsByPaymentId(rows.map((row) => row.id));
-      return rows.map((row) => mapCustomerPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []));
+      return rows.map((row) =>
+        mapCustomerPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []),
+      );
     },
 
     createSupplierBillDraft(input) {
       return db.transaction((txInput: CreateSupplierBillDraftInput) => {
-          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
-          if (!supplier) {
-            throw new Error('Supplier not found');
-          }
+        const supplier = db
+          .prepare('SELECT id FROM suppliers WHERE id = ?')
+          .get(txInput.supplierId);
+        if (!supplier) {
+          throw new Error('Supplier not found');
+        }
 
-          const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
-          const id = randomUUID();
-          const now = nowIso();
-          try {
-            db.prepare(
-              `INSERT INTO supplier_bills (
+        const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+        const id = randomUUID();
+        const now = nowIso();
+        try {
+          db.prepare(
+            `INSERT INTO supplier_bills (
                 id,
                 supplier_id,
                 source_purchase_order_id,
@@ -2681,209 +2808,220 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                 created_at,
                 updated_at
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).run(
-              id,
-              txInput.supplierId,
-              null,
-              null,
-              txInput.billDate,
-              txInput.dueDate,
-              txInput.supplierReference ?? null,
-              txInput.currency,
-              txInput.notes ?? null,
-              'Draft',
-              'Draft',
-              totals.subtotal,
-              totals.gstTotal,
-              totals.total,
-              now,
-              now,
-            );
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (
-              message.includes('uq_supplier_bills_supplier_reference_not_null') ||
-              message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
-            ) {
-              throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
-            }
-            throw error;
+          ).run(
+            id,
+            txInput.supplierId,
+            null,
+            null,
+            txInput.billDate,
+            txInput.dueDate,
+            txInput.supplierReference ?? null,
+            txInput.currency,
+            txInput.notes ?? null,
+            'Draft',
+            'Draft',
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            now,
+            now,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('uq_supplier_bills_supplier_reference_not_null') ||
+            message.includes(
+              'UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference',
+            )
+          ) {
+            throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
           }
+          throw error;
+        }
 
-          const insertLine = db.prepare(
-            `INSERT INTO supplier_bill_line_items (
+        const insertLine = db.prepare(
+          `INSERT INTO supplier_bill_line_items (
               id, supplier_bill_id, source_purchase_order_line_item_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          );
-          for (const [index, item] of calculatedItems.entries()) {
-            const inputLine = txInput.lineItems[index];
-            if (!inputLine) {
-              throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
-            }
-            const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
-            insertLine.run(
-              randomUUID(),
-              id,
-              sourcePurchaseOrderLineItemId ?? null,
-              item.description,
-              item.quantity,
-              item.unitPrice,
-              item.gstApplicable ? 1 : 0,
-              item.lineSubtotal,
-              item.lineGst,
-              item.lineTotal,
-            );
+        );
+        for (const [index, item] of calculatedItems.entries()) {
+          const inputLine = txInput.lineItems[index];
+          if (!inputLine) {
+            throw new Error('SUPPLIER_BILL_LINE_ITEM_MISMATCH');
           }
-
-          assertNoInjectedFailure('create_supplier_bill_after_line_items');
-          upsertDocument(
+          const sourcePurchaseOrderLineItemId = inputLine.sourcePurchaseOrderLineItemId;
+          insertLine.run(
+            randomUUID(),
             id,
-            `Draft Supplier Bill ${txInput.supplierReference ?? ''}`.trim(),
-            'supplier_bill',
-            `${txInput.currency} ${txInput.notes ?? ''} ${txInput.supplierReference ?? ''}`,
+            sourcePurchaseOrderLineItemId ?? null,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
           );
-          timeline('supplier_bill.created', id, {
-            status: 'Draft',
-            supplierId: txInput.supplierId,
-            total: totals.total,
-          });
+        }
 
-          const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
-          return mapSupplierBillRow(row);
+        assertNoInjectedFailure('create_supplier_bill_after_line_items');
+        upsertDocument(
+          id,
+          `Draft Supplier Bill ${txInput.supplierReference ?? ''}`.trim(),
+          'supplier_bill',
+          `${txInput.currency} ${txInput.notes ?? ''} ${txInput.supplierReference ?? ''}`,
+        );
+        timeline('supplier_bill.created', id, {
+          status: 'Draft',
+          supplierId: txInput.supplierId,
+          total: totals.total,
+        });
+
+        const row = db
+          .prepare('SELECT * FROM supplier_bills WHERE id = ?')
+          .get(id) as DbSupplierBillRow;
+        return mapSupplierBillRow(row);
       })(input);
     },
 
     createSupplierBillDraftFromPurchaseOrder(purchaseOrderId, input) {
       return db.transaction(() => {
-            const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
-            if (!purchaseOrder) {
-              throw new Error('PURCHASE_ORDER_NOT_FOUND');
-            }
-            if (purchaseOrder.status !== 'Approved') {
-              throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
-            }
-            if (purchaseOrder.billingStatus === 'fully_billed') {
-              throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
-            }
-
-      const sourceLines =
-        input?.lineItems && input.lineItems.length > 0
-          ? input.lineItems
-          : purchaseOrder.lineItems.map((lineItem) => ({
-              purchaseOrderLineItemId: lineItem.id!,
-              quantity: lineItem.quantity,
-            }));
-
-      const duplicateSourceLines = new Set(sourceLines.map((lineItem) => lineItem.purchaseOrderLineItemId));
-      if (duplicateSourceLines.size !== sourceLines.length) {
-        throw new Error('PURCHASE_ORDER_BILLING_DUPLICATE_LINE_ITEM');
-      }
-
-      const purchaseOrderLineMap = new Map(
-        purchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
-      );
-      const selectedSupplierBillLineItems: Array<
-        SupplierBillLineItemInput & { sourcePurchaseOrderLineItemId: string }
-      > = [];
-      let selectedTotal = 0;
-
-      for (const sourceLine of sourceLines) {
-        if (sourceLine.quantity <= 0) {
-          throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_INVALID');
+        const purchaseOrder = this.getPurchaseOrderById(purchaseOrderId);
+        if (!purchaseOrder) {
+          throw new Error('PURCHASE_ORDER_NOT_FOUND');
         }
-        const purchaseOrderLine = purchaseOrderLineMap.get(sourceLine.purchaseOrderLineItemId);
-        if (!purchaseOrderLine) {
-          throw new Error('PURCHASE_ORDER_LINE_ITEM_NOT_FOUND');
+        if (purchaseOrder.status !== 'Approved') {
+          throw new Error('PURCHASE_ORDER_REQUIRES_APPROVED_STATUS');
+        }
+        if (purchaseOrder.billingStatus === 'fully_billed') {
+          throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
         }
 
-        const billedQtyRow = db
-          .prepare(
-            `SELECT coalesce(sum(li.quantity), 0) AS total
+        const sourceLines =
+          input?.lineItems && input.lineItems.length > 0
+            ? input.lineItems
+            : purchaseOrder.lineItems.map((lineItem) => ({
+                purchaseOrderLineItemId: lineItem.id!,
+                quantity: lineItem.quantity,
+              }));
+
+        const duplicateSourceLines = new Set(
+          sourceLines.map((lineItem) => lineItem.purchaseOrderLineItemId),
+        );
+        if (duplicateSourceLines.size !== sourceLines.length) {
+          throw new Error('PURCHASE_ORDER_BILLING_DUPLICATE_LINE_ITEM');
+        }
+
+        const purchaseOrderLineMap = new Map(
+          purchaseOrder.lineItems.map((lineItem) => [lineItem.id!, lineItem]),
+        );
+        const selectedSupplierBillLineItems: Array<
+          SupplierBillLineItemInput & { sourcePurchaseOrderLineItemId: string }
+        > = [];
+        let selectedTotal = 0;
+
+        for (const sourceLine of sourceLines) {
+          if (sourceLine.quantity <= 0) {
+            throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_INVALID');
+          }
+          const purchaseOrderLine = purchaseOrderLineMap.get(sourceLine.purchaseOrderLineItemId);
+          if (!purchaseOrderLine) {
+            throw new Error('PURCHASE_ORDER_LINE_ITEM_NOT_FOUND');
+          }
+
+          const billedQtyRow = db
+            .prepare(
+              `SELECT coalesce(sum(li.quantity), 0) AS total
              FROM supplier_bill_line_items li
              INNER JOIN supplier_bills b ON b.id = li.supplier_bill_id
              WHERE b.source_purchase_order_id = ?
                AND li.source_purchase_order_line_item_id = ?`,
+            )
+            .get(purchaseOrderId, sourceLine.purchaseOrderLineItemId) as { total: number };
+          const remainingQty = purchaseOrderLine.quantity - billedQtyRow.total;
+          if (sourceLine.quantity > remainingQty + 1e-9) {
+            throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING');
+          }
+
+          selectedSupplierBillLineItems.push({
+            description: purchaseOrderLine.description,
+            quantity: sourceLine.quantity,
+            unitPrice: purchaseOrderLine.unitPrice,
+            gstApplicable: purchaseOrderLine.gstApplicable,
+            sourcePurchaseOrderLineItemId: sourceLine.purchaseOrderLineItemId,
+          });
+          selectedTotal +=
+            sourceLine.quantity *
+            purchaseOrderLine.unitPrice *
+            (purchaseOrderLine.gstApplicable ? 1.1 : 1);
+        }
+
+        if (selectedSupplierBillLineItems.length === 0) {
+          throw new Error('PURCHASE_ORDER_BILLING_LINES_REQUIRED');
+        }
+        if (selectedTotal > purchaseOrder.remainingUnbilledAmount + 1e-6) {
+          throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
+        }
+
+        const existingLinkedBillCount = db
+          .prepare(
+            'SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?',
           )
-          .get(purchaseOrderId, sourceLine.purchaseOrderLineItemId) as { total: number };
-        const remainingQty = purchaseOrderLine.quantity - billedQtyRow.total;
-        if (sourceLine.quantity > remainingQty + 1e-9) {
-          throw new Error('PURCHASE_ORDER_BILLING_QUANTITY_EXCEEDS_REMAINING');
+          .get(purchaseOrderId) as { count: number };
+
+        const created = this.createSupplierBillDraft({
+          supplierId: purchaseOrder.supplierId,
+          billDate: purchaseOrder.issueDate,
+          dueDate: purchaseOrder.expectedDeliveryDate ?? purchaseOrder.issueDate,
+          supplierReference: `PO-${purchaseOrder.purchaseOrderNumber}-${existingLinkedBillCount.count + 1}`,
+          currency: purchaseOrder.currency,
+          notes: purchaseOrder.notes ?? undefined,
+          lineItems: selectedSupplierBillLineItems,
+        });
+
+        try {
+          db.prepare(
+            'UPDATE supplier_bills SET source_purchase_order_id = ?, updated_at = ? WHERE id = ?',
+          ).run(purchaseOrderId, nowIso(), created.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('uq_supplier_bills_source_purchase_order_not_null') ||
+            message.includes('UNIQUE constraint failed: supplier_bills.source_purchase_order_id')
+          ) {
+            throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
+          }
+          throw error;
         }
 
-        selectedSupplierBillLineItems.push({
-          description: purchaseOrderLine.description,
-          quantity: sourceLine.quantity,
-          unitPrice: purchaseOrderLine.unitPrice,
-          gstApplicable: purchaseOrderLine.gstApplicable,
-          sourcePurchaseOrderLineItemId: sourceLine.purchaseOrderLineItemId,
-        });
-        selectedTotal +=
-          sourceLine.quantity * purchaseOrderLine.unitPrice * (purchaseOrderLine.gstApplicable ? 1.1 : 1);
-      }
-
-      if (selectedSupplierBillLineItems.length === 0) {
-        throw new Error('PURCHASE_ORDER_BILLING_LINES_REQUIRED');
-      }
-      if (selectedTotal > purchaseOrder.remainingUnbilledAmount + 1e-6) {
-        throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
-      }
-
-      const existingLinkedBillCount = db
-        .prepare('SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?')
-        .get(purchaseOrderId) as { count: number };
-
-      const created = this.createSupplierBillDraft({
-        supplierId: purchaseOrder.supplierId,
-        billDate: purchaseOrder.issueDate,
-        dueDate: purchaseOrder.expectedDeliveryDate ?? purchaseOrder.issueDate,
-        supplierReference: `PO-${purchaseOrder.purchaseOrderNumber}-${existingLinkedBillCount.count + 1}`,
-        currency: purchaseOrder.currency,
-        notes: purchaseOrder.notes ?? undefined,
-        lineItems: selectedSupplierBillLineItems,
-      });
-
-      try {
-        db.prepare('UPDATE supplier_bills SET source_purchase_order_id = ?, updated_at = ? WHERE id = ?').run(
-          purchaseOrderId,
-          nowIso(),
-          created.id,
+        const billingSummaryAfter = getPurchaseOrderBillingSummary(
+          purchaseOrder.id,
+          purchaseOrder.totals.total,
         );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('uq_supplier_bills_source_purchase_order_not_null') ||
-          message.includes('UNIQUE constraint failed: supplier_bills.source_purchase_order_id')
-        ) {
-          throw new Error('PURCHASE_ORDER_SUPPLIER_BILL_ALREADY_CREATED');
+        timeline('supplier_bill.created_from_purchase_order', created.id, {
+          purchaseOrderId,
+          supplierBillId: created.id,
+        });
+        if (billingSummaryAfter.billingStatus === 'fully_billed') {
+          timeline('purchase_order.fully_billed', purchaseOrder.id, {
+            totalBilledAmount: billingSummaryAfter.totalBilledAmount,
+          });
+        } else if (billingSummaryAfter.billingStatus === 'partially_billed') {
+          timeline('purchase_order.partially_billed', purchaseOrder.id, {
+            totalBilledAmount: billingSummaryAfter.totalBilledAmount,
+            remainingUnbilledAmount: billingSummaryAfter.remainingUnbilledAmount,
+          });
         }
-        throw error;
-      }
 
-      const billingSummaryAfter = getPurchaseOrderBillingSummary(purchaseOrder.id, purchaseOrder.totals.total);
-      timeline('supplier_bill.created_from_purchase_order', created.id, {
-        purchaseOrderId,
-        supplierBillId: created.id,
-      });
-      if (billingSummaryAfter.billingStatus === 'fully_billed') {
-        timeline('purchase_order.fully_billed', purchaseOrder.id, {
-          totalBilledAmount: billingSummaryAfter.totalBilledAmount,
-        });
-      } else if (billingSummaryAfter.billingStatus === 'partially_billed') {
-        timeline('purchase_order.partially_billed', purchaseOrder.id, {
-          totalBilledAmount: billingSummaryAfter.totalBilledAmount,
-          remainingUnbilledAmount: billingSummaryAfter.remainingUnbilledAmount,
-        });
-      }
-
-            const linkedRow = db
-              .prepare(
-                `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+        const linkedRow = db
+          .prepare(
+            `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
                  FROM supplier_bills sb
                  LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
                  WHERE sb.id = ?`,
-              )
-              .get(created.id) as DbSupplierBillRow;
-            return mapSupplierBillRow(linkedRow);
+          )
+          .get(created.id) as DbSupplierBillRow;
+        return mapSupplierBillRow(linkedRow);
       })();
     },
 
@@ -2896,7 +3034,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           throw new Error('Supplier bill not found');
         }
         const allocationCount = db
-          .prepare('SELECT count(*) AS count FROM supplier_payment_allocations WHERE supplier_bill_id = ?')
+          .prepare(
+            'SELECT count(*) AS count FROM supplier_payment_allocations WHERE supplier_bill_id = ?',
+          )
           .get(billId) as { count: number };
         if (allocationCount.count > 0) {
           throw new Error('SUPPLIER_BILL_HAS_ALLOCATIONS');
@@ -2906,14 +3046,19 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         }
 
         db.prepare('DELETE FROM supplier_bill_line_items WHERE supplier_bill_id = ?').run(billId);
-        db.prepare('DELETE FROM documents WHERE entity_id = ? AND document_type = ?').run(billId, 'supplier_bill');
+        db.prepare('DELETE FROM documents WHERE entity_id = ? AND document_type = ?').run(
+          billId,
+          'supplier_bill',
+        );
         db.prepare('DELETE FROM supplier_bills WHERE id = ?').run(billId);
       })(id);
     },
 
     updateSupplierBillDraft(id, input) {
       const existing = db
-        .prepare('SELECT status, supplier_id, source_purchase_order_id FROM supplier_bills WHERE id = ?')
+        .prepare(
+          'SELECT status, supplier_id, source_purchase_order_id FROM supplier_bills WHERE id = ?',
+        )
         .get(id) as
         | {
             status: SupplierBillStatus;
@@ -3002,8 +3147,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           }
 
           const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
-          const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
-          const updatedLineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
+          const remainingLineAmount =
+            sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+          const updatedLineAmount =
+            lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
           if (updatedLineAmount > remainingLineAmount + 1e-6) {
             throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
           }
@@ -3019,7 +3166,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                AND b.id != ?`,
           )
           .get(sourcePurchaseOrderId, id) as { total: number };
-        if (linkedPoSummaryExcludingBill.total + projectedLinkedTotal > linkedPurchaseOrder.totals.total + 1e-6) {
+        if (
+          linkedPoSummaryExcludingBill.total + projectedLinkedTotal >
+          linkedPurchaseOrder.totals.total + 1e-6
+        ) {
           throw new Error('PURCHASE_ORDER_BILLING_AMOUNT_EXCEEDS_REMAINING');
         }
       }
@@ -3046,7 +3196,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         const message = error instanceof Error ? error.message : String(error);
         if (
           message.includes('uq_supplier_bills_supplier_reference_not_null') ||
-          message.includes('UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference')
+          message.includes(
+            'UNIQUE constraint failed: supplier_bills.supplier_id, supplier_bills.supplier_reference',
+          )
         ) {
           throw new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
         }
@@ -3079,7 +3231,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         );
       }
 
-      const row = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(id) as DbSupplierBillRow;
+      const row = db
+        .prepare('SELECT * FROM supplier_bills WHERE id = ?')
+        .get(id) as DbSupplierBillRow;
       upsertDocument(
         id,
         `${row.bill_number ?? 'Draft'} ${row.supplier_reference ?? ''}`.trim(),
@@ -3097,9 +3251,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
            LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
            WHERE sb.id = ?`,
         )
-        .get(id) as
-        | DbSupplierBillRow
-        | undefined;
+        .get(id) as DbSupplierBillRow | undefined;
       if (!row) {
         return null;
       }
@@ -3178,7 +3330,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             if (!lineItem.sourcePurchaseOrderLineItemId) {
               throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_REQUIRED');
             }
-            const sourceLine = sourcePurchaseOrderLineMap.get(lineItem.sourcePurchaseOrderLineItemId);
+            const sourceLine = sourcePurchaseOrderLineMap.get(
+              lineItem.sourcePurchaseOrderLineItemId,
+            );
             if (!sourceLine) {
               throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_LINE_REFERENCE_INVALID');
             }
@@ -3205,8 +3359,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             }
 
             const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
-            const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
-            const lineAmount = lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
+            const remainingLineAmount =
+              sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+            const lineAmount =
+              lineItem.quantity * lineItem.unitPrice * (lineItem.gstApplicable ? 1.1 : 1);
             if (lineAmount > remainingLineAmount + 1e-6) {
               throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
             }
@@ -3222,7 +3378,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  AND b.id != ?`,
             )
             .get(bill.sourcePurchaseOrderId, billId) as { total: number };
-          if (otherLinkedBillsTotal.total + projectedSupplierBillTotal > sourcePurchaseOrder.totals.total + 1e-6) {
+          if (
+            otherLinkedBillsTotal.total + projectedSupplierBillTotal >
+            sourcePurchaseOrder.totals.total + 1e-6
+          ) {
             throw new Error('SUPPLIER_BILL_FINALISE_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
           }
         }
@@ -3321,7 +3480,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     createPurchaseOrderDraft(input) {
       return db.transaction((txInput: CreatePurchaseOrderDraftInput) =>
         withIdempotentCreate<PurchaseOrder>('createPurchaseOrderDraft', txInput, () => {
-          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
+          const supplier = db
+            .prepare('SELECT id FROM suppliers WHERE id = ?')
+            .get(txInput.supplierId);
           if (!supplier) {
             throw new Error('Supplier not found');
           }
@@ -3374,7 +3535,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             const message = error instanceof Error ? error.message : String(error);
             if (
               message.includes('uq_purchase_orders_supplier_reference_not_null') ||
-              message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+              message.includes(
+                'UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference',
+              )
             ) {
               throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
             }
@@ -3419,7 +3582,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             total: totals.total,
           });
 
-          const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as DbPurchaseOrderRow;
+          const row = db
+            .prepare('SELECT * FROM purchase_orders WHERE id = ?')
+            .get(id) as DbPurchaseOrderRow;
           return withPurchaseOrderBillingSummary(mapPurchaseOrderRow(row));
         }),
       )(input);
@@ -3434,7 +3599,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           throw new Error('Purchase order not found');
         }
         const linkedBillCount = db
-          .prepare('SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?')
+          .prepare(
+            'SELECT count(*) AS count FROM supplier_bills WHERE source_purchase_order_id = ?',
+          )
           .get(purchaseOrderId) as { count: number };
         if (linkedBillCount.count > 0) {
           throw new Error('PURCHASE_ORDER_HAS_LINKED_SUPPLIER_BILLS');
@@ -3443,7 +3610,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           throw new Error('IMMUTABLE_APPROVED_PURCHASE_ORDER');
         }
 
-        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(purchaseOrderId);
+        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(
+          purchaseOrderId,
+        );
         db.prepare('DELETE FROM documents WHERE entity_id = ? AND document_type = ?').run(
           purchaseOrderId,
           'purchase_order',
@@ -3454,9 +3623,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     updatePurchaseOrderDraft(id, input) {
       return db.transaction((purchaseOrderId: string, txInput: UpdatePurchaseOrderDraftInput) => {
-        const existing = db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as
-          | { status: PurchaseOrderStatus }
-          | undefined;
+        const existing = db
+          .prepare('SELECT status FROM purchase_orders WHERE id = ?')
+          .get(purchaseOrderId) as { status: PurchaseOrderStatus } | undefined;
         if (!existing) {
           throw new Error('Purchase order not found');
         }
@@ -3486,14 +3655,18 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           const message = error instanceof Error ? error.message : String(error);
           if (
             message.includes('uq_purchase_orders_supplier_reference_not_null') ||
-            message.includes('UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference')
+            message.includes(
+              'UNIQUE constraint failed: purchase_orders.supplier_id, purchase_orders.supplier_reference',
+            )
           ) {
             throw new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
           }
           throw error;
         }
 
-        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(purchaseOrderId);
+        db.prepare('DELETE FROM purchase_order_line_items WHERE purchase_order_id = ?').run(
+          purchaseOrderId,
+        );
         const insertLine = db.prepare(
           `INSERT INTO purchase_order_line_items (
             id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
@@ -3513,7 +3686,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           );
         }
 
-        const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow;
+        const row = db
+          .prepare('SELECT * FROM purchase_orders WHERE id = ?')
+          .get(purchaseOrderId) as DbPurchaseOrderRow;
         upsertDocument(
           purchaseOrderId,
           `${row.purchase_order_number} ${row.supplier_reference ?? ''}`.trim(),
@@ -3526,8 +3701,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     getPurchaseOrderById(id) {
       const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as
-        | DbPurchaseOrderRow
-        | undefined;
+        DbPurchaseOrderRow | undefined;
       if (!row) {
         return null;
       }
@@ -3572,7 +3746,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         });
         return withPurchaseOrderBillingSummary(
           mapPurchaseOrderRow(
-            db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
+            db
+              .prepare('SELECT * FROM purchase_orders WHERE id = ?')
+              .get(purchaseOrderId) as DbPurchaseOrderRow,
           ),
         );
       })(id);
@@ -3580,60 +3756,69 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     closePurchaseOrder(id, input) {
       return db.transaction((purchaseOrderId: string, closeInput?: ClosePurchaseOrderInput) => {
-      const order = this.getPurchaseOrderById(purchaseOrderId);
-      if (!order) {
-        throw new Error('Purchase order not found');
-      }
-      if (order.status === 'Draft') {
-        throw new Error('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE');
-      }
-      if (order.status === 'Cancelled') {
-        throw new Error('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE');
-      }
-      if (order.status === 'Closed') {
-        throw new Error('PURCHASE_ORDER_ALREADY_CLOSED');
-      }
-      assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Closed');
-
-      const closeReason = closeInput?.closeReason?.trim();
-      const closedDate = closeInput?.closedDate;
-      const closedBy = closeInput?.closedBy?.trim() || 'system';
-
-      if (order.billingStatus !== 'fully_billed') {
-        if (!closeReason) {
-          throw new Error('PURCHASE_ORDER_CLOSE_REASON_REQUIRED');
+        const order = this.getPurchaseOrderById(purchaseOrderId);
+        if (!order) {
+          throw new Error('Purchase order not found');
         }
-        if (!closedDate) {
-          throw new Error('PURCHASE_ORDER_CLOSE_DATE_REQUIRED');
+        if (order.status === 'Draft') {
+          throw new Error('PURCHASE_ORDER_DRAFT_CANNOT_CLOSE');
         }
-      }
+        if (order.status === 'Cancelled') {
+          throw new Error('PURCHASE_ORDER_CANCELLED_CANNOT_CLOSE');
+        }
+        if (order.status === 'Closed') {
+          throw new Error('PURCHASE_ORDER_ALREADY_CLOSED');
+        }
+        assertValidPurchaseOrderStatusTransitionOrThrow(order.status, 'Closed');
 
-      const persistedClosedDate = closedDate ?? nowIso().slice(0, 10);
-      db.prepare(
-        'UPDATE purchase_orders SET status = ?, close_reason = ?, closed_date = ?, closed_by = ?, updated_at = ? WHERE id = ?',
-      ).run('Closed', closeReason ?? null, persistedClosedDate, closedBy, nowIso(), purchaseOrderId);
+        const closeReason = closeInput?.closeReason?.trim();
+        const closedDate = closeInput?.closedDate;
+        const closedBy = closeInput?.closedBy?.trim() || 'system';
 
-      const closureType =
-        order.billingStatus === 'fully_billed'
-          ? 'fully_billed_closure'
-          : order.billingStatus === 'partially_billed'
-            ? 'partially_billed_closure'
-            : 'unbilled_closure';
-      timeline('purchase_order.closed', purchaseOrderId, {
-        purchaseOrderNumber: order.purchaseOrderNumber,
-        closureType,
-        billingStatus: order.billingStatus,
-        totalBilledAmount: order.totalBilledAmount,
-        remainingUnbilledAmount: order.remainingUnbilledAmount,
-        closeReason: closeReason ?? null,
-        closedDate: persistedClosedDate,
-        closedBy,
-      });
-      return withPurchaseOrderBillingSummary(
-        mapPurchaseOrderRow(
-          db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
-        ),
-      );
+        if (order.billingStatus !== 'fully_billed') {
+          if (!closeReason) {
+            throw new Error('PURCHASE_ORDER_CLOSE_REASON_REQUIRED');
+          }
+          if (!closedDate) {
+            throw new Error('PURCHASE_ORDER_CLOSE_DATE_REQUIRED');
+          }
+        }
+
+        const persistedClosedDate = closedDate ?? nowIso().slice(0, 10);
+        db.prepare(
+          'UPDATE purchase_orders SET status = ?, close_reason = ?, closed_date = ?, closed_by = ?, updated_at = ? WHERE id = ?',
+        ).run(
+          'Closed',
+          closeReason ?? null,
+          persistedClosedDate,
+          closedBy,
+          nowIso(),
+          purchaseOrderId,
+        );
+
+        const closureType =
+          order.billingStatus === 'fully_billed'
+            ? 'fully_billed_closure'
+            : order.billingStatus === 'partially_billed'
+              ? 'partially_billed_closure'
+              : 'unbilled_closure';
+        timeline('purchase_order.closed', purchaseOrderId, {
+          purchaseOrderNumber: order.purchaseOrderNumber,
+          closureType,
+          billingStatus: order.billingStatus,
+          totalBilledAmount: order.totalBilledAmount,
+          remainingUnbilledAmount: order.remainingUnbilledAmount,
+          closeReason: closeReason ?? null,
+          closedDate: persistedClosedDate,
+          closedBy,
+        });
+        return withPurchaseOrderBillingSummary(
+          mapPurchaseOrderRow(
+            db
+              .prepare('SELECT * FROM purchase_orders WHERE id = ?')
+              .get(purchaseOrderId) as DbPurchaseOrderRow,
+          ),
+        );
       })(id, input);
     },
 
@@ -3654,7 +3839,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         });
         return withPurchaseOrderBillingSummary(
           mapPurchaseOrderRow(
-            db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as DbPurchaseOrderRow,
+            db
+              .prepare('SELECT * FROM purchase_orders WHERE id = ?')
+              .get(purchaseOrderId) as DbPurchaseOrderRow,
           ),
         );
       })(id);
@@ -3741,7 +3928,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     createSupplierPayment(input) {
       return db.transaction((txInput: CreateSupplierPaymentInput) =>
         withIdempotentCreate<SupplierBillPayment>('createSupplierPayment', txInput, () => {
-          const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(txInput.supplierId);
+          const supplier = db
+            .prepare('SELECT id FROM suppliers WHERE id = ?')
+            .get(txInput.supplierId);
           if (!supplier) {
             throw new Error('Supplier not found');
           }
@@ -3749,12 +3938,17 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_REQUIRED');
           }
 
-          const allocationBillSet = new Set(txInput.allocations.map((allocation) => allocation.supplierBillId));
+          const allocationBillSet = new Set(
+            txInput.allocations.map((allocation) => allocation.supplierBillId),
+          );
           if (allocationBillSet.size !== txInput.allocations.length) {
             throw new Error('SUPPLIER_PAYMENT_DUPLICATE_ALLOCATION_BILL');
           }
 
-          const allocationTotal = txInput.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+          const allocationTotal = txInput.allocations.reduce(
+            (sum, allocation) => sum + allocation.amount,
+            0,
+          );
           if (allocationTotal > txInput.amount) {
             throw new Error('SUPPLIER_PAYMENT_ALLOCATIONS_EXCEED_PAYMENT_AMOUNT');
           }
@@ -3764,9 +3958,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
               throw new Error('SUPPLIER_PAYMENT_ALLOCATION_AMOUNT_INVALID');
             }
 
-            const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as
-              | DbSupplierBillRow
-              | undefined;
+            const bill = db
+              .prepare('SELECT * FROM supplier_bills WHERE id = ?')
+              .get(allocation.supplierBillId) as DbSupplierBillRow | undefined;
             if (!bill) {
               throw new Error('Supplier bill not found');
             }
@@ -3808,7 +4002,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                 if (!billLine.source_purchase_order_line_item_id) {
                   throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_REQUIRED');
                 }
-                const sourceLine = sourcePurchaseOrderLineMap.get(billLine.source_purchase_order_line_item_id);
+                const sourceLine = sourcePurchaseOrderLineMap.get(
+                  billLine.source_purchase_order_line_item_id,
+                );
                 if (!sourceLine) {
                   throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_LINE_REFERENCE_INVALID');
                 }
@@ -3830,13 +4026,18 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                     billLine.source_purchase_order_line_item_id,
                   ) as { total_quantity: number; total_amount: number };
 
-                const remainingLineQuantity = sourceLine.quantity - otherBillsSummary.total_quantity;
+                const remainingLineQuantity =
+                  sourceLine.quantity - otherBillsSummary.total_quantity;
                 if (billLine.quantity > remainingLineQuantity + 1e-9) {
-                  throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING');
+                  throw new Error(
+                    'SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_QUANTITY_EXCEEDS_REMAINING',
+                  );
                 }
 
-                const sourceLineUnitTotal = sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
-                const remainingLineAmount = sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
+                const sourceLineUnitTotal =
+                  sourceLine.unitPrice * (sourceLine.gstApplicable ? 1.1 : 1);
+                const remainingLineAmount =
+                  sourceLine.quantity * sourceLineUnitTotal - otherBillsSummary.total_amount;
                 if (billLine.line_total > remainingLineAmount + 1e-6) {
                   throw new Error('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_VALUE_EXCEEDS_REMAINING');
                 }
@@ -3902,12 +4103,20 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
              VALUES (?, ?, ?, ?, ?)`,
           );
           for (const allocation of txInput.allocations) {
-            insertAllocation.run(randomUUID(), id, allocation.supplierBillId, allocation.amount, now);
+            insertAllocation.run(
+              randomUUID(),
+              id,
+              allocation.supplierBillId,
+              allocation.amount,
+              now,
+            );
           }
 
           assertNoInjectedFailure('create_supplier_payment_after_allocations');
           for (const allocation of txInput.allocations) {
-            const bill = db.prepare('SELECT * FROM supplier_bills WHERE id = ?').get(allocation.supplierBillId) as DbSupplierBillRow;
+            const bill = db
+              .prepare('SELECT * FROM supplier_bills WHERE id = ?')
+              .get(allocation.supplierBillId) as DbSupplierBillRow;
             const totalAllocated = db
               .prepare(
                 `SELECT coalesce(sum(spa.amount), 0) AS total
@@ -3915,12 +4124,11 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  WHERE spa.supplier_bill_id = ?`,
               )
               .get(allocation.supplierBillId) as { total: number };
-            const nextState: PaymentState = totalAllocated.total >= bill.total ? 'Paid' : 'Awaiting Payment';
-            db.prepare('UPDATE supplier_bills SET payment_state = ?, updated_at = ? WHERE id = ?').run(
-              nextState,
-              nowIso(),
-              allocation.supplierBillId,
-            );
+            const nextState: PaymentState =
+              totalAllocated.total >= bill.total ? 'Paid' : 'Awaiting Payment';
+            db.prepare(
+              'UPDATE supplier_bills SET payment_state = ?, updated_at = ? WHERE id = ?',
+            ).run(nextState, nowIso(), allocation.supplierBillId);
           }
 
           upsertDocument(
@@ -3949,8 +4157,7 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
     getSupplierPaymentById(id) {
       const row = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(id) as
-        | DbSupplierPaymentRow
-        | undefined;
+        DbSupplierPaymentRow | undefined;
       if (!row) {
         return null;
       }
@@ -3990,8 +4197,12 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           limit,
           offset,
         ) as DbSupplierPaymentRow[];
-      const allocationsByPaymentId = mapSupplierPaymentAllocationsByPaymentId(rows.map((row) => row.id));
-      return rows.map((row) => mapSupplierPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []));
+      const allocationsByPaymentId = mapSupplierPaymentAllocationsByPaymentId(
+        rows.map((row) => row.id),
+      );
+      return rows.map((row) =>
+        mapSupplierPaymentRow(row, allocationsByPaymentId.get(row.id) ?? []),
+      );
     },
 
     createRole(input) {
@@ -4189,7 +4400,13 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         throw new Error('TEAM_LAST_OWNER_REQUIRED');
       }
       if (membershipCount > 0) {
-        assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'add_member', null, requestedRole);
+        assertAuthorizedForTeamActionOrThrow(
+          teamId,
+          actorUserId,
+          'add_member',
+          null,
+          requestedRole,
+        );
       }
 
       const id = randomUUID();
@@ -4201,7 +4418,11 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         ).run(id, teamId, userId, requestedRole, now);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('UNIQUE constraint failed: team_memberships.team_id, team_memberships.user_id')) {
+        if (
+          message.includes(
+            'UNIQUE constraint failed: team_memberships.team_id, team_memberships.user_id',
+          )
+        ) {
           throw new Error('TEAM_MEMBER_EXISTS');
         }
         throw error;
@@ -4279,7 +4500,13 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
       }
       assertValidTeamMembershipRoleOrThrow(membership.role);
       const currentRole = membership.role;
-      assertAuthorizedForTeamActionOrThrow(teamId, actorUserId, 'change_member_role', currentRole, role);
+      assertAuthorizedForTeamActionOrThrow(
+        teamId,
+        actorUserId,
+        'change_member_role',
+        currentRole,
+        role,
+      );
 
       if (currentRole === 'owner' && role !== 'owner' && getOwnerCountForTeam(teamId) <= 1) {
         throw new Error('TEAM_LAST_OWNER_REQUIRED');
@@ -4407,17 +4634,14 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
       const currentYear = new Date().getUTCFullYear();
       const sequenceRow = db.prepare('SELECT * FROM job_sequences WHERE id = 1').get() as
-        | { prefix: string; year: number; next_sequence: number }
-        | undefined;
+        { prefix: string; year: number; next_sequence: number } | undefined;
       let prefix = 'JOB';
       let sequence = 1;
 
       if (!sequenceRow) {
-        db.prepare('INSERT INTO job_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)').run(
-          prefix,
-          currentYear,
-          2,
-        );
+        db.prepare(
+          'INSERT INTO job_sequences (id, prefix, year, next_sequence) VALUES (1, ?, ?, ?)',
+        ).run(prefix, currentYear, 2);
       } else {
         prefix = sequenceRow.prefix;
         if (sequenceRow.year !== currentYear) {
@@ -4477,7 +4701,12 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         now,
       );
 
-      upsertDocument(id, input.title, 'custom', `${jobNumber} ${input.title} ${input.description ?? ''}`);
+      upsertDocument(
+        id,
+        input.title,
+        'custom',
+        `${jobNumber} ${input.title} ${input.description ?? ''}`,
+      );
       timeline('job.created', id, {
         jobNumber,
         status: input.status,
@@ -4508,7 +4737,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     },
 
     updateJob(id, input) {
-      const existing = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
+      const existing = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as
+        DbJobRow | undefined;
       if (!existing) {
         throw new Error('Job not found');
       }
@@ -4577,7 +4807,12 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
         id,
       );
 
-      upsertDocument(id, input.title, 'custom', `${existing.job_number} ${input.title} ${input.description ?? ''}`);
+      upsertDocument(
+        id,
+        input.title,
+        'custom',
+        `${existing.job_number} ${input.title} ${input.description ?? ''}`,
+      );
       timeline('job.updated', id, {
         status: input.status,
       });
@@ -4812,9 +5047,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
       const limit = query.limit ?? 25;
       const offset = query.offset ?? 0;
 
-      const totalsById = (
-        rows: Array<{ id: string; amount: number }>,
-      ): Map<string, number> => new Map(rows.map((row) => [row.id, Number(row.amount ?? 0)]));
+      const totalsById = (rows: Array<{ id: string; amount: number }>): Map<string, number> =>
+        new Map(rows.map((row) => [row.id, Number(row.amount ?? 0)]));
 
       const invoiceRows = db
         .prepare(
@@ -4919,7 +5153,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
 
       const sumByCustomerId = (
         rows: Array<{ customer_id: string; amount: number }>,
-      ): Map<string, number> => new Map(rows.map((row) => [row.customer_id, Number(row.amount ?? 0)]));
+      ): Map<string, number> =>
+        new Map(rows.map((row) => [row.customer_id, Number(row.amount ?? 0)]));
 
       let openingInvoicesByCustomer = new Map<string, number>();
       let openingCreditsByCustomer = new Map<string, number>();
@@ -4978,7 +5213,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  AND (? IS NULL OR issue_date <= ?)
                GROUP BY customer_id`,
             )
-            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{
+            customer_id: string;
+            amount: number;
+          }>,
         );
         activityCreditsByCustomer = sumByCustomerId(
           db
@@ -4991,7 +5229,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  AND (? IS NULL OR cn.issue_date <= ?)
                GROUP BY i.customer_id`,
             )
-            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{
+            customer_id: string;
+            amount: number;
+          }>,
         );
         activityPaymentsByCustomer = sumByCustomerId(
           db
@@ -5003,7 +5244,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                  AND (? IS NULL OR payment_date <= ?)
                GROUP BY customer_id`,
             )
-            .all(...pagedCustomerIds, from, from, to, to) as Array<{ customer_id: string; amount: number }>,
+            .all(...pagedCustomerIds, from, from, to, to) as Array<{
+            customer_id: string;
+            amount: number;
+          }>,
         );
       }
 
@@ -5126,15 +5370,17 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           )
           .get(from, from, to, to) as { amount: number }
       ).amount;
-      const apTotalPaid = (db
-        .prepare(
-          `SELECT coalesce(sum(spa.amount), 0) AS amount
+      const apTotalPaid = (
+        db
+          .prepare(
+            `SELECT coalesce(sum(spa.amount), 0) AS amount
            FROM supplier_payment_allocations spa
            INNER JOIN supplier_payments sp ON sp.id = spa.supplier_payment_id
            WHERE (? IS NULL OR sp.payment_date >= ?)
              AND (? IS NULL OR sp.payment_date <= ?)`,
-        )
-        .get(from, from, to, to) as { amount: number }).amount;
+          )
+          .get(from, from, to, to) as { amount: number }
+      ).amount;
       const apRemainingOrderedValue = (
         db
           .prepare(
@@ -5333,16 +5579,18 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
       });
 
       const creditNotes = requestedEntityTypes.has('creditNotes')
-        ? (db
-            .prepare(
-              `SELECT *
+        ? (
+            db
+              .prepare(
+                `SELECT *
                FROM credit_notes
                WHERE lower(reason) LIKE ?
                   OR lower(credit_note_number) LIKE ?
                ORDER BY updated_at DESC, id DESC
                LIMIT ? OFFSET ?`,
-            )
-            .all(wildcard, wildcard, limit, offset) as DbCreditNoteRow[]).map(mapCreditNoteRow)
+              )
+              .all(wildcard, wildcard, limit, offset) as DbCreditNoteRow[]
+          ).map(mapCreditNoteRow)
         : [];
 
       const customerPayments = requestedEntityTypes.has('customerPayments')
@@ -5378,7 +5626,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
             )
             .all(wildcard, wildcard, wildcard, limit, offset) as DbPurchaseOrderRow[])
         : [];
-      const purchaseOrderBilledById = mapBilledAmountByPurchaseOrderId(purchaseOrderRows.map((row) => row.id));
+      const purchaseOrderBilledById = mapBilledAmountByPurchaseOrderId(
+        purchaseOrderRows.map((row) => row.id),
+      );
       const purchaseOrderSupplierBillIds = new Map<string, string[]>();
       if (purchaseOrderRows.length > 0) {
         const placeholders = purchaseOrderRows.map(() => '?').join(',');
@@ -5392,7 +5642,8 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
           )
           .all(...purchaseOrderIds) as Array<{ purchase_order_id: string; id: string }>;
         for (const supplierBillRow of supplierBillRows) {
-          const existing = purchaseOrderSupplierBillIds.get(supplierBillRow.purchase_order_id) ?? [];
+          const existing =
+            purchaseOrderSupplierBillIds.get(supplierBillRow.purchase_order_id) ?? [];
           existing.push(supplierBillRow.id);
           purchaseOrderSupplierBillIds.set(supplierBillRow.purchase_order_id, existing);
         }
@@ -5417,9 +5668,10 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
       });
 
       const supplierBills = requestedEntityTypes.has('supplierBills')
-        ? (db
-            .prepare(
-              `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
+        ? (
+            db
+              .prepare(
+                `SELECT sb.*, po.purchase_order_number AS source_purchase_order_number
                FROM supplier_bills sb
                LEFT JOIN purchase_orders po ON po.id = sb.source_purchase_order_id
                WHERE lower(coalesce(sb.bill_number, '')) LIKE ?
@@ -5427,8 +5679,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
                   OR lower(coalesce(sb.notes, '')) LIKE ?
                ORDER BY sb.updated_at DESC, sb.id DESC
                LIMIT ? OFFSET ?`,
-            )
-            .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierBillRow[]).map(mapSupplierBillRow)
+              )
+              .all(wildcard, wildcard, wildcard, limit, offset) as DbSupplierBillRow[]
+          ).map(mapSupplierBillRow)
         : [];
 
       const supplierPayments = requestedEntityTypes.has('supplierPayments')
@@ -5500,9 +5753,9 @@ export function createDatabase(dbPath: string, options: DatabaseInitOptions = {}
     },
 
     exportPlatformSnapshot() {
-      const customerRows = db
-        .prepare('SELECT * FROM customers ORDER BY id ASC')
-        .all() as Array<Record<string, unknown>>;
+      const customerRows = db.prepare('SELECT * FROM customers ORDER BY id ASC').all() as Array<
+        Record<string, unknown>
+      >;
       const finalisedInvoiceRows = db
         .prepare(
           `SELECT

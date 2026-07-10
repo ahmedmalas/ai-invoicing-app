@@ -53,7 +53,8 @@ declare module 'fastify' {
 }
 
 export interface BuildAppOptions {
-  dbPath: string;
+  dbPath?: string;
+  databaseUrl?: string;
   authBypassForTesting?: boolean;
   enableStructuredLogging?: boolean;
   logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
@@ -61,6 +62,7 @@ export interface BuildAppOptions {
   organizationId?: string;
   nodeEnv?: string;
   dbBusyTimeoutMs?: number;
+  dbPoolMax?: number;
   loggerStream?: NodeJS.WritableStream;
 }
 
@@ -83,9 +85,25 @@ export async function buildApp(options: BuildAppOptions) {
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
   });
-  const db = await createDatabase(options.dbPath, {
-    ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
-  });
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+  const db =
+    options.dbPath !== undefined
+      ? createDatabase(options.dbPath, {
+          ...(options.dbBusyTimeoutMs !== undefined
+            ? { busyTimeoutMs: options.dbBusyTimeoutMs }
+            : {}),
+        })
+      : databaseUrl
+        ? await (
+            await import('./db/postgres-database.js')
+          ).createPostgresDatabase(databaseUrl, {
+            ...(options.dbPoolMax !== undefined ? { maxConnections: options.dbPoolMax } : {}),
+          })
+        : createDatabase('./data/slice1.db', {
+            ...(options.dbBusyTimeoutMs !== undefined
+              ? { busyTimeoutMs: options.dbBusyTimeoutMs }
+              : {}),
+          });
   const requestStartedAt = new WeakMap<object, bigint>();
   const authBypassForTesting =
     options.authBypassForTesting ??
@@ -187,9 +205,11 @@ export async function buildApp(options: BuildAppOptions) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
-    const roleRecords = (
-      await Promise.all(actor.roleIds.map((roleId) => db.getRoleById(roleId)))
-    ).filter((role): role is NonNullable<typeof role> => role !== null);
+    const roleRecords = [];
+    for (const roleId of actor.roleIds) {
+      const role = await db.getRoleById(roleId);
+      if (role) roleRecords.push(role);
+    }
     const isAdmin = roleRecords.some((role) => role.canManageAssignments);
     const canWrite = roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned);
     request.auth = {
@@ -259,9 +279,7 @@ export async function buildApp(options: BuildAppOptions) {
       return reply.code(404).send(standardizeErrorPayload(404, errorMessage));
     }
 
-    if (
-      errorMessage.includes('AUTH_UNAUTHENTICATED')
-    ) {
+    if (errorMessage.includes('AUTH_UNAUTHENTICATED')) {
       app.opsMetrics.authFailureCount += 1;
       app.log.warn(
         {
@@ -425,7 +443,11 @@ export async function buildApp(options: BuildAppOptions) {
       return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
 
-    if (error instanceof Error && error.name === 'SqliteError') {
+    if (
+      error instanceof Error &&
+      (error.name === 'SqliteError' ||
+        ('severity' in error && typeof (error as { code?: unknown }).code === 'string'))
+    ) {
       app.opsMetrics.databaseFailureCount += 1;
       app.log.error(
         {
@@ -434,7 +456,7 @@ export async function buildApp(options: BuildAppOptions) {
           method: request.method,
           url: sanitizePath(request.url),
           name: error.name,
-          code: (error as { code?: string }).code ?? 'SQLITE_ERROR',
+          code: (error as { code?: string }).code ?? 'DATABASE_ERROR',
         },
         'database operation failed',
       );
@@ -493,7 +515,9 @@ export async function buildApp(options: BuildAppOptions) {
   app.addHook('onResponse', async (request, reply) => {
     const started = requestStartedAt.get(request);
     const durationMs =
-      started === undefined ? undefined : Number((process.hrtime.bigint() - started) / BigInt(1_000_000));
+      started === undefined
+        ? undefined
+        : Number((process.hrtime.bigint() - started) / BigInt(1_000_000));
     if (reply.statusCode >= 500) {
       app.opsMetrics.serverErrorCount += 1;
     } else if (reply.statusCode >= 400) {
