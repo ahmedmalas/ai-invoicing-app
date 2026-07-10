@@ -5,23 +5,25 @@ Define operational procedures for deploying, validating, and troubleshooting AI 
 
 ## Runtime Configuration
 Required/validated environment variables:
-- `PORT` (default `3000`)
-- `DB_PATH` (default `./data/slice1.db`)
+- `DATABASE_URL` (required; pooled PostgreSQL URI, secret)
+- `DB_POOL_MAX` (1-20, default `5`)
 - `NODE_ENV` (`development | test | production`)
 - `LOG_LEVEL` (`trace | debug | info | warn | error | fatal | silent`)
 - `SERVICE_NAME` (default `ai-business-os`)
 - `ORGANIZATION_ID` (default `single-tenant`)
-- `DB_BUSY_TIMEOUT_MS` (1000-60000, default `5000`)
 - `ENABLE_STRUCTURED_LOGGING` (`1` or `0`, default `1`)
+- `CORS_ORIGIN` (default `https://ai-invoicing-app.vercel.app`)
+- `REQUEST_BODY_LIMIT` (1024-10485760, default `1048576`)
 - Production template: `.env.production.example`
 
 ## Startup Procedure
-1. Ensure writable parent directory exists for `DB_PATH`.
-2. Start service:
+1. Confirm pooled `DATABASE_URL` is configured without logging its value.
+2. Start local/service deployment:
    - `npm run build`
    - `npm run start`
-3. Confirm service binds successfully and emits structured startup/request logs.
-4. Run deterministic release smoke:
+3. Vercel imports `api/index.ts` and does not call `listen()`.
+4. Confirm service emits structured request logs and reports PostgreSQL readiness.
+5. Run deterministic release smoke:
    - `npm run smoke:release`
 
 ## Health Checks
@@ -29,15 +31,15 @@ Public endpoints:
 - `GET /health` -> liveness (`{ "status": "ok" }`)
 - `GET /health/live` -> liveness duplicate for infra compatibility
 - `GET /health/ready` -> readiness with DB checks:
-  - schema compatibility (`user_version` vs expected schema version)
-  - `PRAGMA quick_check = ok`
-  - `PRAGMA foreign_keys = ON`
+  - PostgreSQL connection
+  - schema metadata compatibility
+  - foreign-key/constraint availability
 
 Admin-only endpoint:
 - `GET /health/diagnostics` (requires admin actor header `x-actor-user-id`)
   - request metrics
   - process metadata (pid/node/memory/uptime)
-  - DB diagnostics (`journal_mode`, `busy_timeout`, schema compatibility)
+  - DB diagnostics (PostgreSQL backend, pool health, schema compatibility)
   - backup/restore metadata (snapshot version and table coverage)
 
 ## Logging Standards
@@ -70,9 +72,10 @@ Operational procedure:
    - `/timeline/:entityType/:entityId`
 
 ## Migration and Version Compatibility
-- Startup enforces schema compatibility using SQLite `PRAGMA user_version`.
-- If `user_version` is newer than supported schema version, startup fails with deterministic compatibility error.
-- If older, startup upgrades `user_version` to current expected value after migration/bootstrap logic.
+- Startup applies the idempotent PostgreSQL schema under an advisory transaction lock.
+- `app_database_metadata` records the supported schema version.
+- A newer unsupported version fails startup with `DB_SCHEMA_VERSION_UNSUPPORTED`.
+- Existing SQLite/snapshot data can be migrated with `npm run migrate:postgres`.
 
 ## Operational Smoke Test Checklist
 1. `GET /health` = 200
@@ -94,5 +97,5 @@ Operational procedure:
 1. Check `/health/ready` first for immediate DB/readiness status.
 2. Pull `/health/diagnostics` for metrics and runtime state.
 3. Inspect structured logs by request id and failure event type.
-4. If database integrity concern exists, inspect `quick_check` and perform controlled backup.
+4. If database integrity concern exists, inspect readiness/schema metadata and perform controlled snapshot export.
 5. If restore is needed, restore only into empty target, then verify parity before cutover.
