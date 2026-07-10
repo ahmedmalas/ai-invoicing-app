@@ -389,9 +389,24 @@
 - Added deterministic pagination and read-consistency stress coverage against large seeded datasets while concurrent writes are occurring, including search, timeline, reporting, and list endpoints.
 - Added dedicated benchmark harness `tests/benchmarks/slice45-stress-benchmark.ts` with avg/min/max and P95/P99 metrics for reporting, search, pagination, timeline, and concurrent read-during-write workloads.
 
+#### Slice 46 — API Contract & Full Regression Audit
+- Commit: `224a3c73fbf6dc9f53076cc5181cecf5879e52ea`
+- Added platform-wide regression integration coverage (`tests/integration/api-regression-audit-slice46.integration.test.ts`) to audit deterministic auth/error contracts, route-surface protection, stable read responses, finalized-number immutability, rejected-operation no-side-effect behavior, and PDF endpoint availability.
+- Removed Fastify deprecation usage by replacing top-level `disableRequestLogging` with `logController: new LogController({ disableRequestLogging: true })`, preserving request-log suppression behavior.
+- Hardened production artifact startup compatibility by adding schema-file fallback loading in `src/db/database.ts`, so runtime from compiled `dist` remains deterministic without changing business behavior.
+- Verified mandatory gates on updated baseline (`typecheck`, `lint`, `test`, `build`), preserving existing API workflows and lifecycle rules.
+
+#### Slice 47 — Release Candidate Cleanup & Deployment Readiness
+- Commit: `224a3c73fbf6dc9f53076cc5181cecf5879e52ea`
+- Removed dead route helper code (`paginateArray`) and removed unused dev dependencies (`supertest`, `@types/supertest`) after validation.
+- Added production environment template `.env.production.example` with validated runtime variables (`NODE_ENV`, `PORT`, `DB_PATH`, `LOG_LEVEL`, `SERVICE_NAME`, `ORGANIZATION_ID`, `DB_BUSY_TIMEOUT_MS`, `ENABLE_STRUCTURED_LOGGING`).
+- Added deterministic release smoke command `npm run smoke:release` (`src/scripts/release-smoke.ts`) validating production build startup, clean DB readiness, protected diagnostics/search/backup surfaces, and graceful app close in one script.
+- Added release governance docs: `docs/RELEASE_CANDIDATE_CHECKLIST.md` and runbook updates in `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` for deployment checks, rollback checks, smoke procedure, and shutdown procedure.
+- Verified dependency audit (`npm audit`) with zero known vulnerabilities.
+
 ### Current Project Status Snapshot
 - Branch: `cursor/slice-43-security-auth-audit-19d3`
-- Status at logging: implementation baseline completed through Slice 45 and pending final gate re-validation for this slice.
+- Status at logging: implementation baseline completed through Slice 47 with mandatory gates and release smoke validation passing.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

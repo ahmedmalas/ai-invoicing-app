@@ -4,8 +4,8 @@
 This roadmap is the canonical planning index for implementation slices in this repository. It records what is implemented, what is approved, and what is intentionally unplanned.
 
 ## Current Implemented Baseline
-- Current implemented slice: **Slice 45 — Concurrency & Large-Dataset Stress Validation**
-- Baseline commit: `0a12034c73855cfea3acced56d5fb19dd81663ab`
+- Current implemented slice: **Slice 47 — Release Candidate Cleanup & Deployment Readiness**
+- Baseline commit: `224a3c73fbf6dc9f53076cc5181cecf5879e52ea`
 - Active branch at roadmap update: `cursor/slice-43-security-auth-audit-19d3`
 
 ## Completed Slices (Canonical History)
@@ -54,14 +54,16 @@ This roadmap is the canonical planning index for implementation slices in this r
 43. **Slice 43 — Security & Authorization Audit** (implemented)
 44. **Slice 44 — Failure Injection & Recovery Testing** (implemented)
 45. **Slice 45 — Concurrency & Large-Dataset Stress Validation** (implemented)
+46. **Slice 46 — API Contract & Full Regression Audit** (implemented)
+47. **Slice 47 — Release Candidate Cleanup & Deployment Readiness** (implemented)
 
 ## Approved Next Work
 - **No future slice is locked at this time.**
 - Future slices remain placeholders until explicitly planned and approved in-repo.
 
 ## Future Slice Placeholders (Unplanned)
-- Slice 46 — TBD (placeholder only)
-- Slice 47 — TBD (placeholder only)
+- Slice 48 — TBD (placeholder only)
+- Slice 49 — TBD (placeholder only)
 
 ## Roadmap Update Rules
 - Update this file only when a slice is planned, implemented, or superseded.

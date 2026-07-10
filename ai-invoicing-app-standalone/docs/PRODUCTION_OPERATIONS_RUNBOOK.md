@@ -10,8 +10,10 @@ Required/validated environment variables:
 - `NODE_ENV` (`development | test | production`)
 - `LOG_LEVEL` (`trace | debug | info | warn | error | fatal | silent`)
 - `SERVICE_NAME` (default `ai-business-os`)
+- `ORGANIZATION_ID` (default `single-tenant`)
 - `DB_BUSY_TIMEOUT_MS` (1000-60000, default `5000`)
 - `ENABLE_STRUCTURED_LOGGING` (`1` or `0`, default `1`)
+- Production template: `.env.production.example`
 
 ## Startup Procedure
 1. Ensure writable parent directory exists for `DB_PATH`.
@@ -19,6 +21,8 @@ Required/validated environment variables:
    - `npm run build`
    - `npm run start`
 3. Confirm service binds successfully and emits structured startup/request logs.
+4. Run deterministic release smoke:
+   - `npm run smoke:release`
 
 ## Health Checks
 Public endpoints:
@@ -80,6 +84,11 @@ Operational procedure:
 5. Trigger validation failure and confirm `validation.failure` log event
 6. Trigger authorization failure and confirm `authorization.failure` log event
 7. Execute backup/restore cycle and verify `ready` + snapshot parity post-restore
+
+## Graceful Shutdown Procedure
+1. Send `SIGTERM` to the running process.
+2. Wait for process exit and verify no open listener remains on the service port.
+3. Restart service and re-check `/health/ready`.
 
 ## Incident Response
 1. Check `/health/ready` first for immediate DB/readiness status.
