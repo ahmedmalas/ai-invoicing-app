@@ -365,7 +365,7 @@
 - Added `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` with deployment, health-check, diagnostics, backup/restore, and incident response procedures.
 
 #### Slice 43 — Security & Authorization Audit
-- Commit: `TBD`
+- Commit: `502e71009a795b9b393dcae594ee4c713d64b222`
 - Completed platform-wide authentication/authorization route audit and validated deterministic auth contract enforcement over read, write, admin, and diagnostics surfaces.
 - Hardened production behavior so environment auth-bypass (`AI_BUSINESS_OS_TEST_AUTH_BYPASS`) is only honored when runtime is explicitly `test`, preventing accidental production bypass.
 - Added explicit organization-context guardrail via optional `x-organization-id` validation against configured `ORGANIZATION_ID`, rejecting cross-tenant context mismatch attempts deterministically.

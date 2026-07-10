@@ -5,7 +5,7 @@ This roadmap is the canonical planning index for implementation slices in this r
 
 ## Current Implemented Baseline
 - Current implemented slice: **Slice 43 — Security & Authorization Audit**
-- Baseline commit: `TBD`
+- Baseline commit: `502e71009a795b9b393dcae594ee4c713d64b222`
 - Active branch at roadmap update: `cursor/slice-43-security-auth-audit-19d3`
 
 ## Completed Slices (Canonical History)

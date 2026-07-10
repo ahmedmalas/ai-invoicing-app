@@ -4,7 +4,7 @@ This matrix tracks implementation readiness at module level without prescribing 
 
 ## Current Project Snapshot
 - Current branch: `cursor/slice-43-security-auth-audit-19d3`
-- Current commit (Slice 43 implementation): `TBD`
+- Current commit (Slice 43 implementation): `502e71009a795b9b393dcae594ee4c713d64b222`
 - Current implemented slice: **Slice 43 — Security & Authorization Audit**
 - Documentation baseline:
   - `docs/ROADMAP.md`
