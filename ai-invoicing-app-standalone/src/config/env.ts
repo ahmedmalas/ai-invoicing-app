@@ -9,6 +9,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
   SERVICE_NAME: z.string().min(1).default('ai-business-os'),
+  ORGANIZATION_ID: z.string().min(1).default('single-tenant'),
   DB_BUSY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(5000),
   ENABLE_STRUCTURED_LOGGING: z
     .enum(['0', '1'])

@@ -364,9 +364,18 @@
 - Added operational smoke/integration coverage for health/readiness/diagnostics and backup/restore post-restore readiness checks.
 - Added `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` with deployment, health-check, diagnostics, backup/restore, and incident response procedures.
 
+#### Slice 43 — Security & Authorization Audit
+- Commit: `TBD`
+- Completed platform-wide authentication/authorization route audit and validated deterministic auth contract enforcement over read, write, admin, and diagnostics surfaces.
+- Hardened production behavior so environment auth-bypass (`AI_BUSINESS_OS_TEST_AUTH_BYPASS`) is only honored when runtime is explicitly `test`, preventing accidental production bypass.
+- Added explicit organization-context guardrail via optional `x-organization-id` validation against configured `ORGANIZATION_ID`, rejecting cross-tenant context mismatch attempts deterministically.
+- Hardened structured log safety by redacting default Fastify request URL fields and restricting custom security logs to sanitized paths without query strings.
+- Reduced sensitive runtime-error exposure in logs by omitting raw unexpected-error messages and replacing DB failure raw-message logging with deterministic error codes.
+- Added focused integration coverage for production bypass prevention, cross-tenant read/write denial, diagnostics admin-only enforcement, no-mutation/no-timeline guarantees on authorization failures, and sensitive query redaction in logs/diagnostics.
+
 ### Current Project Status Snapshot
-- Branch: `cursor/slice-42-operations-readiness-19d3`
-- Status at logging: implementation baseline completed through Slice 42 and pending final gate re-validation for this slice.
+- Branch: `cursor/slice-43-security-auth-audit-19d3`
+- Status at logging: implementation baseline completed through Slice 43 and pending final gate re-validation for this slice.
 
 ### Pre-Slice 1 Architecture Freeze
 - Added `docs/PRODUCT_PRINCIPLES.md` as constitution-level principles for AI Business OS.

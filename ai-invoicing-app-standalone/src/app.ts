@@ -25,7 +25,6 @@ import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 
 import type { AppDatabase } from './db/database.js';
-import type { FastifyRequest } from 'fastify';
 
 interface OperationalMetrics {
   requestCount: number;
@@ -59,6 +58,7 @@ export interface BuildAppOptions {
   enableStructuredLogging?: boolean;
   logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
   serviceName?: string;
+  organizationId?: string;
   nodeEnv?: string;
   dbBusyTimeoutMs?: number;
   loggerStream?: NodeJS.WritableStream;
@@ -66,21 +66,28 @@ export interface BuildAppOptions {
 
 export async function buildApp(options: BuildAppOptions) {
   const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV ?? 'development';
+  const organizationId = options.organizationId ?? process.env.ORGANIZATION_ID ?? 'single-tenant';
   const enableStructuredLogging = options.enableStructuredLogging ?? false;
   const loggerConfig = enableStructuredLogging
     ? {
         level: options.logLevel ?? 'info',
         base: { service: options.serviceName ?? 'ai-business-os', environment: nodeEnv },
+        redact: {
+          paths: ['req.url'],
+          censor: '[REDACTED]',
+        },
         ...(options.loggerStream ? { stream: options.loggerStream } : {}),
       }
     : false;
-  const app = Fastify({ logger: loggerConfig });
+  const app = Fastify({ logger: loggerConfig, disableRequestLogging: true });
   const db = createDatabase(options.dbPath, {
     ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
   });
-  const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
+  const requestStartedAt = new WeakMap<object, bigint>();
   const authBypassForTesting =
-    options.authBypassForTesting ?? process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1';
+    options.authBypassForTesting ??
+    (nodeEnv === 'test' && process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1');
+  const sanitizePath = (url: string): string => url.split('?')[0] ?? url;
 
   app.decorate('db', db);
   app.decorate('opsMetrics', {
@@ -137,12 +144,20 @@ export async function buildApp(options: BuildAppOptions) {
         event: 'request.received',
         requestId: request.id,
         method: request.method,
-        url: request.url,
+        url: sanitizePath(request.url),
       },
       'request received',
     );
     if (isPublicHealthRoute(request.url)) {
       return;
+    }
+
+    const organizationHeaderValue = request.headers['x-organization-id'];
+    const organizationHeader = Array.isArray(organizationHeaderValue)
+      ? organizationHeaderValue[0]
+      : organizationHeaderValue;
+    if (organizationHeader && organizationHeader !== organizationId) {
+      throw new Error('AUTH_FORBIDDEN');
     }
 
     const actorHeaderValue = request.headers['x-actor-user-id'];
@@ -215,7 +230,7 @@ export async function buildApp(options: BuildAppOptions) {
           event: 'validation.failure',
           requestId: request.id,
           method: request.method,
-          url: request.url,
+          url: sanitizePath(request.url),
           issues: error.issues,
         },
         'validation failed',
@@ -250,7 +265,7 @@ export async function buildApp(options: BuildAppOptions) {
           event: 'authorization.failure',
           requestId: request.id,
           method: request.method,
-          url: request.url,
+          url: sanitizePath(request.url),
           code: 'AUTH_UNAUTHENTICATED',
         },
         'unauthenticated request rejected',
@@ -269,7 +284,7 @@ export async function buildApp(options: BuildAppOptions) {
           event: 'authorization.failure',
           requestId: request.id,
           method: request.method,
-          url: request.url,
+          url: sanitizePath(request.url),
           code: 'AUTH_FORBIDDEN',
         },
         'forbidden request rejected',
@@ -414,9 +429,9 @@ export async function buildApp(options: BuildAppOptions) {
           event: 'database.failure',
           requestId: request.id,
           method: request.method,
-          url: request.url,
+          url: sanitizePath(request.url),
           name: error.name,
-          message: error.message,
+          code: (error as { code?: string }).code ?? 'SQLITE_ERROR',
         },
         'database operation failed',
       );
@@ -429,9 +444,8 @@ export async function buildApp(options: BuildAppOptions) {
         event: 'runtime.unexpected_error',
         requestId: request.id,
         method: request.method,
-        url: request.url,
+        url: sanitizePath(request.url),
         name: error instanceof Error ? error.name : 'UnknownError',
-        message: errorMessage,
       },
       'unexpected runtime error',
     );
@@ -489,7 +503,7 @@ export async function buildApp(options: BuildAppOptions) {
         event: 'request.completed',
         requestId: request.id,
         method: request.method,
-        url: request.url,
+        url: sanitizePath(request.url),
         statusCode: reply.statusCode,
         durationMs,
       },

@@ -15,6 +15,7 @@ async function start(): Promise<void> {
     enableStructuredLogging: env.ENABLE_STRUCTURED_LOGGING,
     logLevel: env.LOG_LEVEL,
     serviceName: env.SERVICE_NAME,
+    organizationId: env.ORGANIZATION_ID,
     nodeEnv: env.NODE_ENV,
     dbBusyTimeoutMs: env.DB_BUSY_TIMEOUT_MS,
   });
