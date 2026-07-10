@@ -33,19 +33,19 @@ const updateDraftSchema = z.object({
 export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   app.post('/invoices', async (request, reply) => {
     const body = createDraftSchema.parse(request.body);
-    const invoice = app.db.createInvoiceDraft(body);
+    const invoice = await app.db.createInvoiceDraft(body);
     return reply.code(201).send(invoice);
   });
 
   app.put('/invoices/:invoiceId', async (request) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     const body = updateDraftSchema.parse(request.body);
-    return app.db.updateInvoiceDraft(params.invoiceId, body);
+    return await app.db.updateInvoiceDraft(params.invoiceId, body);
   });
 
   app.get('/invoices/:invoiceId', async (request, reply) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
-    const invoice = app.db.getInvoiceById(params.invoiceId);
+    const invoice = await app.db.getInvoiceById(params.invoiceId);
     if (!invoice) {
       return reply.code(404).send({ message: 'Invoice not found' });
     }
@@ -54,22 +54,22 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/invoices/:invoiceId/finalise', async (request) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
-    return app.db.finaliseInvoice(params.invoiceId);
+    return await app.db.finaliseInvoice(params.invoiceId);
   });
 
   app.get('/invoices/:invoiceId/pdf', async (request, reply) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
-    const invoice = app.db.getInvoiceById(params.invoiceId);
+    const invoice = await app.db.getInvoiceById(params.invoiceId);
     if (!invoice) {
       return reply.code(404).send({ message: 'Invoice not found' });
     }
 
-    const customer = app.db.getCustomerById(invoice.customerId);
+    const customer = await app.db.getCustomerById(invoice.customerId);
     if (!customer) {
       return reply.code(400).send({ message: 'Invoice customer missing' });
     }
 
-    const businessProfile = app.db.getBusinessProfile();
+    const businessProfile = await app.db.getBusinessProfile();
     const pdfBuffer = await generateInvoicePdfBuffer({
       invoice,
       lineItems: invoice.lineItems,

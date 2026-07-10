@@ -50,13 +50,21 @@ export const statementRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const query = statementQuerySchema.parse(request.query);
 
-    return app.db.getCustomerStatement(params.customerId, query.from ?? null, query.to ?? null);
+    return await app.db.getCustomerStatement(
+      params.customerId,
+      query.from ?? null,
+      query.to ?? null,
+    );
   });
 
   app.get('/statements/customers/:customerId/html', async (request, reply) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const query = statementQuerySchema.parse(request.query);
-    const statement = app.db.getCustomerStatement(params.customerId, query.from ?? null, query.to ?? null);
+    const statement = await app.db.getCustomerStatement(
+      params.customerId,
+      query.from ?? null,
+      query.to ?? null,
+    );
     const html = renderCustomerStatementHtml(statement);
 
     return reply
@@ -70,8 +78,12 @@ export const statementRoutes: FastifyPluginAsync = async (app) => {
   app.get('/statements/customers/:customerId/pdf', async (request, reply) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const query = statementQuerySchema.parse(request.query);
-    const statement = app.db.getCustomerStatement(params.customerId, query.from ?? null, query.to ?? null);
-    const businessProfile = app.db.getBusinessProfile();
+    const statement = await app.db.getCustomerStatement(
+      params.customerId,
+      query.from ?? null,
+      query.to ?? null,
+    );
+    const businessProfile = await app.db.getBusinessProfile();
     const pdfBuffer = await generateCustomerStatementPdfBuffer({
       statement,
       businessProfile,

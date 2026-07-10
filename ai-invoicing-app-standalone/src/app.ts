@@ -83,7 +83,7 @@ export async function buildApp(options: BuildAppOptions) {
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
   });
-  const db = createDatabase(options.dbPath, {
+  const db = await createDatabase(options.dbPath, {
     ...(options.dbBusyTimeoutMs !== undefined ? { busyTimeoutMs: options.dbBusyTimeoutMs } : {}),
   });
   const requestStartedAt = new WeakMap<object, bigint>();
@@ -182,14 +182,14 @@ export async function buildApp(options: BuildAppOptions) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
-    const actor = db.getUserById(parsedActorId.data);
+    const actor = await db.getUserById(parsedActorId.data);
     if (!actor || !actor.isActive) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
-    const roleRecords = actor.roleIds
-      .map((roleId) => db.getRoleById(roleId))
-      .filter((role): role is NonNullable<typeof role> => role !== null);
+    const roleRecords = (
+      await Promise.all(actor.roleIds.map((roleId) => db.getRoleById(roleId)))
+    ).filter((role): role is NonNullable<typeof role> => role !== null);
     const isAdmin = roleRecords.some((role) => role.canManageAssignments);
     const canWrite = roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned);
     request.auth = {
@@ -515,7 +515,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('onClose', async () => {
-    db.close();
+    await db.close();
   });
 
   await app.register(healthRoutes);

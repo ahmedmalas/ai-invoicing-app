@@ -13,19 +13,19 @@ const customerSchema = z.object({
 export const customerRoutes: FastifyPluginAsync = async (app) => {
   app.post('/customers', async (request, reply) => {
     const body = customerSchema.parse(request.body);
-    const customer = app.db.createCustomer(body);
+    const customer = await app.db.createCustomer(body);
     return reply.code(201).send(customer);
   });
 
   app.put('/customers/:customerId', async (request) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const body = customerSchema.parse(request.body);
-    return app.db.updateCustomer(params.customerId, body);
+    return await app.db.updateCustomer(params.customerId, body);
   });
 
   app.get('/customers/:customerId', async (request, reply) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
-    const customer = app.db.getCustomerById(params.customerId);
+    const customer = await app.db.getCustomerById(params.customerId);
     if (!customer) {
       return reply.code(404).send({ message: 'Customer not found' });
     }
@@ -34,7 +34,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/customers/:customerId', async (request, reply) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
-    app.db.deleteCustomer(params.customerId);
+    await app.db.deleteCustomer(params.customerId);
     return reply.code(204).send();
   });
 };

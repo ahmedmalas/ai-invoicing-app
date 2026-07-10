@@ -14,7 +14,7 @@ export const preferenceRoutes: FastifyPluginAsync = async (app) => {
       .parse(request.params);
 
     const body = preferenceSchema.parse(request.body);
-    app.db.upsertPreference(params.category, body.value);
+    await app.db.upsertPreference(params.category, body.value);
     return reply.code(201).send({ category: params.category, value: body.value });
   });
 
@@ -25,7 +25,7 @@ export const preferenceRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(request.params);
 
-    const value = app.db.getPreference(params.category);
+    const value = await app.db.getPreference(params.category);
     if (!value) {
       return reply.code(404).send({ message: 'Preference not found' });
     }

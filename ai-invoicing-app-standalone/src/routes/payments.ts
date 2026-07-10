@@ -12,13 +12,13 @@ import { parsePagination } from './pagination.js';
 export const paymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/payments', async (request, reply) => {
     const body = createCustomerPaymentSchema.parse(request.body);
-    const payment = app.db.createCustomerPayment(body);
+    const payment = await app.db.createCustomerPayment(body);
     return reply.code(201).send(payment);
   });
 
   app.get('/payments/:paymentId', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getCustomerPaymentById(params.paymentId);
+    const payment = await app.db.getCustomerPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'PAYMENT_NOT_FOUND' });
     }
@@ -42,7 +42,7 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
       filter.to = query.to;
     }
     return {
-      payments: app.db.listCustomerPayments(filter, pagination),
+      payments: await app.db.listCustomerPayments(filter, pagination),
     };
   });
 
@@ -50,7 +50,7 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listCustomerPayments({ customerId: params.customerId }, pagination),
+      payments: await app.db.listCustomerPayments({ customerId: params.customerId }, pagination),
     };
   });
 
@@ -58,17 +58,17 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     const pagination = parsePagination(request.query);
     return {
-      payments: app.db.listCustomerPayments({ invoiceId: params.invoiceId }, pagination),
+      payments: await app.db.listCustomerPayments({ invoiceId: params.invoiceId }, pagination),
     };
   });
 
   app.get('/payments/:paymentId/html', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getCustomerPaymentById(params.paymentId);
+    const payment = await app.db.getCustomerPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'PAYMENT_NOT_FOUND' });
     }
-    const customer = app.db.getCustomerById(payment.customerId);
+    const customer = await app.db.getCustomerById(payment.customerId);
     if (!customer) {
       return reply.code(404).send({ message: 'Customer not found' });
     }
@@ -78,15 +78,15 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/payments/:paymentId/pdf', async (request, reply) => {
     const params = z.object({ paymentId: z.string().uuid() }).parse(request.params);
-    const payment = app.db.getCustomerPaymentById(params.paymentId);
+    const payment = await app.db.getCustomerPaymentById(params.paymentId);
     if (!payment) {
       return reply.code(404).send({ message: 'PAYMENT_NOT_FOUND' });
     }
-    const customer = app.db.getCustomerById(payment.customerId);
+    const customer = await app.db.getCustomerById(payment.customerId);
     if (!customer) {
       return reply.code(404).send({ message: 'Customer not found' });
     }
-    const businessProfile = app.db.getBusinessProfile();
+    const businessProfile = await app.db.getBusinessProfile();
     const pdfBuffer = await generatePaymentReceiptPdfBuffer({
       payment,
       customer,

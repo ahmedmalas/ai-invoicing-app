@@ -8,13 +8,13 @@ const restorePayloadSchema = z.object({
 export const platformSnapshotRoutes: FastifyPluginAsync = async (app) => {
   app.get('/platform/backup', async () => {
     return {
-      snapshot: app.db.exportPlatformSnapshot(),
+      snapshot: await app.db.exportPlatformSnapshot(),
     };
   });
 
   app.post('/platform/restore', async (request, reply) => {
     const body = restorePayloadSchema.parse(request.body);
-    app.db.restorePlatformSnapshot(body.snapshot);
+    await app.db.restorePlatformSnapshot(body.snapshot);
     return reply.code(204).send();
   });
 };

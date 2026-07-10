@@ -28,7 +28,7 @@ export const searchRoutes: FastifyPluginAsync = async (app) => {
     const entityTypes = query.entityTypes
       ? query.entityTypes.split(',').map((item) => searchEntityTypeSchema.parse(item.trim()))
       : undefined;
-    const results = app.db.search(query.q, {
+    const results = await app.db.search(query.q, {
       ...(query.limit !== undefined ? { limit: query.limit } : {}),
       ...(query.offset !== undefined ? { offset: query.offset } : {}),
       ...(entityTypes ? { entityTypes } : {}),

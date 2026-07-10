@@ -16,11 +16,11 @@ const profileSchema = z.object({
 export const businessProfileRoutes: FastifyPluginAsync = async (app) => {
   app.post('/business-profile', async (request) => {
     const body = profileSchema.parse(request.body);
-    return app.db.upsertBusinessProfile(body);
+    return await app.db.upsertBusinessProfile(body);
   });
 
   app.get('/business-profile', async (request, reply) => {
-    const profile = app.db.getBusinessProfile();
+    const profile = await app.db.getBusinessProfile();
     if (!profile) {
       return reply.code(404).send({ message: 'Business profile not configured' });
     }
@@ -29,12 +29,12 @@ export const businessProfileRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/business-profile/logo-placeholder', async (request, reply) => {
     const body = z.object({ fileName: z.string().min(1) }).parse(request.body);
-    const existing = app.db.getBusinessProfile();
+    const existing = await app.db.getBusinessProfile();
     if (!existing) {
       return reply.code(400).send({ message: 'Create business profile before setting logo placeholder' });
     }
 
-    const updated = app.db.upsertBusinessProfile({
+    const updated = await app.db.upsertBusinessProfile({
       companyName: existing.companyName,
       legalName: existing.legalName ?? undefined,
       abnTaxId: existing.abnTaxId ?? undefined,
