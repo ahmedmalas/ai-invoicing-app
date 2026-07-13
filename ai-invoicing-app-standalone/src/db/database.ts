@@ -1118,7 +1118,13 @@ export function createDatabase(
       userVersion: Math.max(userVersion, DATABASE_SCHEMA_VERSION),
     };
   }
-  let schemaVersionState = ensureSchemaVersionCompatibilityOrThrow();
+  let schemaVersionState: ReturnType<typeof ensureSchemaVersionCompatibilityOrThrow>;
+  try {
+    schemaVersionState = ensureSchemaVersionCompatibilityOrThrow();
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   const jobColumns = db.prepare("SELECT name FROM pragma_table_info('jobs')").all() as Array<{
     name: string;
