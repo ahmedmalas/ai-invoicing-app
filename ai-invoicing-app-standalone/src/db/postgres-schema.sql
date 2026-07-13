@@ -121,6 +121,24 @@ CREATE TABLE IF NOT EXISTS invoices (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS quotes (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  title TEXT NOT NULL,
+  issue_date TEXT NOT NULL,
+  expiry_date TEXT NOT NULL,
+  notes TEXT,
+  terms TEXT,
+  quote_number TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  converted_invoice_id TEXT REFERENCES invoices(id),
+  subtotal DOUBLE PRECISION NOT NULL,
+  gst_total DOUBLE PRECISION NOT NULL,
+  total DOUBLE PRECISION NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
   job_number TEXT NOT NULL UNIQUE,
@@ -149,6 +167,18 @@ CREATE TABLE IF NOT EXISTS job_document_links (
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL REFERENCES invoices(id),
+  description TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  unit_price DOUBLE PRECISION NOT NULL,
+  gst_applicable INTEGER NOT NULL,
+  line_subtotal DOUBLE PRECISION NOT NULL,
+  line_gst DOUBLE PRECISION NOT NULL,
+  line_total DOUBLE PRECISION NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_line_items (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
   description TEXT NOT NULL,
   quantity DOUBLE PRECISION NOT NULL,
   unit_price DOUBLE PRECISION NOT NULL,
@@ -234,6 +264,13 @@ CREATE TABLE IF NOT EXISTS invoice_snapshots (
 -- These singleton counter tables intentionally remain application-managed
 -- counters rather than PostgreSQL sequence objects.
 CREATE TABLE IF NOT EXISTS invoice_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
   year INTEGER NOT NULL,
@@ -387,6 +424,9 @@ CREATE INDEX IF NOT EXISTS idx_team_memberships_team_created_order ON team_membe
 CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_quotes_customer_status_issue ON quotes(customer_id, status, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_quotes_status_issue ON quotes(status, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_quote_line_items_quote ON quote_line_items(quote_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_number ON supplier_bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_supplier ON supplier_bills(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_status ON supplier_bills(status);
@@ -749,15 +789,18 @@ ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE team_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_document_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quote_line_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_order_line_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE supplier_bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE supplier_bill_line_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quote_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_note_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE customer_payments ENABLE ROW LEVEL SECURITY;

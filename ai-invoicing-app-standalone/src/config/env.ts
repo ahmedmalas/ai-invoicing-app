@@ -26,6 +26,10 @@ const envSchema = z
       .refine((value) => new URL(value).origin === value, 'CORS_ORIGIN must be a URL origin')
       .default('https://ai-invoicing-app.vercel.app'),
     REQUEST_BODY_LIMIT: z.coerce.number().int().min(1024).max(10_485_760).default(1_048_576),
+    ABOSS_INTEGRATION_SECRET: z.string().min(32).optional(),
+    ABOSS_INTEGRATION_ACTOR_USER_ID: z.string().uuid().optional(),
+    ABOSS_ALLOWED_ORGANIZATION_ID: z.string().uuid().optional(),
+    ABOSS_ONLY_AUTH: z.enum(['0', '1']).default('0').transform((value) => value === '1'),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV === 'production' && value.DATABASE_URL === undefined) {
@@ -42,12 +46,23 @@ const envSchema = z
         message: 'DB_PATH is not supported in production',
       });
     }
+    if (value.NODE_ENV === 'production' && value.ABOSS_ONLY_AUTH) {
+      for (const [path, configured] of [
+        ['ABOSS_INTEGRATION_SECRET', value.ABOSS_INTEGRATION_SECRET],
+        ['ABOSS_INTEGRATION_ACTOR_USER_ID', value.ABOSS_INTEGRATION_ACTOR_USER_ID],
+      ] as const) {
+        if (!configured) context.addIssue({ code: 'custom', path: [path], message: `${path} is required when ABOSS_ONLY_AUTH=1` });
+      }
+    }
   });
 
 export type RuntimeEnv = z.infer<typeof envSchema>;
 
 export function parseEnv(input: NodeJS.ProcessEnv): RuntimeEnv {
-  return envSchema.parse(input);
+  return envSchema.parse({
+    ...input,
+    DATABASE_URL: input.DATABASE_URL?.trim() || input.POSTGRES_URL,
+  });
 }
 
 export const env = parseEnv(process.env);

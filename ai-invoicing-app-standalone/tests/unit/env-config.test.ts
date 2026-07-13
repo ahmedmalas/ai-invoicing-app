@@ -11,6 +11,15 @@ const productionEnv = {
 };
 
 describe('runtime environment configuration', () => {
+  it('uses the Vercel pooled URL when DATABASE_URL is an empty sensitive reference', () => {
+    const parsed = parseEnv({
+      ...productionEnv,
+      DATABASE_URL: '',
+      POSTGRES_URL: productionEnv.DATABASE_URL,
+    });
+    expect(parsed.DATABASE_URL).toBe(productionEnv.DATABASE_URL);
+  });
+
   it('accepts the pooled PostgreSQL production configuration', () => {
     expect(parseEnv(productionEnv)).toMatchObject({
       NODE_ENV: 'production',

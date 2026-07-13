@@ -13,7 +13,7 @@ describe('PostgreSQL schema security', () => {
       (match) => match[1],
     );
 
-    expect(tables).toHaveLength(35);
+    expect(tables).toHaveLength(38);
     expect(new Set(tables).size).toBe(tables.length);
 
     for (const table of tables) {

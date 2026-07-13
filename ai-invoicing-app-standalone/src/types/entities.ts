@@ -121,6 +121,24 @@ export interface InvoiceDraft {
   updatedAt: string;
 }
 
+export type QuoteStatus = 'Draft' | 'Sent' | 'Accepted' | 'Declined' | 'Expired' | 'Converted';
+
+export interface Quote {
+  id: UUID;
+  customerId: UUID;
+  title: string;
+  issueDate: string;
+  expiryDate: string;
+  notes: string | null;
+  terms: string | null;
+  quoteNumber: string;
+  status: QuoteStatus;
+  convertedInvoiceId: UUID | null;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Job {
   id: UUID;
   jobNumber: string;

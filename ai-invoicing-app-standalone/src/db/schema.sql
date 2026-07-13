@@ -119,6 +119,26 @@ CREATE TABLE IF NOT EXISTS invoices (
   FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
 
+CREATE TABLE IF NOT EXISTS quotes (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  issue_date TEXT NOT NULL,
+  expiry_date TEXT NOT NULL,
+  notes TEXT,
+  terms TEXT,
+  quote_number TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  converted_invoice_id TEXT,
+  subtotal REAL NOT NULL,
+  gst_total REAL NOT NULL,
+  total REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (converted_invoice_id) REFERENCES invoices(id)
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
   job_number TEXT NOT NULL UNIQUE,
@@ -159,6 +179,19 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   line_gst REAL NOT NULL,
   line_total REAL NOT NULL,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
+CREATE TABLE IF NOT EXISTS quote_line_items (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_price REAL NOT NULL,
+  gst_applicable INTEGER NOT NULL,
+  line_subtotal REAL NOT NULL,
+  line_gst REAL NOT NULL,
+  line_total REAL NOT NULL,
+  FOREIGN KEY (quote_id) REFERENCES quotes(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS supplier_bills (
@@ -240,6 +273,13 @@ CREATE TABLE IF NOT EXISTS invoice_snapshots (
 );
 
 CREATE TABLE IF NOT EXISTS invoice_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_sequences (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   prefix TEXT NOT NULL,
   year INTEGER NOT NULL,
@@ -407,6 +447,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_team_user
 ON team_memberships(team_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_search ON documents(searchable_text);
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_quotes_customer_status_issue ON quotes(customer_id, status, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_quotes_status_issue ON quotes(status, issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_quote_line_items_quote ON quote_line_items(quote_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_number ON supplier_bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_supplier ON supplier_bills(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_status ON supplier_bills(status);

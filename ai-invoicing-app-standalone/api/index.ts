@@ -22,6 +22,10 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     nodeEnv: env.NODE_ENV,
     corsOrigin: env.CORS_ORIGIN,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
+    abossOnlyAuth: env.ABOSS_ONLY_AUTH,
+    ...(env.ABOSS_INTEGRATION_SECRET !== undefined ? { abossIntegrationSecret: env.ABOSS_INTEGRATION_SECRET } : {}),
+    ...(env.ABOSS_INTEGRATION_ACTOR_USER_ID !== undefined ? { abossIntegrationActorUserId: env.ABOSS_INTEGRATION_ACTOR_USER_ID } : {}),
+    ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID } : {}),
   });
 }
 

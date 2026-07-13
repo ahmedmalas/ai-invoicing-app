@@ -3,11 +3,13 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { ZodError } from 'zod';
 import { z } from 'zod';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
 import { invoiceRoutes } from './routes/invoices.js';
+import { quoteRoutes } from './routes/quotes.js';
 import { jobRoutes } from './routes/jobs.js';
 import { roleRoutes } from './routes/roles.js';
 import { teamRoutes } from './routes/teams.js';
@@ -67,6 +69,10 @@ export interface BuildAppOptions {
   corsOrigin?: string;
   requestBodyLimit?: number;
   loggerStream?: NodeJS.WritableStream;
+  abossIntegrationSecret?: string;
+  abossIntegrationActorUserId?: string;
+  abossAllowedOrganizationId?: string;
+  abossOnlyAuth?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions) {
@@ -108,7 +114,14 @@ export async function buildApp(options: BuildAppOptions) {
   const authBypassForTesting =
     options.authBypassForTesting ??
     (nodeEnv === 'test' && process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1');
+  const abossIntegrationSecret = options.abossIntegrationSecret ?? process.env.ABOSS_INTEGRATION_SECRET;
+  const abossIntegrationActorUserId = options.abossIntegrationActorUserId ?? process.env.ABOSS_INTEGRATION_ACTOR_USER_ID;
+  const abossAllowedOrganizationId = options.abossAllowedOrganizationId ?? process.env.ABOSS_ALLOWED_ORGANIZATION_ID;
+  const abossOnlyAuth = options.abossOnlyAuth ?? process.env.ABOSS_ONLY_AUTH === '1';
+  const usedAbossNonces = new Map<string, number>();
   const sanitizePath = (url: string): string => url.split('?')[0] ?? url;
+  const singleHeader = (value: string | string[] | undefined): string | undefined =>
+    Array.isArray(value) ? value[0] : value;
 
   app.decorate('db', db);
   app.decorate('opsMetrics', {
@@ -181,6 +194,13 @@ export async function buildApp(options: BuildAppOptions) {
       return;
     }
 
+    if (singleHeader(request.headers['x-aboss-signature'])) {
+      return;
+    }
+    if (abossOnlyAuth) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+
     const organizationHeaderValue = request.headers['x-organization-id'];
     const organizationHeader = Array.isArray(organizationHeaderValue)
       ? organizationHeaderValue[0]
@@ -224,6 +244,77 @@ export async function buildApp(options: BuildAppOptions) {
       userId: actor.id,
       isAdmin,
       canWrite,
+    };
+  });
+
+  app.addHook('preValidation', async (request) => {
+    if (isPublicHealthRoute(request.url)) return;
+    const signature = singleHeader(request.headers['x-aboss-signature']);
+    if (!signature) return;
+    const timestamp = singleHeader(request.headers['x-aboss-timestamp']);
+    const nonce = singleHeader(request.headers['x-aboss-nonce']);
+    const abossUserId = singleHeader(request.headers['x-aboss-user-id']);
+    const abossOrganizationId = singleHeader(request.headers['x-aboss-organization-id']);
+    const contentHash = singleHeader(request.headers['x-aboss-content-sha256']);
+    if (
+      !abossIntegrationSecret ||
+      !abossIntegrationActorUserId ||
+      !timestamp ||
+      !nonce ||
+      !abossUserId ||
+      !abossOrganizationId ||
+      !contentHash ||
+      !/^\d{13}$/.test(timestamp) ||
+      !/^[a-f0-9]{64}$/.test(signature) ||
+      !/^[a-f0-9]{64}$/.test(contentHash) ||
+      !z.string().uuid().safeParse(abossUserId).success ||
+      !z.string().uuid().safeParse(abossOrganizationId).success ||
+      !z.string().uuid().safeParse(abossIntegrationActorUserId).success
+    ) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+    if (abossAllowedOrganizationId && abossOrganizationId !== abossAllowedOrganizationId) {
+      throw new Error('AUTH_FORBIDDEN');
+    }
+    const now = Date.now();
+    const issuedAt = Number(timestamp);
+    if (!Number.isSafeInteger(issuedAt) || Math.abs(now - issuedAt) > 60_000) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+    for (const [usedNonce, expiresAt] of usedAbossNonces) {
+      if (expiresAt <= now) usedAbossNonces.delete(usedNonce);
+    }
+    if (usedAbossNonces.has(nonce)) throw new Error('AUTH_UNAUTHENTICATED');
+    const serializedBody = JSON.stringify(request.body ?? null);
+    const actualContentHash = createHash('sha256').update(serializedBody).digest('hex');
+    if (actualContentHash !== contentHash) throw new Error('AUTH_UNAUTHENTICATED');
+    const canonical = [
+      'aboss-invoicing-v1',
+      request.method.toUpperCase(),
+      request.url,
+      timestamp,
+      nonce,
+      abossUserId,
+      abossOrganizationId,
+      contentHash,
+    ].join('\n');
+    const expected = createHmac('sha256', abossIntegrationSecret).update(canonical).digest();
+    const received = Buffer.from(signature, 'hex');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
+    const actor = await db.getUserById(abossIntegrationActorUserId);
+    if (!actor || !actor.isActive) throw new Error('AUTH_UNAUTHENTICATED');
+    const roleRecords = [];
+    for (const roleId of actor.roleIds) {
+      const role = await db.getRoleById(roleId);
+      if (role) roleRecords.push(role);
+    }
+    usedAbossNonces.set(nonce, now + 120_000);
+    request.auth = {
+      userId: actor.id,
+      isAdmin: roleRecords.some((role) => role.canManageAssignments),
+      canWrite: roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned),
     };
   });
 
@@ -342,6 +433,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||
       errorMessage.includes('CUSTOMER_HAS_INVOICES') ||
+      errorMessage.includes('CUSTOMER_HAS_QUOTES') ||
       errorMessage.includes('CUSTOMER_HAS_PAYMENTS') ||
       errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
       errorMessage.includes('CUSTOMER_HAS_JOBS') ||
@@ -386,6 +478,11 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('SUPPLIER_PAYMENT_ALLOCATION_SOURCE_PO_VALUE_EXCEEDS_REMAINING') ||
       errorMessage.includes('PURCHASE_ORDER_REFERENCE_EXISTS') ||
       errorMessage.includes('INVALID_PURCHASE_ORDER_STATUS_TRANSITION') ||
+      errorMessage.includes('INVALID_QUOTE_STATUS_TRANSITION') ||
+      errorMessage.includes('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION') ||
+      errorMessage.includes('Only draft quotes can be edited') ||
+      errorMessage.includes('Only draft quotes can be deleted') ||
+      errorMessage.includes('Only draft invoices can be deleted') ||
       errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||
@@ -565,6 +662,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(businessProfileRoutes);
   await app.register(preferenceRoutes);
   await app.register(invoiceRoutes);
+  await app.register(quoteRoutes);
   await app.register(jobRoutes);
   await app.register(roleRoutes);
   await app.register(teamRoutes);
