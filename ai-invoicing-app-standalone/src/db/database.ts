@@ -622,7 +622,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 42;
+export const DATABASE_SCHEMA_VERSION = 43;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [

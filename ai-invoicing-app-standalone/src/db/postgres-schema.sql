@@ -1,6 +1,12 @@
 -- PostgreSQL port of schema.sql.
 -- Foreign-key enforcement is intrinsic in PostgreSQL; no PRAGMA is required.
 
+CREATE TABLE IF NOT EXISTS app_database_metadata (
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  schema_version INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS business_profile (
   id TEXT PRIMARY KEY,
   company_name TEXT NOT NULL,
@@ -727,3 +733,42 @@ DROP TRIGGER IF EXISTS trg_supplier_payment_allocations_immutable_update ON supp
 CREATE TRIGGER trg_supplier_payment_allocations_immutable_update BEFORE UPDATE ON supplier_payment_allocations FOR EACH ROW EXECUTE FUNCTION enforce_invoicing_schema_guard();
 DROP TRIGGER IF EXISTS trg_supplier_payment_allocations_immutable_delete ON supplier_payment_allocations;
 CREATE TRIGGER trg_supplier_payment_allocations_immutable_delete BEFORE DELETE ON supplier_payment_allocations FOR EACH ROW EXECUTE FUNCTION enforce_invoicing_schema_guard();
+
+-- Supabase exposes the public schema through PostgREST. The application uses a
+-- direct owner connection, so public tables must deny anon/authenticated access
+-- unless an explicit policy is introduced later.
+ALTER TABLE app_database_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_profile ENABLE ROW LEVEL SECURITY;
+ALTER TABLE preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_role_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE team_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_document_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_order_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_bills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_bill_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE credit_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE credit_note_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_payment_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_bill_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_payment_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_order_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE idempotency_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE timeline_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reminder_states ENABLE ROW LEVEL SECURITY;
