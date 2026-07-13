@@ -1183,7 +1183,7 @@ export async function createPostgresDatabase(
 ): Promise<AppDatabase> {
   pgTypes.setTypeParser(20, Number);
   const pool = new Pool({
-    connectionString,
+    connectionString: normalizePostgresConnectionString(connectionString),
     max: Math.max(1, Math.trunc(options.maxConnections ?? 5)),
     idleTimeoutMillis: Math.max(1000, Math.trunc(options.idleTimeoutMs ?? 10_000)),
     connectionTimeoutMillis: Math.max(1000, Math.trunc(options.connectionTimeoutMs ?? 10_000)),
@@ -6304,4 +6304,12 @@ export async function createPostgresDatabase(
     },
   });
   return proxy;
+}
+
+export function normalizePostgresConnectionString(connectionString: string): string {
+  const url = new URL(connectionString);
+  if (url.searchParams.get('sslmode') === 'require' && !url.searchParams.has('uselibpqcompat')) {
+    url.searchParams.set('uselibpqcompat', 'true');
+  }
+  return url.toString();
 }
