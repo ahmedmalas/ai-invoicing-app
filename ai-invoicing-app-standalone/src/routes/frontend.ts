@@ -1,9 +1,29 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyPluginAsync } from 'fastify';
 
-function asset(name: string): string {
-  return readFileSync(join(process.cwd(), 'public', name), 'utf8');
+const tracedAssets = {
+  'index.html': new URL('../../public/index.html', import.meta.url),
+  'styles.css': new URL('../../public/styles.css', import.meta.url),
+  'app.js': new URL('../../public/app.js', import.meta.url),
+  'favicon.svg': new URL('../../public/favicon.svg', import.meta.url),
+} as const;
+
+function asset(name: keyof typeof tracedAssets): string {
+  const candidates = [
+    fileURLToPath(tracedAssets[name]),
+    join(process.cwd(), 'public', name),
+    join(process.cwd(), 'ai-invoicing-app-standalone', 'public', name),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return readFileSync(candidate, 'utf8');
+    } catch {
+      continue;
+    }
+  }
+  throw new Error('FRONTEND_ASSET_UNAVAILABLE');
 }
 
 export const frontendRoutes: FastifyPluginAsync = async (app) => {
