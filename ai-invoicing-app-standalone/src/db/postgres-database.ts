@@ -27,6 +27,8 @@ import type {
   JobStatus,
   LineItemInput,
   PaymentState,
+  Quote,
+  QuoteStatus,
   Role,
   ReminderState,
   Supplier,
@@ -66,9 +68,29 @@ interface DbInvoiceRow {
   notes: string | null;
   payment_terms: string | null;
   invoice_number: string | null;
+  source_quote_id: string | null;
+  source_quote_number: string | null;
   status: 'Draft' | 'Finalised';
   payment_state: PaymentState;
   reminder_state: ReminderState;
+  subtotal: number;
+  gst_total: number;
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbQuoteRow {
+  id: string;
+  customer_id: string;
+  title: string;
+  issue_date: string;
+  expiry_date: string;
+  notes: string | null;
+  payment_terms: string | null;
+  quote_number: string;
+  status: QuoteStatus;
+  converted_invoice_id: string | null;
   subtotal: number;
   gst_total: number;
   total: number;
@@ -269,6 +291,28 @@ export interface CreateInvoiceDraftInput {
   notes?: string | undefined;
   paymentTerms?: string | undefined;
   lineItems: LineItemInput[];
+  sourceQuoteId?: string | undefined;
+  sourceQuoteNumber?: string | undefined;
+}
+
+export interface CreateQuoteInput {
+  customerId: string;
+  title: string;
+  issueDate: string;
+  expiryDate: string;
+  notes?: string | undefined;
+  paymentTerms?: string | undefined;
+  lineItems: LineItemInput[];
+}
+
+export interface UpdateQuoteInput extends CreateQuoteInput {
+  status: Exclude<QuoteStatus, 'Converted'>;
+}
+
+export interface ProvisionOwnerInput {
+  id: string;
+  displayName: string;
+  email: string;
 }
 
 export interface CreateCreditNoteInput {
@@ -403,6 +447,7 @@ export interface TeamMembershipRecord {
 
 export interface SearchResults {
   customers: Customer[];
+  quotes: Quote[];
   suppliers: Supplier[];
   invoices: Array<InvoiceDraft & { creditNoteIds: string[]; customerPaymentIds: string[] }>;
   creditNotes: CreditNote[];
@@ -416,6 +461,7 @@ export interface SearchResults {
 
 type SearchEntityType =
   | 'customers'
+  | 'quotes'
   | 'suppliers'
   | 'invoices'
   | 'creditNotes'
@@ -610,7 +656,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 43;
+export const DATABASE_SCHEMA_VERSION = 44;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -626,6 +672,10 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'documents',
   'invoices',
   'invoice_line_items',
+  'quotes',
+  'quote_line_items',
+  'quote_snapshots',
+  'quote_sequences',
   'purchase_orders',
   'purchase_order_line_items',
   'supplier_bills',
@@ -706,6 +756,7 @@ export interface AppDatabase {
   updateCustomer(id: string, input: UpdateCustomerInput): DatabaseResult<Customer>;
   deleteCustomer(id: string): DatabaseResult<void>;
   getCustomerById(id: string): DatabaseResult<Customer | null>;
+  listCustomers(options?: ListQueryOptions): DatabaseResult<Customer[]>;
   createSupplier(input: CreateSupplierInput): DatabaseResult<Supplier>;
   deleteSupplier(id: string): DatabaseResult<void>;
   getSupplierById(id: string): DatabaseResult<Supplier | null>;
@@ -720,6 +771,12 @@ export interface AppDatabase {
     id: string,
   ): DatabaseResult<(InvoiceDraft & { lineItems: LineItemInput[] }) | null>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
+  listInvoices(options?: ListQueryOptions): DatabaseResult<InvoiceDraft[]>;
+  createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
+  updateQuote(id: string, input: UpdateQuoteInput): DatabaseResult<Quote>;
+  getQuoteById(id: string): DatabaseResult<(Quote & { lineItems: LineItemInput[] }) | null>;
+  listQuotes(options?: ListQueryOptions): DatabaseResult<Quote[]>;
+  convertQuoteToInvoice(id: string): DatabaseResult<InvoiceDraft>;
   createCreditNote(input: CreateCreditNoteInput): DatabaseResult<CreditNote>;
   getCreditNoteById(id: string): DatabaseResult<CreditNote | null>;
   listCreditNotes(
@@ -777,6 +834,7 @@ export interface AppDatabase {
   getRoleById(id: string): DatabaseResult<Role | null>;
   listRoles(options?: ListQueryOptions): DatabaseResult<Role[]>;
   createUser(input: CreateUserInput): DatabaseResult<User>;
+  provisionOwner(input: ProvisionOwnerInput): DatabaseResult<User>;
   deleteUser(id: string): DatabaseResult<void>;
   getUserById(id: string): DatabaseResult<User | null>;
   listUsers(options?: ListQueryOptions): DatabaseResult<User[]>;
@@ -874,6 +932,8 @@ function mapInvoiceRow(row: DbInvoiceRow): InvoiceDraft {
     notes: row.notes,
     paymentTerms: row.payment_terms,
     invoiceNumber: row.invoice_number,
+    sourceQuoteId: row.source_quote_id,
+    sourceQuoteNumber: row.source_quote_number,
     status: row.status,
     paymentState: row.payment_state,
     reminderState: row.reminder_state,
@@ -882,6 +942,24 @@ function mapInvoiceRow(row: DbInvoiceRow): InvoiceDraft {
       gstTotal: row.gst_total,
       total: row.total,
     },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapQuoteRow(row: DbQuoteRow): Quote {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    title: row.title,
+    issueDate: row.issue_date,
+    expiryDate: row.expiry_date,
+    notes: row.notes,
+    paymentTerms: row.payment_terms,
+    quoteNumber: row.quote_number,
+    status: row.status,
+    convertedInvoiceId: row.converted_invoice_id,
+    totals: { subtotal: row.subtotal, gstTotal: row.gst_total, total: row.total },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1260,6 +1338,7 @@ export async function createPostgresDatabase(
 
   type DocumentSequenceTable =
     | 'invoice_sequences'
+    | 'quote_sequences'
     | 'credit_note_sequences'
     | 'payment_sequences'
     | 'purchase_order_sequences'
@@ -1653,6 +1732,10 @@ export async function createPostgresDatabase(
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
       const rows = parsed.entities[table];
       if (!Array.isArray(rows)) {
+        if (['quotes', 'quote_line_items', 'quote_snapshots', 'quote_sequences'].includes(table)) {
+          entities[table] = [];
+          continue;
+        }
         throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
       }
       entities[table] = rows.map((row) => ({ ...row }));
@@ -1780,9 +1863,13 @@ export async function createPostgresDatabase(
 
     await insertSnapshotRows('invoices', snapshot.entities.invoices, (row) => ({
       ...row,
+      source_quote_id: row.source_quote_id ?? null,
+      source_quote_number: row.source_quote_number ?? null,
       status: 'Draft',
     }));
     await insertSnapshotRows('invoice_line_items', snapshot.entities.invoice_line_items);
+    await insertSnapshotRows('quotes', snapshot.entities.quotes);
+    await insertSnapshotRows('quote_line_items', snapshot.entities.quote_line_items);
     await insertSnapshotRows('purchase_orders', snapshot.entities.purchase_orders, (row) => ({
       ...row,
       status: 'Draft',
@@ -1812,6 +1899,7 @@ export async function createPostgresDatabase(
     );
 
     await insertSnapshotRows('invoice_sequences', snapshot.entities.invoice_sequences);
+    await insertSnapshotRows('quote_sequences', snapshot.entities.quote_sequences);
     await insertSnapshotRows('credit_note_sequences', snapshot.entities.credit_note_sequences);
     await insertSnapshotRows('payment_sequences', snapshot.entities.payment_sequences);
     await insertSnapshotRows('supplier_bill_sequences', snapshot.entities.supplier_bill_sequences);
@@ -1848,6 +1936,7 @@ export async function createPostgresDatabase(
     }
 
     await insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
+    await insertSnapshotRows('quote_snapshots', snapshot.entities.quote_snapshots);
     await insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
     for (const row of snapshot.entities.timeline_events) {
       if (typeof row.event_key !== 'string' || typeof row.event_version !== 'number') {
@@ -1963,6 +2052,11 @@ export async function createPostgresDatabase(
           throw new Error('CUSTOMER_HAS_INVOICES');
         }
 
+        const quoteCount = (await db
+          .prepare('SELECT count(*) AS count FROM quotes WHERE customer_id = ?')
+          .get(customerId)) as { count: number };
+        if (quoteCount.count > 0) throw new Error('CUSTOMER_HAS_QUOTES');
+
         const paymentCount = (await db
           .prepare('SELECT count(*) AS count FROM customer_payments WHERE customer_id = ?')
           .get(customerId)) as { count: number };
@@ -1992,6 +2086,16 @@ export async function createPostgresDatabase(
       const row = (await db.prepare('SELECT * FROM customers WHERE id = ?').get(id)) as
         Record<string, unknown> | undefined;
       return row ? mapCustomerRow(row) : null;
+    },
+
+    async listCustomers(options) {
+      const pagination = options ?? {};
+      const rows = (await db
+        .prepare('SELECT * FROM customers ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(pagination.limit ?? Number.MAX_SAFE_INTEGER, pagination.offset ?? 0)) as Array<
+        Record<string, unknown>
+      >;
+      return rows.map(mapCustomerRow);
     },
 
     async createSupplier(input) {
@@ -2158,8 +2262,8 @@ export async function createPostgresDatabase(
 
             await db
               .prepare(
-                `INSERT INTO invoices (id, customer_id, title, issue_date, due_date, notes, payment_terms, invoice_number, status, payment_state, reminder_state, subtotal, gst_total, total, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO invoices (id, customer_id, title, issue_date, due_date, notes, payment_terms, invoice_number, source_quote_id, source_quote_number, status, payment_state, reminder_state, subtotal, gst_total, total, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               )
               .run(
                 id,
@@ -2170,6 +2274,8 @@ export async function createPostgresDatabase(
                 txInput.notes ?? null,
                 txInput.paymentTerms ?? null,
                 null,
+                txInput.sourceQuoteId ?? null,
+                txInput.sourceQuoteNumber ?? null,
                 'Draft',
                 'Draft',
                 'None',
@@ -2316,6 +2422,19 @@ export async function createPostgresDatabase(
       };
     },
 
+    async listInvoices(options) {
+      const pagination = options ?? {};
+      const rows = (await db
+        .prepare(
+          'SELECT * FROM invoices ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?',
+        )
+        .all(
+          pagination.limit ?? Number.MAX_SAFE_INTEGER,
+          pagination.offset ?? 0,
+        )) as DbInvoiceRow[];
+      return rows.map(mapInvoiceRow);
+    },
+
     async finaliseInvoice(id) {
       return db.transaction(async (invoiceId: string) => {
         const invoice = await this.getInvoiceById(invoiceId);
@@ -2372,6 +2491,207 @@ export async function createPostgresDatabase(
         });
 
         return finalised;
+      })(id);
+    },
+
+    async createQuote(input) {
+      return db.transaction(
+        async (txInput: CreateQuoteInput) =>
+          await withIdempotentCreate<Quote>('createQuote', txInput, async () => {
+            const customer = await db
+              .prepare('SELECT id FROM customers WHERE id = ?')
+              .get(txInput.customerId);
+            if (!customer) throw new Error('Customer not found');
+            const id = randomUUID();
+            const now = nowIso();
+            const quoteNumber = await allocateDocumentNumber('quote_sequences', 'QUO');
+            const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+            await db
+              .prepare(
+                `INSERT INTO quotes (id, customer_id, title, issue_date, expiry_date, notes, payment_terms, quote_number, status, converted_invoice_id, subtotal, gst_total, total, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Draft', NULL, ?, ?, ?, ?, ?)`,
+              )
+              .run(
+                id,
+                txInput.customerId,
+                txInput.title,
+                txInput.issueDate,
+                txInput.expiryDate,
+                txInput.notes ?? null,
+                txInput.paymentTerms ?? null,
+                quoteNumber,
+                totals.subtotal,
+                totals.gstTotal,
+                totals.total,
+                now,
+                now,
+              );
+            const insertLine = db.prepare(
+              `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            );
+            for (const item of calculatedItems) {
+              await insertLine.run(
+                randomUUID(),
+                id,
+                item.description,
+                item.quantity,
+                item.unitPrice,
+                item.gstApplicable ? 1 : 0,
+                item.lineSubtotal,
+                item.lineGst,
+                item.lineTotal,
+              );
+            }
+            await upsertDocument(
+              id,
+              `${quoteNumber} ${txInput.title}`,
+              'quote',
+              `${quoteNumber} ${txInput.title} ${txInput.notes ?? ''}`,
+            );
+            await timeline('quote.created', id, { quoteNumber, total: totals.total });
+            return mapQuoteRow(
+              (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(id)) as DbQuoteRow,
+            );
+          }),
+      )(input);
+    },
+
+    async updateQuote(id, input) {
+      return db.transaction(async (quoteId: string, txInput: UpdateQuoteInput) => {
+        const existing = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as
+          DbQuoteRow | undefined;
+        if (!existing) throw new Error('Quote not found');
+        if (existing.status === 'Converted') throw new Error('IMMUTABLE_CONVERTED_QUOTE');
+        const customer = await db
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(txInput.customerId);
+        if (!customer) throw new Error('Customer not found');
+        const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
+        await db
+          .prepare(
+            `UPDATE quotes SET customer_id = ?, title = ?, issue_date = ?, expiry_date = ?, notes = ?, payment_terms = ?, status = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(
+            txInput.customerId,
+            txInput.title,
+            txInput.issueDate,
+            txInput.expiryDate,
+            txInput.notes ?? null,
+            txInput.paymentTerms ?? null,
+            txInput.status,
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            nowIso(),
+            quoteId,
+          );
+        await db.prepare('DELETE FROM quote_line_items WHERE quote_id = ?').run(quoteId);
+        const insertLine = db.prepare(
+          `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const item of calculatedItems) {
+          await insertLine.run(
+            randomUUID(),
+            quoteId,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
+        }
+        await upsertDocument(
+          quoteId,
+          `${existing.quote_number} ${txInput.title}`,
+          'quote',
+          `${existing.quote_number} ${txInput.title} ${txInput.notes ?? ''}`,
+        );
+        await timeline('quote.updated', quoteId, { total: totals.total });
+        if (existing.status !== txInput.status) {
+          await timeline('quote.status_changed', quoteId, {
+            from: existing.status,
+            to: txInput.status,
+          });
+        }
+        return mapQuoteRow(
+          (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as DbQuoteRow,
+        );
+      })(id, input);
+    },
+
+    async getQuoteById(id) {
+      const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(id)) as
+        DbQuoteRow | undefined;
+      if (!row) return null;
+      const lineRows = (await db
+        .prepare(
+          'SELECT description, quantity, unit_price, gst_applicable FROM quote_line_items WHERE quote_id = ? ORDER BY id ASC',
+        )
+        .all(id)) as DbInvoiceLineItem[];
+      return {
+        ...mapQuoteRow(row),
+        lineItems: lineRows.map((item) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          gstApplicable: item.gst_applicable === 1,
+        })),
+      };
+    },
+
+    async listQuotes(options) {
+      const pagination = options ?? {};
+      const rows = (await db
+        .prepare(
+          'SELECT * FROM quotes ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?',
+        )
+        .all(pagination.limit ?? Number.MAX_SAFE_INTEGER, pagination.offset ?? 0)) as DbQuoteRow[];
+      return rows.map(mapQuoteRow);
+    },
+
+    async convertQuoteToInvoice(id) {
+      return db.transaction(async (quoteId: string) => {
+        const quote = await this.getQuoteById(quoteId);
+        if (!quote) throw new Error('Quote not found');
+        if (quote.convertedInvoiceId) {
+          const existingInvoice = await this.getInvoiceById(quote.convertedInvoiceId);
+          if (!existingInvoice) throw new Error('CONVERTED_QUOTE_INVOICE_NOT_FOUND');
+          return existingInvoice;
+        }
+        if (quote.status !== 'Accepted') throw new Error('QUOTE_NOT_ACCEPTED');
+        const invoiceDraft = await this.createInvoiceDraft({
+          customerId: quote.customerId,
+          title: quote.title,
+          issueDate: quote.issueDate,
+          dueDate: quote.expiryDate,
+          notes: quote.notes ?? undefined,
+          paymentTerms: quote.paymentTerms ?? undefined,
+          lineItems: quote.lineItems,
+          sourceQuoteId: quote.id,
+          sourceQuoteNumber: quote.quoteNumber,
+        });
+        const invoice = await this.finaliseInvoice(invoiceDraft.id);
+        const now = nowIso();
+        await db
+          .prepare(
+            "UPDATE quotes SET status = 'Converted', converted_invoice_id = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(invoice.id, now, quoteId);
+        await db
+          .prepare(
+            'INSERT INTO quote_snapshots (id, quote_id, snapshot_json, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(randomUUID(), quoteId, JSON.stringify(quote), now);
+        await timeline('quote.converted', quoteId, {
+          quoteNumber: quote.quoteNumber,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+        });
+        return invoice;
       })(id);
     },
 
@@ -4328,6 +4648,43 @@ export async function createPostgresDatabase(
       return mapUserRow(row, await getRoleIdsForUser(id));
     },
 
+    async provisionOwner(input) {
+      return db.transaction(async (txInput: ProvisionOwnerInput) => {
+        const userCount = (await db.prepare('SELECT count(*) AS count FROM users').get()) as {
+          count: number;
+        };
+        if (userCount.count > 0) throw new Error('OWNER_ALREADY_PROVISIONED');
+        const now = nowIso();
+        const existingRole = (await db
+          .prepare("SELECT id FROM roles WHERE lower(name) = 'owner'")
+          .get()) as { id: string } | undefined;
+        const roleId = existingRole?.id ?? randomUUID();
+        if (!existingRole) {
+          await db
+            .prepare(
+              `INSERT INTO roles (id, name, can_be_assigned, can_manage_assignments, created_at, updated_at)
+             VALUES (?, 'Owner', 1, 1, ?, ?)`,
+            )
+            .run(roleId, now, now);
+        }
+        await db
+          .prepare(
+            `INSERT INTO users (id, display_name, email, is_active, created_at, updated_at)
+           VALUES (?, ?, ?, 1, ?, ?)`,
+          )
+          .run(txInput.id, txInput.displayName, txInput.email, now, now);
+        await db
+          .prepare(
+            `INSERT INTO user_role_links (id, user_id, role_id, created_at) VALUES (?, ?, ?, ?)`,
+          )
+          .run(randomUUID(), txInput.id, roleId, now);
+        const row = (await db
+          .prepare('SELECT * FROM users WHERE id = ?')
+          .get(txInput.id)) as DbUserRow;
+        return mapUserRow(row, [roleId]);
+      })(input);
+    },
+
     async deleteUser(id) {
       return db.transaction(async (userId: string) => {
         const existing = await db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
@@ -5552,6 +5909,7 @@ export async function createPostgresDatabase(
       const requestedEntityTypes = new Set<SearchEntityType>(
         options?.entityTypes ?? [
           'customers',
+          'quotes',
           'suppliers',
           'invoices',
           'creditNotes',
@@ -5577,6 +5935,19 @@ export async function createPostgresDatabase(
               )
               .all(wildcard, wildcard, wildcard, limit, offset)
           ).map((row: unknown) => mapCustomerRow(row as Record<string, unknown>))
+        : [];
+
+      const quotes = requestedEntityTypes.has('quotes')
+        ? (
+            (await db
+              .prepare(
+                `SELECT * FROM quotes
+               WHERE lower(title) LIKE ? OR lower(quote_number) LIKE ?
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ? OFFSET ?`,
+              )
+              .all(wildcard, wildcard, limit, offset)) as DbQuoteRow[]
+          ).map(mapQuoteRow)
         : [];
 
       const suppliers = requestedEntityTypes.has('suppliers')
@@ -5812,6 +6183,7 @@ export async function createPostgresDatabase(
 
       return {
         customers,
+        quotes,
         suppliers,
         invoices,
         creditNotes,

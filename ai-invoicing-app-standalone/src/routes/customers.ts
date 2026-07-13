@@ -11,6 +11,14 @@ const customerSchema = z.object({
 });
 
 export const customerRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/customers', async (request) => {
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(500).optional(), offset: z.coerce.number().int().min(0).optional() }).parse(request.query);
+    return { customers: await app.db.listCustomers({
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(query.offset !== undefined ? { offset: query.offset } : {}),
+    }) };
+  });
+
   app.post('/customers', async (request, reply) => {
     const body = customerSchema.parse(request.body);
     const customer = await app.db.createCustomer(body);

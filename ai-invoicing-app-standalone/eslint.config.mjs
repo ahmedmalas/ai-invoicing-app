@@ -4,7 +4,7 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', '*.cjs', '*.mjs'],
+    ignores: ['dist/**', 'coverage/**', 'public/**', '*.cjs', '*.mjs'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

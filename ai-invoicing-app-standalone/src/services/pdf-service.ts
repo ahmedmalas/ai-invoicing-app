@@ -9,12 +9,84 @@ import type {
   LineItemInput,
   PurchaseOrder,
   PurchaseOrderLineItemInput,
+  Quote,
   Supplier,
   SupplierBill,
   SupplierBillPayment,
   SupplierBillLineItemInput,
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
+
+export function generateQuotePdfBuffer(input: {
+  quote: Quote;
+  lineItems: LineItemInput[];
+  customer: Customer;
+  businessProfile: BrandingProfile | null;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: 'A4' });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const profile = input.businessProfile;
+    const primary = profile?.primaryColor ?? '#102a43';
+    doc.fillColor(primary).fontSize(24).text(profile?.companyName ?? 'ABoss');
+    doc.moveDown(0.2);
+    doc.fillColor('#111827').fontSize(10).text(profile?.address ?? '');
+    if (profile?.email) doc.text(profile.email);
+    if (profile?.phone) doc.text(profile.phone);
+
+    doc.fontSize(19).fillColor('#111827').text('Quote', { align: 'right' });
+    doc.fontSize(10).text(`Quote number: ${input.quote.quoteNumber}`, { align: 'right' });
+    doc.text(`Issue date: ${input.quote.issueDate}`, { align: 'right' });
+    doc.text(`Valid until: ${input.quote.expiryDate}`, { align: 'right' });
+    doc.text(`Status: ${input.quote.status}`, { align: 'right' });
+
+    doc.moveDown(1.2).fontSize(12).text('Prepared for');
+    doc.fontSize(10).text(input.customer.displayName);
+    if (input.customer.address) doc.text(input.customer.address);
+    if (input.customer.email) doc.text(input.customer.email);
+
+    doc.moveDown(1).fontSize(12).text(input.quote.title);
+    doc.moveDown(0.5);
+    const headerY = doc.y;
+    doc.fillColor('#64748b').fontSize(9).text('Description', 50, headerY, { width: 230 });
+    doc.text('Qty', 290, headerY, { width: 55, align: 'right' });
+    doc.text('Unit', 355, headerY, { width: 75, align: 'right' });
+    doc.text('GST', 440, headerY, { width: 45, align: 'right' });
+    doc.text('Total', 495, headerY, { width: 55, align: 'right' });
+    doc.moveDown(0.45).strokeColor('#cbd5e1').moveTo(48, doc.y).lineTo(550, doc.y).stroke();
+
+    for (const item of input.lineItems) {
+      const subtotal = item.quantity * item.unitPrice;
+      const gst = item.gstApplicable ? subtotal * 0.1 : 0;
+      const y = doc.y + 8;
+      doc.fillColor('#111827').fontSize(9).text(item.description, 50, y, { width: 230 });
+      doc.text(item.quantity.toFixed(2), 290, y, { width: 55, align: 'right' });
+      doc.text(item.unitPrice.toFixed(2), 355, y, { width: 75, align: 'right' });
+      doc.text(gst.toFixed(2), 440, y, { width: 45, align: 'right' });
+      doc.text((subtotal + gst).toFixed(2), 495, y, { width: 55, align: 'right' });
+      doc.y = y + 22;
+    }
+
+    doc.moveDown(0.5).strokeColor('#e2e8f0').moveTo(350, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown(0.45).fontSize(10).text(`Subtotal: $${input.quote.totals.subtotal.toFixed(2)}`, 370, doc.y, { width: 180, align: 'right' });
+    doc.text(`GST: $${input.quote.totals.gstTotal.toFixed(2)}`, 370, doc.y + 2, { width: 180, align: 'right' });
+    doc.fillColor(primary).fontSize(13).text(`Total: $${input.quote.totals.total.toFixed(2)}`, 370, doc.y + 5, { width: 180, align: 'right' });
+
+    if (input.quote.notes) {
+      doc.moveDown(1.5).fillColor('#111827').fontSize(10).text('Notes');
+      doc.fillColor('#475569').fontSize(9).text(input.quote.notes);
+    }
+    if (input.quote.paymentTerms) {
+      doc.moveDown(0.7).fillColor('#111827').fontSize(10).text('Terms');
+      doc.fillColor('#475569').fontSize(9).text(input.quote.paymentTerms);
+    }
+    doc.end();
+  });
+}
 
 export function generateInvoicePdfBuffer(input: {
   invoice: InvoiceDraft;

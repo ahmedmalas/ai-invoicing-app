@@ -14,12 +14,7 @@ export type PaymentState = 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Can
 
 export type ReminderState = 'None' | 'Scheduled' | 'Paused' | 'Stopped';
 export type JobStatus =
-  | 'Draft'
-  | 'Scheduled'
-  | 'In Progress'
-  | 'On Hold'
-  | 'Completed'
-  | 'Cancelled';
+  'Draft' | 'Scheduled' | 'In Progress' | 'On Hold' | 'Completed' | 'Cancelled';
 export type JobPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
 import type { TimelineEventKey } from '../domain/timeline/taxonomy.js';
@@ -113,9 +108,30 @@ export interface InvoiceDraft {
   notes: string | null;
   paymentTerms: string | null;
   invoiceNumber: string | null;
+  sourceQuoteId: UUID | null;
+  sourceQuoteNumber: string | null;
   status: 'Draft' | 'Finalised';
   paymentState: PaymentState;
   reminderState: ReminderState;
+  totals: InvoiceTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QuoteStatus =
+  'Draft' | 'Sent' | 'Accepted' | 'Declined' | 'Expired' | 'Cancelled' | 'Converted';
+
+export interface Quote {
+  id: UUID;
+  customerId: UUID;
+  title: string;
+  issueDate: string;
+  expiryDate: string;
+  notes: string | null;
+  paymentTerms: string | null;
+  quoteNumber: string;
+  status: QuoteStatus;
+  convertedInvoiceId: UUID | null;
   totals: InvoiceTotals;
   createdAt: string;
   updatedAt: string;
