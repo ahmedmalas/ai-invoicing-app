@@ -8,6 +8,9 @@ const productionEnv = {
   CORS_ORIGIN: 'https://app.example.com',
   REQUEST_BODY_LIMIT: '1048576',
   ENABLE_STRUCTURED_LOGGING: '1',
+  SUPABASE_URL: 'https://project.supabase.co',
+  SUPABASE_ANON_KEY: 'public-key-for-validation',
+  SUPABASE_SERVICE_ROLE_KEY: 'server-key-for-validation',
 };
 
 describe('runtime environment configuration', () => {
@@ -18,6 +21,7 @@ describe('runtime environment configuration', () => {
       CORS_ORIGIN: productionEnv.CORS_ORIGIN,
       REQUEST_BODY_LIMIT: 1_048_576,
       ENABLE_STRUCTURED_LOGGING: true,
+      SUPABASE_URL: productionEnv.SUPABASE_URL,
     });
   });
 

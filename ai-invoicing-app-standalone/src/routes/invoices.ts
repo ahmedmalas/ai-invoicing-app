@@ -31,6 +31,21 @@ const updateDraftSchema = z.object({
 });
 
 export const invoiceRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/invoices', async (request) => {
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      })
+      .parse(request.query);
+    return {
+      invoices: await app.db.listInvoices({
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.offset !== undefined ? { offset: query.offset } : {}),
+      }),
+    };
+  });
+
   app.post('/invoices', async (request, reply) => {
     const body = createDraftSchema.parse(request.body);
     const invoice = await app.db.createInvoiceDraft(body);
@@ -80,7 +95,10 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     return reply
       .code(200)
       .header('Content-Type', 'application/pdf')
-      .header('Content-Disposition', `inline; filename="${invoice.invoiceNumber ?? invoice.id}.pdf"`)
+      .header(
+        'Content-Disposition',
+        `inline; filename="${invoice.invoiceNumber ?? invoice.id}.pdf"`,
+      )
       .send(pdfBuffer);
   });
 };

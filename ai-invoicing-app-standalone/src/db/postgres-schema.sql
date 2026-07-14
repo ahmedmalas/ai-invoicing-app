@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   notes TEXT,
   payment_terms TEXT,
   invoice_number TEXT,
+  source_quote_id TEXT,
+  source_quote_number TEXT,
   status TEXT NOT NULL,
   payment_state TEXT NOT NULL,
   reminder_state TEXT NOT NULL,
@@ -157,6 +159,53 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   line_gst DOUBLE PRECISION NOT NULL,
   line_total DOUBLE PRECISION NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS quotes (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  title TEXT NOT NULL,
+  issue_date TEXT NOT NULL,
+  expiry_date TEXT NOT NULL,
+  notes TEXT,
+  payment_terms TEXT,
+  quote_number TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  converted_invoice_id TEXT UNIQUE REFERENCES invoices(id),
+  subtotal DOUBLE PRECISION NOT NULL,
+  gst_total DOUBLE PRECISION NOT NULL,
+  total DOUBLE PRECISION NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_line_items (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT NOT NULL REFERENCES quotes(id),
+  description TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  unit_price DOUBLE PRECISION NOT NULL,
+  gst_applicable INTEGER NOT NULL,
+  line_subtotal DOUBLE PRECISION NOT NULL,
+  line_gst DOUBLE PRECISION NOT NULL,
+  line_total DOUBLE PRECISION NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_snapshots (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT NOT NULL UNIQUE REFERENCES quotes(id),
+  snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source_quote_id TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source_quote_number TEXT;
 
 -- Purchase-order tables precede supplier bills because PostgreSQL resolves
 -- referenced relations when each CREATE TABLE statement is executed.
@@ -395,6 +444,11 @@ CREATE INDEX IF NOT EXISTS idx_supplier_bills_due_date ON supplier_bills(due_dat
 CREATE INDEX IF NOT EXISTS idx_supplier_bills_bill_date_order ON supplier_bills(bill_date, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bills_supplier_reference_not_null ON supplier_bills(supplier_id, supplier_reference) WHERE supplier_reference IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_invoice_line_items_invoice ON invoice_line_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotes(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status);
+CREATE INDEX IF NOT EXISTS idx_quotes_issue_date_order ON quotes(issue_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_quote_line_items_quote ON quote_line_items(quote_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_source_quote_not_null ON invoices(source_quote_id) WHERE source_quote_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_bill ON supplier_bill_line_items(supplier_bill_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_bill_line_items_source_po_line ON supplier_bill_line_items(source_purchase_order_line_item_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_number ON purchase_orders(purchase_order_number);
@@ -752,6 +806,10 @@ ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_document_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quote_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quote_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quote_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_order_line_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE supplier_bills ENABLE ROW LEVEL SECURITY;

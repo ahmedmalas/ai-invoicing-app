@@ -22,6 +22,13 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     nodeEnv: env.NODE_ENV,
     corsOrigin: env.CORS_ORIGIN,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
+    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
+    ...((env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? { supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY }
+      : {}),
+    ...((env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY) !== undefined
+      ? { supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY }
+      : {}),
   });
 }
 

@@ -8,6 +8,7 @@ import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
 import { invoiceRoutes } from './routes/invoices.js';
+import { quoteRoutes } from './routes/quotes.js';
 import { jobRoutes } from './routes/jobs.js';
 import { roleRoutes } from './routes/roles.js';
 import { teamRoutes } from './routes/teams.js';
@@ -24,6 +25,8 @@ import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
 import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
+import { createSystemRoutes } from './routes/system.js';
+import { frontendRoutes } from './routes/frontend.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -67,6 +70,10 @@ export interface BuildAppOptions {
   corsOrigin?: string;
   requestBodyLimit?: number;
   loggerStream?: NodeJS.WritableStream;
+  supabaseUrl?: string | undefined;
+  supabaseAnonKey?: string | undefined;
+  supabaseServiceRoleKey?: string | undefined;
+  serveFrontend?: boolean | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions) {
@@ -105,6 +112,16 @@ export async function buildApp(options: BuildAppOptions) {
     throw new Error('DATABASE_URL_REQUIRED');
   }
   const requestStartedAt = new WeakMap<object, bigint>();
+  const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL;
+  const supabaseAnonKey =
+    options.supabaseAnonKey ??
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.SUPABASE_PUBLISHABLE_KEY;
+  const supabaseServiceRoleKey =
+    options.supabaseServiceRoleKey ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SECRET_KEY;
   const authBypassForTesting =
     options.authBypassForTesting ??
     (nodeEnv === 'test' && process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1');
@@ -122,7 +139,17 @@ export async function buildApp(options: BuildAppOptions) {
     unexpectedErrorCount: 0,
   });
 
-  await app.register(helmet);
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+      },
+    },
+  });
   if (options.corsOrigin !== undefined) {
     await app.register(cors, {
       origin: options.corsOrigin,
@@ -162,8 +189,39 @@ export async function buildApp(options: BuildAppOptions) {
     '/platform/restore',
     '/health/diagnostics',
   ]);
-  const isPublicHealthRoute = (url: string): boolean =>
-    ['/health', '/health/live', '/health/ready'].includes(url.split('?')[0] ?? url);
+  const servesFrontend =
+    options.serveFrontend ?? (options.dbPath === undefined && nodeEnv !== 'test');
+  const publicPaths = new Set([
+    '/health',
+    '/health/live',
+    '/health/ready',
+    '/api/config',
+    '/api/system/setup/status',
+    '/api/system/setup',
+    '/api/auth/sign-in',
+    '/api/auth/refresh',
+  ]);
+  if (servesFrontend) {
+    for (const path of [
+      '/',
+      '/sign-in',
+      '/system/setup',
+      '/dashboard',
+      '/customers',
+      '/quotes',
+      '/invoices',
+      '/payments',
+      '/reports',
+      '/timeline',
+      '/settings',
+      '/favicon.svg',
+      '/assets/styles.css',
+      '/assets/app.js',
+    ]) {
+      publicPaths.add(path);
+    }
+  }
+  const isPublicRoute = (url: string): boolean => publicPaths.has(sanitizePath(url));
 
   app.addHook('onRequest', async (request) => {
     app.opsMetrics.requestCount += 1;
@@ -177,7 +235,7 @@ export async function buildApp(options: BuildAppOptions) {
       },
       'request received',
     );
-    if (isPublicHealthRoute(request.url)) {
+    if (isPublicRoute(request.url)) {
       return;
     }
 
@@ -187,6 +245,31 @@ export async function buildApp(options: BuildAppOptions) {
       : organizationHeaderValue;
     if (organizationHeader && organizationHeader !== organizationId) {
       throw new Error('AUTH_FORBIDDEN');
+    }
+
+    const authorization = request.headers.authorization;
+    const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    if (bearerToken && supabaseUrl && supabaseAnonKey) {
+      const response = await fetch(new URL('/auth/v1/user', supabaseUrl), {
+        headers: { apikey: supabaseAnonKey, authorization: `Bearer ${bearerToken}` },
+      });
+      if (!response.ok) throw new Error('AUTH_UNAUTHENTICATED');
+      const authUser = (await response.json()) as { id?: string };
+      if (!authUser.id) throw new Error('AUTH_UNAUTHENTICATED');
+      const actor = await db.getUserById(authUser.id);
+      if (!actor || !actor.isActive) throw new Error('AUTH_UNAUTHENTICATED');
+      const roles = await Promise.all(
+        actor.roleIds.map(async (roleId) => await db.getRoleById(roleId)),
+      );
+      const isAdmin = roles.some((role) => role?.canManageAssignments === true);
+      request.auth = {
+        userId: actor.id,
+        isAdmin,
+        canWrite: roles.some(
+          (role) => role?.canManageAssignments === true || role?.canBeAssigned === true,
+        ),
+      };
+      return;
     }
 
     const actorHeaderValue = request.headers['x-actor-user-id'];
@@ -203,6 +286,9 @@ export async function buildApp(options: BuildAppOptions) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
 
+    if (supabaseUrl && supabaseAnonKey && !authBypassForTesting) {
+      throw new Error('AUTH_UNAUTHENTICATED');
+    }
     const parsedActorId = z.string().uuid().safeParse(actorHeader);
     if (!parsedActorId.success) {
       throw new Error('AUTH_UNAUTHENTICATED');
@@ -228,10 +314,10 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('preHandler', async (request) => {
-    if (isPublicHealthRoute(request.url)) {
+    if (isPublicRoute(request.url)) {
       return;
     }
-    const routeUrl = request.routeOptions.url;
+    const routeUrl = request.routeOptions.url?.replace(/^\/api/, '');
     if (routeUrl && adminOnlyRoutes.has(routeUrl)) {
       if (!request.auth.isAdmin) {
         throw new Error('AUTH_FORBIDDEN');
@@ -271,7 +357,7 @@ export async function buildApp(options: BuildAppOptions) {
           requestId: request.id,
           method: request.method,
           url: sanitizePath(request.url),
-          issues: error.issues,
+          issues: error.issues.map((issue) => ({ code: issue.code, path: issue.path })),
         },
         'validation failed',
       );
@@ -342,6 +428,7 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('TEAM_HAS_MEMBERS') ||
       errorMessage.includes('TEAM_HAS_JOBS') ||
       errorMessage.includes('CUSTOMER_HAS_INVOICES') ||
+      errorMessage.includes('CUSTOMER_HAS_QUOTES') ||
       errorMessage.includes('CUSTOMER_HAS_PAYMENTS') ||
       errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
       errorMessage.includes('CUSTOMER_HAS_JOBS') ||
@@ -455,7 +542,10 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('already finalised') ||
       errorMessage.includes('BACKUP_RESTORE_INCOMPATIBLE_VERSION') ||
       errorMessage.includes('BACKUP_RESTORE_TARGET_NOT_EMPTY') ||
-      errorMessage.includes('DB_SCHEMA_VERSION_UNSUPPORTED')
+      errorMessage.includes('DB_SCHEMA_VERSION_UNSUPPORTED') ||
+      errorMessage.includes('OWNER_ALREADY_PROVISIONED') ||
+      errorMessage.includes('IMMUTABLE_CONVERTED_QUOTE') ||
+      errorMessage.includes('QUOTE_NOT_CONVERTIBLE')
     ) {
       return reply.code(409).send(standardizeErrorPayload(409, errorMessage));
     }
@@ -560,25 +650,40 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   await app.register(healthRoutes);
-  await app.register(platformSnapshotRoutes);
-  await app.register(customerRoutes);
-  await app.register(businessProfileRoutes);
-  await app.register(preferenceRoutes);
-  await app.register(invoiceRoutes);
-  await app.register(jobRoutes);
-  await app.register(roleRoutes);
-  await app.register(teamRoutes);
-  await app.register(userRoutes);
-  await app.register(searchRoutes);
-  await app.register(timelineRoutes);
-  await app.register(statementRoutes);
-  await app.register(reportRoutes);
-  await app.register(creditNoteRoutes);
-  await app.register(paymentRoutes);
-  await app.register(supplierRoutes);
-  await app.register(supplierBillRoutes);
-  await app.register(supplierPaymentRoutes);
-  await app.register(purchaseOrderRoutes);
+  await app.register(
+    createSystemRoutes({
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
+      serviceRoleKey: supabaseServiceRoleKey,
+    }),
+  );
+  const businessPlugins = [
+    platformSnapshotRoutes,
+    customerRoutes,
+    businessProfileRoutes,
+    preferenceRoutes,
+    invoiceRoutes,
+    quoteRoutes,
+    jobRoutes,
+    roleRoutes,
+    teamRoutes,
+    userRoutes,
+    searchRoutes,
+    timelineRoutes,
+    statementRoutes,
+    reportRoutes,
+    creditNoteRoutes,
+    paymentRoutes,
+    supplierRoutes,
+    supplierBillRoutes,
+    supplierPaymentRoutes,
+    purchaseOrderRoutes,
+  ];
+  for (const plugin of businessPlugins) await app.register(plugin, { prefix: '/api' });
+  if ((options.dbPath !== undefined || nodeEnv === 'test') && !servesFrontend) {
+    for (const plugin of businessPlugins) await app.register(plugin);
+  }
+  if (servesFrontend) await app.register(frontendRoutes);
 
   return app;
 }
