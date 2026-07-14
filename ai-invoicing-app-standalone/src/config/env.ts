@@ -70,8 +70,35 @@ const envSchema = z
 
 export type RuntimeEnv = z.infer<typeof envSchema>;
 
+function trimValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+export function resolveDatabaseUrl(input: NodeJS.ProcessEnv): string | undefined {
+  const databaseUrl = trimValue(input.DATABASE_URL);
+  if (databaseUrl) {
+    return databaseUrl;
+  }
+
+  return (
+    trimValue(input.POSTGRES_URL) ??
+    trimValue(input.POSTGRES_PRISMA_URL) ??
+    trimValue(input.POSTGRES_URL_NON_POOLING)
+  );
+}
+
 export function parseEnv(input: NodeJS.ProcessEnv): RuntimeEnv {
-  return envSchema.parse(input);
+  return envSchema.parse({
+    ...input,
+    DATABASE_URL: resolveDatabaseUrl(input),
+    SUPABASE_URL: trimValue(input.SUPABASE_URL),
+    SUPABASE_ANON_KEY: trimValue(input.SUPABASE_ANON_KEY),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: trimValue(input.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+    SUPABASE_PUBLISHABLE_KEY: trimValue(input.SUPABASE_PUBLISHABLE_KEY),
+    SUPABASE_SERVICE_ROLE_KEY: trimValue(input.SUPABASE_SERVICE_ROLE_KEY),
+    SUPABASE_SECRET_KEY: trimValue(input.SUPABASE_SECRET_KEY),
+  });
 }
 
 export const env = parseEnv(process.env);

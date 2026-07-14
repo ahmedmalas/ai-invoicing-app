@@ -43,4 +43,48 @@ describe('runtime environment configuration', () => {
     ).toThrow('CORS_ORIGIN must be a URL origin');
     expect(() => parseEnv({ ...productionEnv, REQUEST_BODY_LIMIT: '100' })).toThrow();
   });
+
+  it('trims whitespace from Supabase and database environment values', () => {
+    expect(
+      parseEnv({
+        ...productionEnv,
+        DATABASE_URL: ` ${productionEnv.DATABASE_URL} `,
+        SUPABASE_URL: ' https://project.supabase.co ',
+        SUPABASE_ANON_KEY: ' public-key-for-validation ',
+      }),
+    ).toMatchObject({
+      DATABASE_URL: productionEnv.DATABASE_URL,
+      SUPABASE_URL: 'https://project.supabase.co',
+      SUPABASE_ANON_KEY: 'public-key-for-validation',
+    });
+  });
+
+  it('prefers integrated Postgres URLs only when DATABASE_URL is unset', () => {
+    expect(
+      parseEnv({
+        ...productionEnv,
+        SUPABASE_URL: 'https://jsrxhisdjvwsufbqqtir.supabase.co',
+        DATABASE_URL:
+          'postgresql://postgres:old@db.bmfpclozzmeekazmoaxw.supabase.co:5432/postgres?sslmode=require',
+        POSTGRES_URL:
+          'postgresql://postgres.jsrxhisdjvwsufbqqtir:secret@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require',
+      }).DATABASE_URL,
+    ).toBe(
+      'postgresql://postgres:old@db.bmfpclozzmeekazmoaxw.supabase.co:5432/postgres?sslmode=require',
+    );
+  });
+
+  it('falls back to POSTGRES_URL when DATABASE_URL is unset', () => {
+    const { DATABASE_URL, ...withoutDatabaseUrl } = productionEnv;
+    void DATABASE_URL;
+    expect(
+      parseEnv({
+        ...withoutDatabaseUrl,
+        POSTGRES_URL:
+          'postgresql://postgres.jsrxhisdjvwsufbqqtir:secret@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require',
+      }).DATABASE_URL,
+    ).toBe(
+      'postgresql://postgres.jsrxhisdjvwsufbqqtir:secret@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require',
+    );
+  });
 });
