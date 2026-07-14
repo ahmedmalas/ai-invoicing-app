@@ -22,12 +22,32 @@ async function start(): Promise<void> {
     dbPoolMax: env.DB_POOL_MAX,
     corsOrigin: env.CORS_ORIGIN,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
+    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
+    ...((env.SUPABASE_ANON_KEY ??
+      env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? {
+          supabaseAnonKey:
+            env.SUPABASE_ANON_KEY ??
+            env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+            env.SUPABASE_PUBLISHABLE_KEY,
+        }
+      : {}),
+    ...((env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY) !== undefined
+      ? { supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY }
+      : {}),
   });
 
   try {
     await app.listen({ port: env.PORT, host: '0.0.0.0' });
   } catch (error) {
-    app.log.error(error);
+    app.log.error(
+      {
+        event: 'startup.failure',
+        name: error instanceof Error ? error.name : 'UnknownError',
+      },
+      'application failed to start',
+    );
     process.exit(1);
   }
 }

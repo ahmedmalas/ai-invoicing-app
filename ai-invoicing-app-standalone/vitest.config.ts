@@ -12,6 +12,9 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
       exclude: [
         'dist/**',
+        'public/**',
+        'tests/**',
+        'src/scripts/**',
         'eslint.config.mjs',
         'prettier.config.cjs',
         'vitest.config.ts',

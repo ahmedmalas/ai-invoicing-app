@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 
 const searchEntityTypeSchema = z.enum([
   'customers',
+  'quotes',
   'suppliers',
   'invoices',
   'creditNotes',

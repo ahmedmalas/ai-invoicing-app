@@ -26,6 +26,12 @@ const envSchema = z
       .refine((value) => new URL(value).origin === value, 'CORS_ORIGIN must be a URL origin')
       .default('https://ai-invoicing-app.vercel.app'),
     REQUEST_BODY_LIMIT: z.coerce.number().int().min(1024).max(10_485_760).default(1_048_576),
+    SUPABASE_URL: z.string().url().optional(),
+    SUPABASE_ANON_KEY: z.string().min(1).optional(),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+    SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+    SUPABASE_SECRET_KEY: z.string().min(1).optional(),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV === 'production' && value.DATABASE_URL === undefined) {
@@ -41,6 +47,24 @@ const envSchema = z
         path: ['DB_PATH'],
         message: 'DB_PATH is not supported in production',
       });
+    }
+    if (value.NODE_ENV === 'production' && value.SUPABASE_URL === undefined) {
+      context.addIssue({ code: 'custom', path: ['SUPABASE_URL'], message: 'SUPABASE_URL is required in production' });
+    }
+    if (
+      value.NODE_ENV === 'production' &&
+      value.SUPABASE_ANON_KEY === undefined &&
+      value.NEXT_PUBLIC_SUPABASE_ANON_KEY === undefined &&
+      value.SUPABASE_PUBLISHABLE_KEY === undefined
+    ) {
+      context.addIssue({ code: 'custom', path: ['SUPABASE_ANON_KEY'], message: 'A Supabase public key is required in production' });
+    }
+    if (
+      value.NODE_ENV === 'production' &&
+      value.SUPABASE_SERVICE_ROLE_KEY === undefined &&
+      value.SUPABASE_SECRET_KEY === undefined
+    ) {
+      context.addIssue({ code: 'custom', path: ['SUPABASE_SERVICE_ROLE_KEY'], message: 'A Supabase server key is required in production' });
     }
   });
 

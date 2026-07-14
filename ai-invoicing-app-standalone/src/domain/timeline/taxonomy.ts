@@ -4,6 +4,10 @@ export const TIMELINE_EVENT_KEYS = [
   'invoice.draft_created',
   'invoice.draft_updated',
   'invoice.finalised',
+  'quote.created',
+  'quote.updated',
+  'quote.status_changed',
+  'quote.converted',
   'credit_note.created',
   'payment.created',
   'payment.allocated',
@@ -42,6 +46,7 @@ export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
 export type TimelineCategory =
   | 'document'
   | 'invoice'
+  | 'quote'
   | 'payment'
   | 'supplier_bill'
   | 'supplier_payment'
@@ -131,6 +136,46 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.invoice.finalised.v1',
     legacyEventType: 'Invoice Finalised',
+  },
+  'quote.created': {
+    key: 'quote.created',
+    version: 1,
+    category: 'quote',
+    entityType: 'quote',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.quote.created.v1',
+    legacyEventType: 'Quote Created',
+  },
+  'quote.updated': {
+    key: 'quote.updated',
+    version: 1,
+    category: 'quote',
+    entityType: 'quote',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.quote.updated.v1',
+    legacyEventType: 'Quote Updated',
+  },
+  'quote.status_changed': {
+    key: 'quote.status_changed',
+    version: 1,
+    category: 'quote',
+    entityType: 'quote',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.quote.status_changed.v1',
+    legacyEventType: 'Quote Status Changed',
+  },
+  'quote.converted': {
+    key: 'quote.converted',
+    version: 1,
+    category: 'quote',
+    entityType: 'quote',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.quote.converted.v1',
+    legacyEventType: 'Quote Converted',
   },
   'credit_note.created': {
     key: 'credit_note.created',
