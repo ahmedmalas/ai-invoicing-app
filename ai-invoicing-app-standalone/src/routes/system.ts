@@ -122,13 +122,7 @@ export function createSystemRoutes(options: SupabaseAuthOptions): FastifyPluginA
         { method: 'POST', body: JSON.stringify(body) },
         key,
       );
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        request.log.error({ event: 'auth_provider_invalid_response', status: response.status });
-        return reply.code(502).send({ message: 'Authentication provider unavailable' });
-      }
+      const payload = await response.json();
       if (!response.ok) return reply.code(401).send({ message: 'Invalid email or password' });
       return reply.send(payload);
     });
@@ -143,13 +137,7 @@ export function createSystemRoutes(options: SupabaseAuthOptions): FastifyPluginA
         { method: 'POST', body: JSON.stringify({ refresh_token: body.refreshToken }) },
         key,
       );
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        request.log.error({ event: 'auth_provider_invalid_response', status: response.status });
-        return reply.code(502).send({ message: 'Authentication provider unavailable' });
-      }
+      const payload = await response.json();
       if (!response.ok) return reply.code(401).send({ message: 'Session expired' });
       return reply.send(payload);
     });
