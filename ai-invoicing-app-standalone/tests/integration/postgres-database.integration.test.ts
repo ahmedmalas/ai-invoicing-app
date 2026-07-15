@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { PLATFORM_SNAPSHOT_TABLES, createDatabase } from '../../src/db/database.js';
 import { migrateToPostgres } from '../../src/migration/postgres-migration.js';
+import { enterWorkspaceContext } from '../../src/auth/workspace-context.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const describePostgres = connectionString ? describe : describe.skip;
@@ -193,6 +194,60 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       ).toMatchObject({ id: customer.id, displayName: 'PostgreSQL Route Customer' });
     } finally {
       await app.close();
+    }
+  });
+
+  it('isolates every customer record by the authenticated workspace schema', async () => {
+    const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');
+    const db = await createPostgresDatabase(connectionString!, { maxConnections: 2 });
+    const ownerA = '10000000-0000-4000-8000-00000000000a';
+    const ownerB = '10000000-0000-4000-8000-00000000000b';
+    let schemaA: string | undefined;
+    let schemaB: string | undefined;
+    try {
+      const workspaceA = await db.provisionWorkspaceOwner({
+        authUserId: ownerA,
+        displayName: 'Owner A',
+        email: 'owner-a@example.test',
+        workspaceName: 'Workspace A',
+      });
+      const workspaceB = await db.provisionWorkspaceOwner({
+        authUserId: ownerB,
+        displayName: 'Owner B',
+        email: 'owner-b@example.test',
+        workspaceName: 'Workspace B',
+      });
+      schemaA = workspaceA.schemaName;
+      schemaB = workspaceB.schemaName;
+
+      enterWorkspaceContext({
+        authUserId: ownerA,
+        workspaceId: workspaceA.workspaceId,
+        schemaName: workspaceA.schemaName,
+      });
+      const privateCustomer = await db.createCustomer({ displayName: 'Workspace A customer' });
+      expect(await db.getCustomerById(privateCustomer.id)).toEqual(privateCustomer);
+
+      enterWorkspaceContext({
+        authUserId: ownerB,
+        workspaceId: workspaceB.workspaceId,
+        schemaName: workspaceB.schemaName,
+      });
+      expect(await db.listCustomers()).toEqual([]);
+      expect(await db.getCustomerById(privateCustomer.id)).toBeNull();
+    } finally {
+      await db.close();
+      const pool = new Pool({ connectionString, max: 1, allowExitOnIdle: true });
+      try {
+        if (schemaA) await pool.query(`DROP SCHEMA "${schemaA}" CASCADE`);
+        if (schemaB) await pool.query(`DROP SCHEMA "${schemaB}" CASCADE`);
+        await pool.query(
+          'DELETE FROM public.auth_workspaces WHERE display_name IN ($1, $2)',
+          ['Workspace A', 'Workspace B'],
+        );
+      } finally {
+        await pool.end();
+      }
     }
   });
 

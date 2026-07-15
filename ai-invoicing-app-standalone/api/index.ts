@@ -21,6 +21,7 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     organizationId: env.ORGANIZATION_ID,
     nodeEnv: env.NODE_ENV,
     corsOrigin: env.CORS_ORIGIN,
+    publicAppUrl: env.PUBLIC_APP_URL,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
     serveFrontend: env.ENABLE_BROWSER_APP,
     abossOnlyAuth: env.ABOSS_ONLY_AUTH,

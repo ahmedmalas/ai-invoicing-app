@@ -28,6 +28,10 @@ import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 import { createSystemRoutes } from './routes/system.js';
 import { frontendRoutes } from './routes/frontend.js';
+import {
+  enterWorkspaceContext,
+  runWithWorkspaceContext,
+} from './auth/workspace-context.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -53,6 +57,8 @@ declare module 'fastify' {
       userId: string;
       isAdmin: boolean;
       canWrite: boolean;
+      workspaceId?: string;
+      workspaceSchemaName?: string;
     };
   }
 }
@@ -77,6 +83,7 @@ export interface BuildAppOptions {
   abossOnlyAuth?: boolean;
   supabaseUrl?: string | undefined;
   supabaseAnonKey?: string | undefined;
+  publicAppUrl?: string | undefined;
   serveFrontend?: boolean | undefined;
 }
 
@@ -130,6 +137,7 @@ export async function buildApp(options: BuildAppOptions) {
     process.env.SUPABASE_ANON_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
     process.env.SUPABASE_PUBLISHABLE_KEY;
+  const publicAppUrl = options.publicAppUrl ?? process.env.PUBLIC_APP_URL;
   const sanitizePath = (url: string): string => url.split('?')[0] ?? url;
   const singleHeader = (value: string | string[] | undefined): string | undefined =>
     Array.isArray(value) ? value[0] : value;
@@ -204,11 +212,15 @@ export async function buildApp(options: BuildAppOptions) {
     '/api/config',
     '/api/system/setup/status',
     '/api/auth/sign-in',
+    '/api/auth/sign-up',
+    '/api/auth/forgot-password',
+    '/api/auth/reset-password',
     '/api/auth/refresh',
   ]);
   if (servesFrontend) {
     for (const path of [
-      '/', '/sign-in', '/dashboard', '/workspace/customers', '/workspace/quotes',
+      '/', '/sign-in', '/create-account', '/forgot-password', '/reset-password',
+      '/auth/callback', '/dashboard', '/workspace/customers', '/workspace/quotes',
       '/workspace/invoices', '/workspace/payments',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
     ]) publicPaths.add(path);
@@ -252,11 +264,43 @@ export async function buildApp(options: BuildAppOptions) {
         );
         throw new Error('AUTH_UNAUTHENTICATED');
       }
-      const authUser = (await response.json()) as { id?: string };
+      const authUser = (await response.json()) as {
+        id?: string;
+        email?: string;
+        user_metadata?: { display_name?: unknown; workspace_name?: unknown };
+      };
       if (!authUser.id) {
         app.log.warn({ event: 'auth.provider_identity_missing' }, 'provider identity is missing');
         throw new Error('AUTH_UNAUTHENTICATED');
       }
+      let workspace = await db.resolveWorkspaceAccess(authUser.id);
+      if (!workspace) {
+        const displayName = authUser.user_metadata?.display_name;
+        if (typeof displayName === 'string' && displayName.trim() && authUser.email) {
+          const requestedWorkspaceName = authUser.user_metadata?.workspace_name;
+          workspace = await db.provisionWorkspaceOwner({
+            authUserId: authUser.id,
+            displayName,
+            email: authUser.email,
+            workspaceName:
+              typeof requestedWorkspaceName === 'string' && requestedWorkspaceName.trim()
+                ? requestedWorkspaceName
+                : `${displayName.trim()}'s workspace`,
+          });
+        }
+      }
+      if (!workspace) {
+        app.log.warn(
+          { event: 'auth.workspace_membership_missing' },
+          'authenticated identity has no application workspace',
+        );
+        throw new Error('AUTH_UNAUTHENTICATED');
+      }
+      enterWorkspaceContext({
+        authUserId: authUser.id,
+        workspaceId: workspace.workspaceId,
+        schemaName: workspace.schemaName,
+      });
       const actor = await db.getUserById(authUser.id);
       if (!actor || !actor.isActive) {
         app.log.warn(
@@ -272,6 +316,8 @@ export async function buildApp(options: BuildAppOptions) {
         canWrite: roles.some(
           (role) => role?.canManageAssignments === true || role?.canBeAssigned === true,
         ),
+        workspaceId: workspace.workspaceId,
+        workspaceSchemaName: workspace.schemaName,
       };
       return;
     }
@@ -394,6 +440,21 @@ export async function buildApp(options: BuildAppOptions) {
       isAdmin: roleRecords.some((role) => role.canManageAssignments),
       canWrite: roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned),
     };
+  });
+
+  app.addHook('preHandler', (request, _reply, done) => {
+    if (request.auth?.workspaceId && request.auth.workspaceSchemaName) {
+      runWithWorkspaceContext(
+        {
+          authUserId: request.auth.userId,
+          workspaceId: request.auth.workspaceId,
+          schemaName: request.auth.workspaceSchemaName,
+        },
+        done,
+      );
+      return;
+    }
+    done();
   });
 
   app.addHook('preHandler', async (request) => {
@@ -701,6 +762,7 @@ export async function buildApp(options: BuildAppOptions) {
       normalized.details ??
       (normalized.issues !== undefined ? { issues: normalized.issues } : undefined);
     const standardized = standardizeErrorPayload(reply.statusCode, normalized.message, details);
+    if (typeof normalized.code === 'string') standardized.code = normalized.code;
     return typeof payload === 'string' ? JSON.stringify(standardized) : standardized;
   });
 
@@ -735,7 +797,9 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   await app.register(healthRoutes);
-  await app.register(createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey }));
+  await app.register(
+    createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey, publicAppUrl }),
+  );
   const businessPlugins = [
     platformSnapshotRoutes, customerRoutes, businessProfileRoutes, preferenceRoutes, invoiceRoutes,
     quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,

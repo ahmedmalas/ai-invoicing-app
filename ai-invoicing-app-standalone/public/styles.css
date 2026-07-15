@@ -223,6 +223,33 @@ textarea:focus {
   font-size: 12px;
   line-height: 1.5;
 }
+.form-message {
+  margin-bottom: 18px;
+}
+.form-message.success {
+  background: #e4f5ec;
+  color: #256347;
+}
+.auth-links {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.auth-links a {
+  color: var(--forest);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.field-help {
+  margin-top: -10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .notice.success {
   background: #e4f5ec;
   color: #256347;

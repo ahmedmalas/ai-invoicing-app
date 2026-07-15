@@ -51,6 +51,10 @@ import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.j
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
+import {
+  assertWorkspaceSchemaName,
+  getWorkspaceContext,
+} from '../auth/workspace-context.js';
 
 interface DbInvoiceLineItem {
   description: string;
@@ -431,6 +435,20 @@ export interface CreateUserInput {
   roleIds?: string[] | undefined;
 }
 
+export interface WorkspaceAccess {
+  workspaceId: string;
+  workspaceName: string;
+  schemaName: string;
+  role: 'owner';
+}
+
+export interface ProvisionWorkspaceOwnerInput {
+  authUserId: string;
+  displayName: string;
+  email: string;
+  workspaceName: string;
+}
+
 export interface CreateTeamInput {
   name: string;
 }
@@ -748,6 +766,8 @@ export type DatabaseResult<T> = T | Promise<T>;
 export interface AppDatabase {
   close(): DatabaseResult<void>;
   getOperationalDiagnostics(): DatabaseResult<DatabaseOperationalDiagnostics>;
+  resolveWorkspaceAccess(authUserId: string): DatabaseResult<WorkspaceAccess | null>;
+  provisionWorkspaceOwner(input: ProvisionWorkspaceOwnerInput): DatabaseResult<WorkspaceAccess>;
   createCustomer(input: CreateCustomerInput): DatabaseResult<Customer>;
   updateCustomer(id: string, input: UpdateCustomerInput): DatabaseResult<Customer>;
   deleteCustomer(id: string): DatabaseResult<void>;
@@ -1206,6 +1226,10 @@ export async function createPostgresDatabase(
       const client = await pool.connect();
       try {
         await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+        const schemaName = assertWorkspaceSchemaName(
+          getWorkspaceContext()?.schemaName ?? 'public',
+        );
+        await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
         const result = await storage.run(client, work);
         await client.query('COMMIT');
         return result;
@@ -1250,6 +1274,36 @@ export async function createPostgresDatabase(
     await schemaClient.query('BEGIN');
     await schemaClient.query('SELECT pg_advisory_xact_lock($1)', [1_905_052]);
     await schemaClient.query(loadPostgresSchema());
+    await schemaClient.query(`
+      CREATE TABLE IF NOT EXISTS public.auth_workspaces (
+        id UUID PRIMARY KEY,
+        schema_name TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS public.auth_workspace_memberships (
+        auth_user_id UUID PRIMARY KEY,
+        workspace_id UUID NOT NULL REFERENCES public.auth_workspaces(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role = 'owner'),
+        created_at TEXT NOT NULL
+      );
+      ALTER TABLE public.auth_workspaces ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.auth_workspace_memberships ENABLE ROW LEVEL SECURITY;
+    `);
+    await schemaClient.query(
+      `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
+       VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [nowIso()],
+    );
+    await schemaClient.query(
+      `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
+       SELECT id::uuid, '00000000-0000-0000-0000-000000000001', 'owner', $1
+       FROM public.users
+       WHERE id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       ON CONFLICT (auth_user_id) DO NOTHING`,
+      [nowIso()],
+    );
     await schemaClient.query(
       `CREATE TABLE IF NOT EXISTS app_database_metadata (singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1), schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
     );
@@ -1978,6 +2032,120 @@ export async function createPostgresDatabase(
           snapshotVersion: PLATFORM_SNAPSHOT_VERSION,
           tableCount: PLATFORM_SNAPSHOT_TABLES.length,
         },
+      };
+    },
+
+    async resolveWorkspaceAccess(authUserId) {
+      let row = (await db
+        .prepare(
+          `SELECT w.id AS workspace_id, w.display_name AS workspace_name,
+                  w.schema_name AS schema_name, m.role AS role
+           FROM public.auth_workspace_memberships m
+           INNER JOIN public.auth_workspaces w ON w.id = m.workspace_id
+           WHERE m.auth_user_id = ?`,
+        )
+        .get(authUserId)) as
+        | { workspace_id: string; workspace_name: string; schema_name: string; role: 'owner' }
+        | undefined;
+      if (!row) {
+        const legacyUser = await db
+          .prepare('SELECT id FROM public.users WHERE id = ?')
+          .get(authUserId);
+        if (legacyUser) {
+          await db
+            .prepare(
+              `INSERT INTO public.auth_workspace_memberships
+                 (auth_user_id, workspace_id, role, created_at)
+               VALUES (?, '00000000-0000-0000-0000-000000000001', 'owner', ?)
+               ON CONFLICT (auth_user_id) DO NOTHING`,
+            )
+            .run(authUserId, nowIso());
+          row = (await db
+            .prepare(
+              `SELECT w.id AS workspace_id, w.display_name AS workspace_name,
+                      w.schema_name AS schema_name, m.role AS role
+               FROM public.auth_workspace_memberships m
+               INNER JOIN public.auth_workspaces w ON w.id = m.workspace_id
+               WHERE m.auth_user_id = ?`,
+            )
+            .get(authUserId)) as
+            | { workspace_id: string; workspace_name: string; schema_name: string; role: 'owner' }
+            | undefined;
+        }
+      }
+      if (!row) return null;
+      return {
+        workspaceId: row.workspace_id,
+        workspaceName: row.workspace_name,
+        schemaName: assertWorkspaceSchemaName(row.schema_name),
+        role: row.role,
+      };
+    },
+
+    async provisionWorkspaceOwner(input) {
+      const existing = await this.resolveWorkspaceAccess(input.authUserId);
+      if (existing) return existing;
+
+      const workspaceId = randomUUID();
+      const schemaName = assertWorkspaceSchemaName(`workspace_${workspaceId.replaceAll('-', '')}`);
+      const now = nowIso();
+      const client = storage.getStore();
+      if (!client) throw new Error('DATABASE_TRANSACTION_REQUIRED');
+
+      await client.query(
+        `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
+         VALUES ($1, $2, $3, $4)`,
+        [workspaceId, schemaName, input.workspaceName.trim(), now],
+      );
+      await client.query(
+        `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
+         VALUES ($1, $2, 'owner', $3)`,
+        [input.authUserId, workspaceId, now],
+      );
+      await client.query(`CREATE SCHEMA "${schemaName}"`);
+      await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
+      await client.query(loadPostgresSchema());
+      await client.query(
+        `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at)
+         VALUES (1, $1, $2)
+         ON CONFLICT(singleton_id) DO UPDATE
+         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+        [DATABASE_SCHEMA_VERSION, now],
+      );
+
+      const roleId = randomUUID();
+      const teamId = randomUUID();
+      await client.query(
+        `INSERT INTO roles (id, name, can_be_assigned, can_manage_assignments, created_at, updated_at)
+         VALUES ($1, 'Workspace owner', 1, 1, $2, $2)`,
+        [roleId, now],
+      );
+      await client.query(
+        `INSERT INTO users (id, display_name, email, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, 1, $4, $4)`,
+        [input.authUserId, input.displayName.trim(), input.email.trim().toLowerCase(), now],
+      );
+      await client.query(
+        `INSERT INTO user_role_links (id, user_id, role_id, created_at)
+         VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), input.authUserId, roleId, now],
+      );
+      await client.query(
+        `INSERT INTO teams (id, name, created_at, updated_at)
+         VALUES ($1, $2, $3, $3)`,
+        [teamId, `${input.workspaceName.trim()} team`, now],
+      );
+      await client.query(
+        `INSERT INTO team_memberships (id, team_id, user_id, role, created_at)
+         VALUES ($1, $2, $3, 'owner', $4)`,
+        [randomUUID(), teamId, input.authUserId, now],
+      );
+
+      return {
+        workspaceId,
+        workspaceName: input.workspaceName.trim(),
+        schemaName,
+        role: 'owner',
       };
     },
 

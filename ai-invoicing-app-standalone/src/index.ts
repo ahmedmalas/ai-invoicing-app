@@ -21,6 +21,7 @@ async function start(): Promise<void> {
     dbBusyTimeoutMs: env.DB_BUSY_TIMEOUT_MS,
     dbPoolMax: env.DB_POOL_MAX,
     corsOrigin: env.CORS_ORIGIN,
+    publicAppUrl: env.PUBLIC_APP_URL,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
     serveFrontend: env.ENABLE_BROWSER_APP,
     abossOnlyAuth: env.ABOSS_ONLY_AUTH,

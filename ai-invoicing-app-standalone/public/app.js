@@ -3,6 +3,7 @@ const SESSION_KEY = 'aboss-invoicing-session';
 let session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
 let currentUser = null;
 let cache = {};
+let recoveryAccessToken = null;
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -102,58 +103,58 @@ async function api(path, options = {}, retry = true) {
 
 function navigate(path) {
   history.pushState({}, '', path);
-  void renderRoute();
+  if (currentUser) void renderRoute();
+  else renderPublicAuthRoute();
 }
 
-function authPage(kind, message = '') {
-  const setup = kind === 'setup';
+function authPage(kind, message = '', success = false) {
+  const pages = {
+    signin: ['Welcome back', 'Sign in', 'Use your ABoss Invoicing owner credentials.', 'Invoicing without the busywork.'],
+    signup: ['New workspace', 'Create account', 'Create a private invoicing workspace for your business.', 'Your business. Your secure workspace.'],
+    forgot: ['Account recovery', 'Forgot password', 'Enter your email and we will send recovery instructions if an account exists.', 'A safe route back to your work.'],
+    reset: ['Account recovery', 'Choose a new password', 'Use a strong password you have not used for this account before.', 'Secure your account. Keep moving.'],
+    verification: ['Verify your email', 'Check your inbox', 'Open the verification link we sent, then return to sign in.', 'One last step protects your workspace.'],
+    invalid: ['Recovery link unavailable', 'Request a new link', 'This link is malformed, expired, or has already been used.', 'Your account remains protected.'],
+  };
+  const page = pages[kind] || pages.signin;
+  let form = '';
+  if (kind === 'signin') {
+    form = '<form class="form" id="signin-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required minlength="12"></label><button class="button" type="submit">Continue to ABoss</button></form><nav class="auth-links" aria-label="Account options"><a href="/create-account" data-route>Create account</a><a href="/forgot-password" data-route>Forgot password?</a></nav>';
+  } else if (kind === 'signup') {
+    form = '<form class="form" id="signup-form"><label>Name<input name="name" autocomplete="name" required minlength="2" maxlength="120"></label><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" aria-describedby="password-help"></label><span class="field-help" id="password-help">At least 12 characters with uppercase, lowercase, and a number.</span><label>Confirm password<input name="passwordConfirmation" type="password" autocomplete="new-password" required minlength="12"></label><button class="button" type="submit">Create my workspace</button></form><nav class="auth-links"><a href="/sign-in" data-route>Already have an account? Sign in</a></nav>';
+  } else if (kind === 'forgot') {
+    form = '<form class="form" id="forgot-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><button class="button" type="submit">Send recovery link</button></form><nav class="auth-links"><a href="/sign-in" data-route>Back to sign in</a></nav>';
+  } else if (kind === 'reset') {
+    form = '<form class="form" id="reset-form"><label>New password<input name="password" type="password" autocomplete="new-password" required minlength="12" aria-describedby="password-help"></label><span class="field-help" id="password-help">At least 12 characters with uppercase, lowercase, and a number.</span><label>Confirm new password<input name="passwordConfirmation" type="password" autocomplete="new-password" required minlength="12"></label><button class="button" type="submit">Update password</button></form>';
+  } else if (kind === 'verification') {
+    form = '<nav class="auth-links"><a href="/sign-in" data-route>Return to sign in</a></nav>';
+  } else {
+    form = '<nav class="auth-links"><a href="/forgot-password" data-route>Request a new recovery link</a><a href="/sign-in" data-route>Back to sign in</a></nav>';
+  }
   root.innerHTML = [
-    '<main class="auth-page">',
-    '<section class="auth-story">',
+    '<main class="auth-page"><section class="auth-story">',
     '<a class="wordmark" href="/" data-route><span class="brand-mark">A</span><span><strong>ABoss</strong><small>Invoicing</small></span></a>',
-    '<div class="auth-copy"><span class="eyebrow">Secure business workspace</span>',
-    '<h1>',
-    setup ? 'Set the owner. Start with confidence.' : 'Invoicing without the busywork.',
-    '</h1>',
-    '<p>',
-    setup
-      ? 'This one-time step creates the first ABoss owner in Supabase Auth and links that identity to the existing production invoicing database.'
-      : 'Customers, quotes, invoices, payments and reporting stay connected in one deliberate production workspace.',
-    '</p>',
-    '</div>',
-    '<span class="auth-foot">ABoss Software · Australian business operations</span>',
-    '</section>',
-    '<section class="auth-panel"><div class="auth-card">',
-    '<span class="eyebrow">',
-    setup ? 'One-time setup' : 'Welcome back',
-    '</span>',
-    '<h2>',
-    setup ? 'Create owner account' : 'Sign in',
-    '</h2>',
-    '<p>',
-    setup
-      ? 'Use the real owner details. Setup permanently closes after the first account is provisioned.'
-      : 'Use your ABoss Invoicing owner credentials.',
-    '</p>',
-    message ? '<div class="form-message">' + escapeHtml(message) + '</div>' : '',
-    '<form class="form" id="',
-    setup ? 'setup-form' : 'signin-form',
-    '">',
-    setup
-      ? '<label>Owner name<input name="displayName" autocomplete="name" required minlength="2"></label>'
-      : '',
-    '<label>Email<input name="email" type="email" autocomplete="email" required></label>',
-    '<label>Password<input name="password" type="password" autocomplete="',
-    setup ? 'new-password' : 'current-password',
-    '" required minlength="12"></label>',
-    '<button class="button" type="submit">',
-    setup ? 'Create owner and continue' : 'Continue to ABoss',
-    '</button>',
-    '</form>',
-    '<p class="security-note">● Credentials are sent only over the encrypted production connection and are never logged.</p>',
-    '</div></section>',
-    '</main>',
+    '<div class="auth-copy"><span class="eyebrow">Secure business workspace</span><h1>', page[3], '</h1>',
+    '<p>Customers, quotes, invoices, payments and reporting stay connected in one deliberate production workspace.</p></div>',
+    '<span class="auth-foot">ABoss Software · Australian business operations</span></section>',
+    '<section class="auth-panel"><div class="auth-card"><span class="eyebrow">', page[0], '</span><h2>', page[1], '</h2><p>', page[2], '</p>',
+    message ? '<div class="form-message' + (success ? ' success' : '') + '" role="status">' + escapeHtml(message) + '</div>' : '',
+    form,
+    '<p class="security-note">Credentials are sent only over the encrypted production connection and are never logged.</p>',
+    '</div></section></main>',
   ].join('');
+}
+
+function renderPublicAuthRoute(message = '', success = false) {
+  const pages = {
+    '/sign-in': 'signin',
+    '/create-account': 'signup',
+    '/forgot-password': 'forgot',
+    '/reset-password': recoveryAccessToken ? 'reset' : 'invalid',
+  };
+  const kind = pages[location.pathname] || 'signin';
+  if (!pages[location.pathname]) history.replaceState({}, '', '/sign-in');
+  authPage(kind, message, success);
 }
 
 const navItems = [
@@ -1388,20 +1389,42 @@ async function renderRoute() {
 
 async function bootstrap() {
   try {
-    const setup = await api('/api/system/setup/status');
-    if (setup.setupRequired) {
-      if (location.pathname !== '/system/setup') history.replaceState({}, '', '/system/setup');
-      authPage('setup');
+    const callback = new URLSearchParams(location.hash.slice(1));
+    const callbackError = callback.get('error_description') || callback.get('error');
+    if (location.pathname === '/reset-password') {
+      const token = callback.get('access_token');
+      if (token && callback.get('type') === 'recovery') recoveryAccessToken = token;
+      if (location.hash) history.replaceState({}, '', '/reset-password');
+      saveSession(null);
+      currentUser = null;
+      authPage(recoveryAccessToken && !callbackError ? 'reset' : 'invalid', callbackError || '');
       return;
     }
+    if (location.pathname === '/auth/callback') {
+      const accessToken = callback.get('access_token');
+      const refreshToken = callback.get('refresh_token');
+      if (!callbackError && accessToken && refreshToken) {
+        saveSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_in: Number(callback.get('expires_in') || 3600),
+          token_type: callback.get('token_type') || 'bearer',
+        });
+        history.replaceState({}, '', '/dashboard');
+      } else {
+        saveSession(null);
+        history.replaceState({}, '', '/sign-in');
+        authPage('signin', callbackError || 'This verification link is invalid or has expired.');
+        return;
+      }
+    }
     if (!session) {
-      if (location.pathname !== '/sign-in') history.replaceState({}, '', '/sign-in');
-      authPage('signin');
+      renderPublicAuthRoute();
       return;
     }
     const identity = await api('/api/auth/me');
     currentUser = identity.user;
-    if (['/', '/sign-in', '/system/setup'].includes(location.pathname))
+    if (['/', '/sign-in', '/create-account', '/forgot-password', '/auth/callback'].includes(location.pathname))
       history.replaceState({}, '', '/dashboard');
     await renderRoute();
   } catch (error) {
@@ -1650,17 +1673,60 @@ document.addEventListener('submit', async (event) => {
   if (submit) submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
   try {
-    if (form.id === 'setup-form') {
-      await api('/api/system/setup', { method: 'POST', body: JSON.stringify(data) });
-      saveSession(
-        await api('/api/auth/sign-in', {
-          method: 'POST',
-          body: JSON.stringify({ email: data.email, password: data.password }),
-        }),
-      );
-      currentUser = (await api('/api/auth/me')).user;
-      history.replaceState({}, '', '/settings');
-      await renderRoute();
+    if (form.id === 'signup-form' || form.id === 'reset-form') {
+      if (data.password !== data.passwordConfirmation) throw new Error('Passwords do not match.');
+      if (
+        String(data.password).length < 12 ||
+        !/[a-z]/.test(data.password) ||
+        !/[A-Z]/.test(data.password) ||
+        !/[0-9]/.test(data.password)
+      ) {
+        throw new Error('Use at least 12 characters with uppercase, lowercase, and a number.');
+      }
+    }
+    if (form.id === 'signup-form') {
+      const result = await api('/api/auth/sign-up', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      if (result.status === 'active' && result.session) {
+        saveSession(result.session);
+        currentUser = (await api('/api/auth/me')).user;
+        history.replaceState({}, '', '/dashboard');
+        await renderRoute();
+      } else {
+        history.replaceState({}, '', '/sign-in');
+        authPage('verification', result.message, true);
+      }
+      return;
+    }
+    if (form.id === 'forgot-form') {
+      const result = await api('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      authPage('forgot', result.message, true);
+      return;
+    }
+    if (form.id === 'reset-form') {
+      if (!recoveryAccessToken) throw new Error('This password reset link is invalid or has expired.');
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + recoveryAccessToken,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      let result = {};
+      try {
+        result = await response.json();
+      } catch {}
+      if (!response.ok) throw new Error(friendlyMessage(result.message));
+      recoveryAccessToken = null;
+      saveSession(null);
+      history.replaceState({}, '', '/sign-in');
+      authPage('signin', result.message, true);
       return;
     }
     if (form.id === 'signin-form') {
@@ -1796,7 +1862,17 @@ document.addEventListener('submit', async (event) => {
       reportsPage();
     }
   } catch (error) {
-    toast(error.message, true);
+    if (['signin-form', 'signup-form', 'forgot-form', 'reset-form'].includes(form.id)) {
+      const kinds = {
+        'signin-form': 'signin',
+        'signup-form': 'signup',
+        'forgot-form': 'forgot',
+        'reset-form': recoveryAccessToken ? 'reset' : 'invalid',
+      };
+      authPage(kinds[form.id], error.message);
+    } else {
+      toast(error.message, true);
+    }
   } finally {
     if (submit?.isConnected) submit.disabled = false;
   }

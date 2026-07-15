@@ -61,6 +61,10 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
   for (const path of [
     '/',
     '/sign-in',
+    '/create-account',
+    '/forgot-password',
+    '/reset-password',
+    '/auth/callback',
     '/dashboard',
     '/workspace/customers',
     '/workspace/quotes',
