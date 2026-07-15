@@ -11,6 +11,15 @@ const productionEnv = {
 };
 
 describe('runtime environment configuration', () => {
+  it('uses the Vercel pooled URL when DATABASE_URL is an empty sensitive reference', () => {
+    const parsed = parseEnv({
+      ...productionEnv,
+      DATABASE_URL: '',
+      POSTGRES_URL: productionEnv.DATABASE_URL,
+    });
+    expect(parsed.DATABASE_URL).toBe(productionEnv.DATABASE_URL);
+  });
+
   it('accepts the pooled PostgreSQL production configuration', () => {
     expect(parseEnv(productionEnv)).toMatchObject({
       NODE_ENV: 'production',
@@ -19,6 +28,18 @@ describe('runtime environment configuration', () => {
       REQUEST_BODY_LIMIT: 1_048_576,
       ENABLE_STRUCTURED_LOGGING: true,
     });
+  });
+
+  it('trims browser authentication endpoint and public key values', () => {
+    const parsed = parseEnv({
+      ...productionEnv,
+      ENABLE_BROWSER_APP: '1',
+      SUPABASE_URL: '  https://replacement.supabase.co  ',
+      SUPABASE_PUBLISHABLE_KEY: '  sb_publishable_test  ',
+    });
+
+    expect(parsed.SUPABASE_URL).toBe('https://replacement.supabase.co');
+    expect(parsed.SUPABASE_PUBLISHABLE_KEY).toBe('sb_publishable_test');
   });
 
   it('requires PostgreSQL and rejects SQLite in production', () => {

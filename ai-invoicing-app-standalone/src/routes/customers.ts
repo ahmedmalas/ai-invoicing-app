@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
+import { parsePagination } from './pagination.js';
 
 const customerSchema = z.object({
   displayName: z.string().min(1),
@@ -11,6 +12,10 @@ const customerSchema = z.object({
 });
 
 export const customerRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/customers', async (request) => ({
+    customers: await app.db.listCustomers(parsePagination(request.query)),
+  }));
+
   app.post('/customers', async (request, reply) => {
     const body = customerSchema.parse(request.body);
     const customer = await app.db.createCustomer(body);

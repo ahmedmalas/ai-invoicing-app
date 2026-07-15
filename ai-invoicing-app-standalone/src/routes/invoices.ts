@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
+import { parsePagination } from './pagination.js';
 
 const lineItemSchema = z.object({
   description: z.string().min(1),
@@ -31,6 +32,19 @@ const updateDraftSchema = z.object({
 });
 
 export const invoiceRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/invoices', async (request) => {
+    const query = z.object({
+      customerId: z.string().uuid().optional(),
+      status: z.enum(['Draft', 'Finalised']).optional(),
+      paymentState: z.enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled']).optional(),
+    }).parse(request.query);
+    const filter: { customerId?: string; status?: 'Draft' | 'Finalised'; paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled' } = {};
+    if (query.customerId) filter.customerId = query.customerId;
+    if (query.status) filter.status = query.status;
+    if (query.paymentState) filter.paymentState = query.paymentState;
+    return { invoices: await app.db.listInvoices(filter, parsePagination(request.query)) };
+  });
+
   app.post('/invoices', async (request, reply) => {
     const body = createDraftSchema.parse(request.body);
     const invoice = await app.db.createInvoiceDraft(body);
@@ -50,6 +64,12 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Invoice not found' });
     }
     return invoice;
+  });
+
+  app.delete('/invoices/:invoiceId', async (request, reply) => {
+    const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
+    await app.db.deleteInvoiceDraft(params.invoiceId);
+    return reply.code(204).send();
   });
 
   app.post('/invoices/:invoiceId/finalise', async (request) => {
