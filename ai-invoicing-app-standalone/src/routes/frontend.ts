@@ -7,6 +7,7 @@ const tracedAssets = {
   'index.html': new URL('../../public/index.html', import.meta.url),
   'styles.css': new URL('../../public/styles.css', import.meta.url),
   'app.js': new URL('../../public/app.js', import.meta.url),
+  'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
   'favicon.svg': new URL('../../public/favicon.svg', import.meta.url),
@@ -46,6 +47,12 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .type('application/javascript; charset=utf-8')
       .header('Cache-Control', 'no-cache')
       .send(asset('app.js')),
+  );
+  app.get('/assets/launch-app.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('launch-app.js')),
   );
   app.get('/assets/auth-controls.js', async (_request, reply) =>
     reply
