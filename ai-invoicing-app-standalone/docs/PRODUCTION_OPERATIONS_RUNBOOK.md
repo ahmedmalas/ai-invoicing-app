@@ -13,6 +13,7 @@ Required/validated environment variables:
 - `ORGANIZATION_ID` (default `single-tenant`)
 - `ENABLE_STRUCTURED_LOGGING` (`1` or `0`, default `1`)
 - `CORS_ORIGIN` (default `https://ai-invoicing-app.vercel.app`)
+- `PUBLIC_APP_URL` (fixed origin used by verification and password-recovery redirects)
 - `REQUEST_BODY_LIMIT` (1024-10485760, default `1048576`)
 - Production template: `.env.production.example`
 

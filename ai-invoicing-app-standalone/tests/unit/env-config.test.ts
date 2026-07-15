@@ -6,6 +6,7 @@ const productionEnv = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://user:password@pooled.example.com:5432/app?sslmode=require',
   CORS_ORIGIN: 'https://app.example.com',
+  PUBLIC_APP_URL: 'https://app.example.com',
   REQUEST_BODY_LIMIT: '1048576',
   ENABLE_STRUCTURED_LOGGING: '1',
 };
@@ -25,6 +26,7 @@ describe('runtime environment configuration', () => {
       NODE_ENV: 'production',
       DATABASE_URL: productionEnv.DATABASE_URL,
       CORS_ORIGIN: productionEnv.CORS_ORIGIN,
+      PUBLIC_APP_URL: productionEnv.PUBLIC_APP_URL,
       REQUEST_BODY_LIMIT: 1_048_576,
       ENABLE_STRUCTURED_LOGGING: true,
     });
@@ -40,6 +42,7 @@ describe('runtime environment configuration', () => {
 
     expect(parsed.SUPABASE_URL).toBe('https://replacement.supabase.co');
     expect(parsed.SUPABASE_PUBLISHABLE_KEY).toBe('sb_publishable_test');
+    expect(parsed.PUBLIC_APP_URL).toBe('https://app.example.com');
   });
 
   it('requires PostgreSQL and rejects SQLite in production', () => {
@@ -58,6 +61,9 @@ describe('runtime environment configuration', () => {
     expect(() =>
       parseEnv({ ...productionEnv, CORS_ORIGIN: 'https://app.example.com/path' }),
     ).toThrow('CORS_ORIGIN must be a URL origin');
+    expect(() =>
+      parseEnv({ ...productionEnv, PUBLIC_APP_URL: 'https://app.example.com/path' }),
+    ).toThrow('PUBLIC_APP_URL must be a URL origin');
     expect(() => parseEnv({ ...productionEnv, REQUEST_BODY_LIMIT: '100' })).toThrow();
   });
 });

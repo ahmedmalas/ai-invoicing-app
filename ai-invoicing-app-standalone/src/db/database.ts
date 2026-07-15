@@ -443,6 +443,20 @@ export interface CreateUserInput {
   roleIds?: string[] | undefined;
 }
 
+export interface WorkspaceAccess {
+  workspaceId: string;
+  workspaceName: string;
+  schemaName: string;
+  role: 'owner';
+}
+
+export interface ProvisionWorkspaceOwnerInput {
+  authUserId: string;
+  displayName: string;
+  email: string;
+  workspaceName: string;
+}
+
 export interface CreateTeamInput {
   name: string;
 }
@@ -760,6 +774,8 @@ export type DatabaseResult<T> = T | Promise<T>;
 export interface AppDatabase {
   close(): DatabaseResult<void>;
   getOperationalDiagnostics(): DatabaseResult<DatabaseOperationalDiagnostics>;
+  resolveWorkspaceAccess(authUserId: string): DatabaseResult<WorkspaceAccess | null>;
+  provisionWorkspaceOwner(input: ProvisionWorkspaceOwnerInput): DatabaseResult<WorkspaceAccess>;
   createCustomer(input: CreateCustomerInput): DatabaseResult<Customer>;
   updateCustomer(id: string, input: UpdateCustomerInput): DatabaseResult<Customer>;
   deleteCustomer(id: string): DatabaseResult<void>;
@@ -1184,6 +1200,16 @@ export function createDatabase(
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
+  const initializedAt = nowIso();
+  db.prepare(
+    `INSERT OR IGNORE INTO auth_workspaces (id, schema_name, display_name, created_at)
+     VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', ?)`,
+  ).run(initializedAt);
+  db.prepare(
+    `INSERT OR IGNORE INTO auth_workspace_memberships
+       (auth_user_id, workspace_id, role, created_at)
+     SELECT id, '00000000-0000-0000-0000-000000000001', 'owner', ? FROM users`,
+  ).run(initializedAt);
 
   function ensureSchemaVersionCompatibilityOrThrow(): {
     schemaVersion: number;
@@ -2057,6 +2083,118 @@ export function createDatabase(
           tableCount: PLATFORM_SNAPSHOT_TABLES.length,
         },
       };
+    },
+
+    resolveWorkspaceAccess(authUserId) {
+      let row = db
+        .prepare(
+          `SELECT w.id AS workspace_id, w.display_name AS workspace_name,
+                  w.schema_name AS schema_name, m.role AS role
+           FROM auth_workspace_memberships m
+           INNER JOIN auth_workspaces w ON w.id = m.workspace_id
+           WHERE m.auth_user_id = ?`,
+        )
+        .get(authUserId) as
+        | { workspace_id: string; workspace_name: string; schema_name: string; role: 'owner' }
+        | undefined;
+      if (!row && db.prepare('SELECT id FROM users WHERE id = ?').get(authUserId)) {
+        db.prepare(
+          `INSERT OR IGNORE INTO auth_workspace_memberships
+             (auth_user_id, workspace_id, role, created_at)
+           VALUES (?, '00000000-0000-0000-0000-000000000001', 'owner', ?)`,
+        ).run(authUserId, nowIso());
+        row = db
+          .prepare(
+            `SELECT w.id AS workspace_id, w.display_name AS workspace_name,
+                    w.schema_name AS schema_name, m.role AS role
+             FROM auth_workspace_memberships m
+             INNER JOIN auth_workspaces w ON w.id = m.workspace_id
+             WHERE m.auth_user_id = ?`,
+          )
+          .get(authUserId) as
+          | { workspace_id: string; workspace_name: string; schema_name: string; role: 'owner' }
+          | undefined;
+      }
+      return row
+        ? {
+            workspaceId: row.workspace_id,
+            workspaceName: row.workspace_name,
+            schemaName: row.schema_name,
+            role: row.role,
+          }
+        : null;
+    },
+
+    provisionWorkspaceOwner(input) {
+      return db.transaction((txInput: ProvisionWorkspaceOwnerInput) => {
+        const existing = db
+          .prepare(
+            `SELECT w.id AS workspace_id, w.display_name AS workspace_name,
+                    w.schema_name AS schema_name, m.role AS role
+             FROM auth_workspace_memberships m
+             INNER JOIN auth_workspaces w ON w.id = m.workspace_id
+             WHERE m.auth_user_id = ?`,
+          )
+          .get(txInput.authUserId) as
+          | { workspace_id: string; workspace_name: string; schema_name: string; role: 'owner' }
+          | undefined;
+        if (existing) {
+          return {
+            workspaceId: existing.workspace_id,
+            workspaceName: existing.workspace_name,
+            schemaName: existing.schema_name,
+            role: existing.role,
+          };
+        }
+
+        const workspaceId = randomUUID();
+        const schemaName = `workspace_${workspaceId.replaceAll('-', '')}`;
+        const roleId = randomUUID();
+        const teamId = randomUUID();
+        const now = nowIso();
+        db.prepare(
+          `INSERT INTO auth_workspaces (id, schema_name, display_name, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(workspaceId, schemaName, txInput.workspaceName.trim(), now);
+        db.prepare(
+          `INSERT INTO auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
+           VALUES (?, ?, 'owner', ?)`,
+        ).run(txInput.authUserId, workspaceId, now);
+        db.prepare(
+          `INSERT INTO roles (id, name, can_be_assigned, can_manage_assignments, created_at, updated_at)
+           VALUES (?, ?, 1, 1, ?, ?)`,
+        ).run(roleId, `Workspace owner ${workspaceId}`, now, now);
+        db.prepare(
+          `INSERT INTO users (id, display_name, email, is_active, created_at, updated_at)
+           VALUES (?, ?, ?, 1, ?, ?)`,
+        ).run(
+          txInput.authUserId,
+          txInput.displayName.trim(),
+          txInput.email.trim().toLowerCase(),
+          now,
+          now,
+        );
+        db.prepare(
+          `INSERT INTO user_role_links (id, user_id, role_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(randomUUID(), txInput.authUserId, roleId, now);
+        db.prepare('INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+          teamId,
+          `${txInput.workspaceName.trim()} team`,
+          now,
+          now,
+        );
+        db.prepare(
+          `INSERT INTO team_memberships (id, team_id, user_id, role, created_at)
+           VALUES (?, ?, ?, 'owner', ?)`,
+        ).run(randomUUID(), teamId, txInput.authUserId, now);
+        return {
+          workspaceId,
+          workspaceName: txInput.workspaceName.trim(),
+          schemaName,
+          role: 'owner' as const,
+        };
+      })(input);
     },
 
     createCustomer(input) {

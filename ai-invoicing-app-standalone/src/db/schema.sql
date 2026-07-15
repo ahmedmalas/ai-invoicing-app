@@ -63,6 +63,21 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS auth_workspaces (
+  id TEXT PRIMARY KEY,
+  schema_name TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_workspace_memberships (
+  auth_user_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role = 'owner'),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES auth_workspaces(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_role_links (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
