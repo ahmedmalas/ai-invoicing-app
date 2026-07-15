@@ -26,6 +26,8 @@ import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
 import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
+import { createSystemRoutes } from './routes/system.js';
+import { frontendRoutes } from './routes/frontend.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -73,6 +75,9 @@ export interface BuildAppOptions {
   abossIntegrationActorUserId?: string;
   abossAllowedOrganizationId?: string;
   abossOnlyAuth?: boolean;
+  supabaseUrl?: string | undefined;
+  supabaseAnonKey?: string | undefined;
+  serveFrontend?: boolean | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions) {
@@ -119,6 +124,12 @@ export async function buildApp(options: BuildAppOptions) {
   const abossAllowedOrganizationId = options.abossAllowedOrganizationId ?? process.env.ABOSS_ALLOWED_ORGANIZATION_ID;
   const abossOnlyAuth = options.abossOnlyAuth ?? process.env.ABOSS_ONLY_AUTH === '1';
   const usedAbossNonces = new Map<string, number>();
+  const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL;
+  const supabaseAnonKey =
+    options.supabaseAnonKey ??
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.SUPABASE_PUBLISHABLE_KEY;
   const sanitizePath = (url: string): string => url.split('?')[0] ?? url;
   const singleHeader = (value: string | string[] | undefined): string | undefined =>
     Array.isArray(value) ? value[0] : value;
@@ -135,7 +146,17 @@ export async function buildApp(options: BuildAppOptions) {
     unexpectedErrorCount: 0,
   });
 
-  await app.register(helmet);
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+      },
+    },
+  });
   if (options.corsOrigin !== undefined) {
     await app.register(cors, {
       origin: options.corsOrigin,
@@ -175,8 +196,24 @@ export async function buildApp(options: BuildAppOptions) {
     '/platform/restore',
     '/health/diagnostics',
   ]);
-  const isPublicHealthRoute = (url: string): boolean =>
-    ['/health', '/health/live', '/health/ready'].includes(url.split('?')[0] ?? url);
+  const servesFrontend = options.serveFrontend ?? (options.dbPath === undefined && nodeEnv !== 'test');
+  const publicPaths = new Set([
+    '/health',
+    '/health/live',
+    '/health/ready',
+    '/api/config',
+    '/api/system/setup/status',
+    '/api/auth/sign-in',
+    '/api/auth/refresh',
+  ]);
+  if (servesFrontend) {
+    for (const path of [
+      '/', '/sign-in', '/dashboard', '/workspace/customers', '/workspace/quotes',
+      '/workspace/invoices', '/workspace/payments',
+      '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
+    ]) publicPaths.add(path);
+  }
+  const isPublicRoute = (url: string): boolean => publicPaths.has(sanitizePath(url));
 
   app.addHook('onRequest', async (request) => {
     app.opsMetrics.requestCount += 1;
@@ -190,11 +227,52 @@ export async function buildApp(options: BuildAppOptions) {
       },
       'request received',
     );
-    if (isPublicHealthRoute(request.url)) {
+    if (isPublicRoute(request.url)) {
       return;
     }
 
     if (singleHeader(request.headers['x-aboss-signature'])) {
+      return;
+    }
+
+    const authorization = request.headers.authorization;
+    const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    if (bearerToken && supabaseUrl && supabaseAnonKey) {
+      const response = await fetch(new URL('/auth/v1/user', supabaseUrl), {
+        headers: { apikey: supabaseAnonKey, authorization: `Bearer ${bearerToken}` },
+      });
+      if (!response.ok) {
+        app.log.warn(
+          {
+            event: 'auth.provider_token_rejected',
+            providerHost: new URL(supabaseUrl).hostname,
+            providerStatus: response.status,
+          },
+          'authentication provider rejected access token',
+        );
+        throw new Error('AUTH_UNAUTHENTICATED');
+      }
+      const authUser = (await response.json()) as { id?: string };
+      if (!authUser.id) {
+        app.log.warn({ event: 'auth.provider_identity_missing' }, 'provider identity is missing');
+        throw new Error('AUTH_UNAUTHENTICATED');
+      }
+      const actor = await db.getUserById(authUser.id);
+      if (!actor || !actor.isActive) {
+        app.log.warn(
+          { event: 'auth.application_user_unavailable', found: Boolean(actor) },
+          'application user is unavailable',
+        );
+        throw new Error('AUTH_UNAUTHENTICATED');
+      }
+      const roles = await Promise.all(actor.roleIds.map(async (roleId) => await db.getRoleById(roleId)));
+      request.auth = {
+        userId: actor.id,
+        isAdmin: roles.some((role) => role?.canManageAssignments === true),
+        canWrite: roles.some(
+          (role) => role?.canManageAssignments === true || role?.canBeAssigned === true,
+        ),
+      };
       return;
     }
     if (abossOnlyAuth) {
@@ -248,7 +326,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('preValidation', async (request) => {
-    if (isPublicHealthRoute(request.url)) return;
+    if (isPublicRoute(request.url)) return;
     const signature = singleHeader(request.headers['x-aboss-signature']);
     if (!signature) return;
     const timestamp = singleHeader(request.headers['x-aboss-timestamp']);
@@ -319,10 +397,10 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.addHook('preHandler', async (request) => {
-    if (isPublicHealthRoute(request.url)) {
+    if (isPublicRoute(request.url)) {
       return;
     }
-    const routeUrl = request.routeOptions.url;
+    const routeUrl = request.routeOptions.url?.replace(/^\/api/, '');
     if (routeUrl && adminOnlyRoutes.has(routeUrl)) {
       if (!request.auth.isAdmin) {
         throw new Error('AUTH_FORBIDDEN');
@@ -657,26 +735,18 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   await app.register(healthRoutes);
-  await app.register(platformSnapshotRoutes);
-  await app.register(customerRoutes);
-  await app.register(businessProfileRoutes);
-  await app.register(preferenceRoutes);
-  await app.register(invoiceRoutes);
-  await app.register(quoteRoutes);
-  await app.register(jobRoutes);
-  await app.register(roleRoutes);
-  await app.register(teamRoutes);
-  await app.register(userRoutes);
-  await app.register(searchRoutes);
-  await app.register(timelineRoutes);
-  await app.register(statementRoutes);
-  await app.register(reportRoutes);
-  await app.register(creditNoteRoutes);
-  await app.register(paymentRoutes);
-  await app.register(supplierRoutes);
-  await app.register(supplierBillRoutes);
-  await app.register(supplierPaymentRoutes);
-  await app.register(purchaseOrderRoutes);
+  await app.register(createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey }));
+  const businessPlugins = [
+    platformSnapshotRoutes, customerRoutes, businessProfileRoutes, preferenceRoutes, invoiceRoutes,
+    quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,
+    statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, supplierRoutes,
+    supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,
+  ];
+  for (const plugin of businessPlugins) {
+    await app.register(plugin);
+    await app.register(plugin, { prefix: '/api' });
+  }
+  if (servesFrontend) await app.register(frontendRoutes);
 
   return app;
 }

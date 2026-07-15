@@ -30,6 +30,11 @@ const envSchema = z
     ABOSS_INTEGRATION_ACTOR_USER_ID: z.string().uuid().optional(),
     ABOSS_ALLOWED_ORGANIZATION_ID: z.string().uuid().optional(),
     ABOSS_ONLY_AUTH: z.enum(['0', '1']).default('0').transform((value) => value === '1'),
+    SUPABASE_URL: z.string().trim().url().optional(),
+    SUPABASE_ANON_KEY: z.string().trim().min(1).optional(),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().trim().min(1).optional(),
+    SUPABASE_PUBLISHABLE_KEY: z.string().trim().min(1).optional(),
+    ENABLE_BROWSER_APP: z.enum(['0', '1']).default('0').transform((value) => value === '1'),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV === 'production' && value.DATABASE_URL === undefined) {
@@ -53,6 +58,18 @@ const envSchema = z
       ] as const) {
         if (!configured) context.addIssue({ code: 'custom', path: [path], message: `${path} is required when ABOSS_ONLY_AUTH=1` });
       }
+    }
+    if (value.NODE_ENV === 'production' && value.ENABLE_BROWSER_APP && value.SUPABASE_URL === undefined) {
+      context.addIssue({ code: 'custom', path: ['SUPABASE_URL'], message: 'SUPABASE_URL is required in production' });
+    }
+    if (
+      value.NODE_ENV === 'production' &&
+      value.ENABLE_BROWSER_APP &&
+      value.SUPABASE_ANON_KEY === undefined &&
+      value.NEXT_PUBLIC_SUPABASE_ANON_KEY === undefined &&
+      value.SUPABASE_PUBLISHABLE_KEY === undefined
+    ) {
+      context.addIssue({ code: 'custom', path: ['SUPABASE_ANON_KEY'], message: 'A Supabase public key is required in production' });
     }
   });
 

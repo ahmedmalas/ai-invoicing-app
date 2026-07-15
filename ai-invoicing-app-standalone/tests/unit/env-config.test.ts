@@ -30,6 +30,18 @@ describe('runtime environment configuration', () => {
     });
   });
 
+  it('trims browser authentication endpoint and public key values', () => {
+    const parsed = parseEnv({
+      ...productionEnv,
+      ENABLE_BROWSER_APP: '1',
+      SUPABASE_URL: '  https://replacement.supabase.co  ',
+      SUPABASE_PUBLISHABLE_KEY: '  sb_publishable_test  ',
+    });
+
+    expect(parsed.SUPABASE_URL).toBe('https://replacement.supabase.co');
+    expect(parsed.SUPABASE_PUBLISHABLE_KEY).toBe('sb_publishable_test');
+  });
+
   it('requires PostgreSQL and rejects SQLite in production', () => {
     expect(() =>
       parseEnv({

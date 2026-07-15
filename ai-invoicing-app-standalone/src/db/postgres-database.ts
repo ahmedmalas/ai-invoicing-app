@@ -1189,8 +1189,9 @@ export async function createPostgresDatabase(
   options: PostgresDatabaseOptions = {},
 ): Promise<AppDatabase> {
   pgTypes.setTypeParser(20, Number);
+  const runtimeConnectionString = normalizePostgresConnectionString(connectionString);
   const pool = new Pool({
-    connectionString,
+    connectionString: runtimeConnectionString,
     max: Math.max(1, Math.trunc(options.maxConnections ?? 5)),
     idleTimeoutMillis: Math.max(1000, Math.trunc(options.idleTimeoutMs ?? 10_000)),
     connectionTimeoutMillis: Math.max(1000, Math.trunc(options.connectionTimeoutMs ?? 10_000)),
@@ -6198,4 +6199,20 @@ export async function createPostgresDatabase(
     },
   });
   return proxy;
+}
+
+export function normalizePostgresConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (
+      url.searchParams.get('sslmode') === 'require' &&
+      !url.searchParams.has('uselibpqcompat')
+    ) {
+      url.searchParams.set('uselibpqcompat', 'true');
+      return url.toString();
+    }
+  } catch {
+    // Let node-postgres report malformed connection strings with its standard error.
+  }
+  return connectionString;
 }

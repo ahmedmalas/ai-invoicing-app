@@ -22,10 +22,15 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     nodeEnv: env.NODE_ENV,
     corsOrigin: env.CORS_ORIGIN,
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
+    serveFrontend: env.ENABLE_BROWSER_APP,
     abossOnlyAuth: env.ABOSS_ONLY_AUTH,
     ...(env.ABOSS_INTEGRATION_SECRET !== undefined ? { abossIntegrationSecret: env.ABOSS_INTEGRATION_SECRET } : {}),
     ...(env.ABOSS_INTEGRATION_ACTOR_USER_ID !== undefined ? { abossIntegrationActorUserId: env.ABOSS_INTEGRATION_ACTOR_USER_ID } : {}),
     ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID } : {}),
+    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
+    ...((env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? { supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY }
+      : {}),
   });
 }
 
@@ -67,7 +72,18 @@ export function createVercelHandler(build: AppBuilder = buildProductionApp): Ver
         response.once('error', onError);
         app.server.emit('request', request, response);
       });
-    } catch {
+    } catch (error) {
+      const startupError =
+        error && typeof error === 'object'
+          ? {
+              name: error instanceof Error ? error.name : 'UnknownError',
+              code:
+                'code' in error && typeof error.code === 'string'
+                  ? error.code
+                  : 'APP_INITIALIZATION_FAILED',
+            }
+          : { name: 'UnknownError', code: 'APP_INITIALIZATION_FAILED' };
+      console.error('Vercel application initialization failed', startupError);
       if (!response.headersSent) {
         response.statusCode = 500;
         response.setHeader('content-type', 'application/json; charset=utf-8');
