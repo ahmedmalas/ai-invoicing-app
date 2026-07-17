@@ -1951,3 +1951,254 @@ document.addEventListener('input', (event) => {
 
 window.addEventListener('popstate', () => void renderRoute());
 void bootstrap();
+diff --git a/ai-invoicing-app-standalone/public/app.js b/ai-invoicing-app-standalone/public/app.js
+index d43883f73a2af9942868872ec43cfc6c86eac9b8..1c5889bbda648c137a881b5687440ed78622ab00 100644
+--- a/ai-invoicing-app-standalone/public/app.js
++++ b/ai-invoicing-app-standalone/public/app.js
+@@ -1,75 +1,85 @@
+ const root = document.querySelector('#app');
+ const SESSION_KEY = 'aboss-invoicing-session';
+ let session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+ let currentUser = null;
+ let cache = {};
+ let recoveryAccessToken = null;
++let signOutInProgress = false;
+ 
+ const escapeHtml = (value) =>
+   String(value ?? '')
+     .replaceAll('&', '&amp;')
+     .replaceAll('<', '&lt;')
+     .replaceAll('>', '&gt;')
+     .replaceAll('"', '&quot;')
+     .replaceAll("'", '&#039;');
+ const money = (value) =>
+   new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(Number(value || 0));
+ const date = (offset = 0) => {
+   const value = new Date();
+   value.setDate(value.getDate() + offset);
+   return value.toISOString().slice(0, 10);
+ };
+ const readableDate = (value) =>
+   value
+     ? new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium' }).format(
+         new Date(value + (value.length === 10 ? 'T00:00:00' : '')),
+       )
+     : '—';
+ const readableTime = (value) =>
+   value
+     ? new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short' }).format(
+         new Date(value),
+       )
+     : '—';
+ const quoteStatuses = ['Draft', 'Sent', 'Accepted', 'Declined', 'Expired', 'Cancelled'];
+ const errorMessages = {
+   IMMUTABLE_CONVERTED_QUOTE: 'Converted quotes are permanent and cannot be edited.',
+   QUOTE_NOT_ACCEPTED: 'Accept the quote before converting it to an invoice.',
+   PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING: 'The payment exceeds the invoice outstanding balance.',
+   PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE: 'Only final invoices can receive payments.',
+   CUSTOMER_HAS_QUOTES: 'This customer cannot be deleted because quotes are linked to it.',
+   CUSTOMER_HAS_INVOICES: 'This customer cannot be deleted because invoices are linked to it.',
+   OWNER_ALREADY_PROVISIONED: 'Owner setup is already complete. Sign in instead.',
+ };
+ const friendlyMessage = (message) =>
+   errorMessages[message] || message || 'ABoss could not complete the request.';
+ 
+ function saveSession(value) {
+   session = value;
+-  if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
+-  else localStorage.removeItem(SESSION_KEY);
++  if (value) {
++    localStorage.setItem(SESSION_KEY, JSON.stringify(value));
++    signOutInProgress = false;
++  } else localStorage.removeItem(SESSION_KEY);
++}
++
++function provisionalUser(data) {
++  return {
++    email: String(data.email || '').trim(),
++    displayName: String(data.name || data.email || '').trim(),
++  };
+ }
+ 
+ function toast(message, error = false) {
+   document.querySelector('.toast')?.remove();
+   const node = document.createElement('div');
+   node.className = 'toast' + (error ? ' error' : '');
+   node.textContent = message;
+   document.body.append(node);
+   setTimeout(() => node.remove(), 4200);
+ }
+ 
+ async function refreshSession() {
+   if (!session?.refresh_token) return false;
+   const response = await fetch('/api/auth/refresh', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({ refreshToken: session.refresh_token }),
+   });
+   if (!response.ok) return false;
+   saveSession(await response.json());
+   return true;
+ }
+ 
+ async function api(path, options = {}, retry = true) {
+   const headers = new Headers(options.headers || {});
+@@ -1608,57 +1618,61 @@ document.addEventListener('click', async (event) => {
+     ];
+     const blob = new Blob(
+       [
+         lines
+           .map((row) => row.map((cell) => '"' + String(cell).replaceAll('"', '""') + '"').join(','))
+           .join('\n'),
+       ],
+       { type: 'text/csv' },
+     );
+     const url = URL.createObjectURL(blob);
+     const link = document.createElement('a');
+     link.href = url;
+     link.download = 'aboss-accounts-receivable.csv';
+     document.body.append(link);
+     link.click();
+     link.remove();
+     setTimeout(() => URL.revokeObjectURL(url), 1000);
+     toast('aboss-accounts-receivable.csv downloaded.');
+     return;
+   }
+   if (event.target.closest('[data-clear-report]')) {
+     await renderRoute();
+     return;
+   }
+   if (event.target.closest('[data-signout]')) {
+-    try {
+-      await api('/api/auth/sign-out', { method: 'POST' });
+-    } catch {}
++    if (signOutInProgress) return;
++    signOutInProgress = true;
++    const accessToken = session?.access_token;
+     saveSession(null);
+     currentUser = null;
+     history.replaceState({}, '', '/sign-in');
+     authPage('signin');
++    void fetch('/api/auth/sign-out', {
++      method: 'POST',
++      headers: accessToken ? { authorization: 'Bearer ' + accessToken } : {},
++    }).catch(() => {});
+   }
+ });
+ 
+ function applyListFilters() {
+   const query = (document.querySelector('[data-list-search]')?.value || '').trim().toLowerCase();
+   const status = document.querySelector('[data-list-status]')?.value || '';
+   document.querySelectorAll('tr[data-search]').forEach((row) => {
+     row.hidden = Boolean(
+       (query && !row.dataset.search.includes(query)) || (status && row.dataset.status !== status),
+     );
+   });
+ }
+ 
+ document.addEventListener('change', (event) => {
+   if (event.target.matches('#payment-form [name="invoiceId"]')) {
+     const selected = event.target.selectedOptions[0];
+     const outstanding = Number(selected?.dataset.outstanding || 0);
+     const amount = document.querySelector('#payment-form [name="amount"]');
+     amount.value = outstanding ? outstanding.toFixed(2) : '';
+     amount.max = outstanding || '';
+     document.querySelector('#payment-balance').textContent = outstanding
+       ? 'Outstanding balance: ' +
+         money(outstanding) +
+         '. Enter a smaller amount for a partial payment.'
+       : 'Choose an invoice to see its outstanding balance.';
+@@ -1669,91 +1683,91 @@ document.addEventListener('change', (event) => {
+ document.addEventListener('submit', async (event) => {
+   event.preventDefault();
+   const form = event.target;
+   const submit = form.querySelector('[type="submit"]');
+   if (submit) submit.disabled = true;
+   const data = Object.fromEntries(new FormData(form));
+   try {
+     if (form.id === 'signup-form' || form.id === 'reset-form') {
+       if (data.password !== data.passwordConfirmation) throw new Error('Passwords do not match.');
+       if (
+         String(data.password).length < 12 ||
+         !/[a-z]/.test(data.password) ||
+         !/[A-Z]/.test(data.password) ||
+         !/[0-9]/.test(data.password)
+       ) {
+         throw new Error('Use at least 12 characters with uppercase, lowercase, and a number.');
+       }
+     }
+     if (form.id === 'signup-form') {
+       const result = await api('/api/auth/sign-up', {
+         method: 'POST',
+         body: JSON.stringify(data),
+       });
+       if (result.status === 'active' && result.session) {
+         saveSession(result.session);
+-        currentUser = (await api('/api/auth/me')).user;
++        currentUser = provisionalUser(data);
+         history.replaceState({}, '', '/dashboard');
+         await renderRoute();
+       } else {
+         history.replaceState({}, '', '/sign-in');
+         authPage('verification', result.message, true);
+       }
+       return;
+     }
+     if (form.id === 'forgot-form') {
+       const result = await api('/api/auth/forgot-password', {
+         method: 'POST',
+         body: JSON.stringify(data),
+       });
+       authPage('forgot', result.message, true);
+       return;
+     }
+     if (form.id === 'reset-form') {
+       if (!recoveryAccessToken) throw new Error('This password reset link is invalid or has expired.');
+       const response = await fetch('/api/auth/reset-password', {
+         method: 'POST',
+         headers: {
+           authorization: 'Bearer ' + recoveryAccessToken,
+           'content-type': 'application/json',
+         },
+         body: JSON.stringify(data),
+       });
+       let result = {};
+       try {
+         result = await response.json();
+       } catch {}
+       if (!response.ok) throw new Error(friendlyMessage(result.message));
+       recoveryAccessToken = null;
+       saveSession(null);
+       history.replaceState({}, '', '/sign-in');
+       authPage('signin', result.message, true);
+       return;
+     }
+     if (form.id === 'signin-form') {
+       saveSession(await api('/api/auth/sign-in', { method: 'POST', body: JSON.stringify(data) }));
+-      currentUser = (await api('/api/auth/me')).user;
++      currentUser = provisionalUser(data);
+       history.replaceState({}, '', '/dashboard');
+       await renderRoute();
+       return;
+     }
+     if (form.id === 'customer-form') {
+       const body = Object.fromEntries(
+         Object.entries(data).filter(([, value]) => String(value).trim()),
+       );
+       const duplicate = cache.customers.find(
+         (customer) =>
+           customer.id !== form.dataset.recordId &&
+           customer.displayName.trim().toLowerCase() ===
+             String(body.displayName).trim().toLowerCase() &&
+           (customer.email || '').trim().toLowerCase() ===
+             String(body.email || '')
+               .trim()
+               .toLowerCase(),
+       );
+       if (duplicate)
+         throw new Error('A matching customer already exists. Open that record instead.');
+       if (form.dataset.recordId)
+         await api('/api/customers/' + form.dataset.recordId, {
+           method: 'PUT',
+           body: JSON.stringify(body),
+         });
