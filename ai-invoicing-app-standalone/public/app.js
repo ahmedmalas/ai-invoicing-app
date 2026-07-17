@@ -4,6 +4,7 @@ let session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
 let currentUser = null;
 let cache = {};
 let recoveryAccessToken = null;
+let signOutInProgress = false;
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -46,8 +47,17 @@ const friendlyMessage = (message) =>
 
 function saveSession(value) {
   session = value;
-  if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
-  else localStorage.removeItem(SESSION_KEY);
+  if (value) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(value));
+    signOutInProgress = false;
+  } else localStorage.removeItem(SESSION_KEY);
+}
+
+function provisionalUser(data) {
+  return {
+    email: String(data.email || '').trim(),
+    displayName: String(data.name || data.email || '').trim(),
+  };
 }
 
 function toast(message, error = false) {
@@ -1630,13 +1640,17 @@ document.addEventListener('click', async (event) => {
     return;
   }
   if (event.target.closest('[data-signout]')) {
-    try {
-      await api('/api/auth/sign-out', { method: 'POST' });
-    } catch {}
+    if (signOutInProgress) return;
+    signOutInProgress = true;
+    const accessToken = session?.access_token;
     saveSession(null);
     currentUser = null;
     history.replaceState({}, '', '/sign-in');
     authPage('signin');
+    void fetch('/api/auth/sign-out', {
+      method: 'POST',
+      headers: accessToken ? { authorization: 'Bearer ' + accessToken } : {},
+    }).catch(() => {});
   }
 });
 
@@ -1691,7 +1705,7 @@ document.addEventListener('submit', async (event) => {
       });
       if (result.status === 'active' && result.session) {
         saveSession(result.session);
-        currentUser = (await api('/api/auth/me')).user;
+        currentUser = provisionalUser(data);
         history.replaceState({}, '', '/dashboard');
         await renderRoute();
       } else {
@@ -1731,7 +1745,7 @@ document.addEventListener('submit', async (event) => {
     }
     if (form.id === 'signin-form') {
       saveSession(await api('/api/auth/sign-in', { method: 'POST', body: JSON.stringify(data) }));
-      currentUser = (await api('/api/auth/me')).user;
+      currentUser = provisionalUser(data);
       history.replaceState({}, '', '/dashboard');
       await renderRoute();
       return;
