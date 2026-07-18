@@ -986,13 +986,24 @@ function settingsPage() {
   );
 }
 
-function logoCreatorPage() {
+async function logoCreatorPage() {
+  let standaloneUrl = '';
+  let abossLaunchUrl = '';
+  try {
+    const platform = await api('/api/logo-studio/brand-kits');
+    standaloneUrl = platform.standaloneUrl || '';
+    abossLaunchUrl = platform.abossLaunchUrl || '';
+  } catch {
+    // Platform metadata is optional — Logo Creator still works locally.
+  }
   shell(
     buildLogoCreatorPageHtml({
       profile: cache.businessProfile || {},
       concepts: logoStudioConcepts,
       selectedId: '',
       notice: logoStudioNotice,
+      standaloneUrl,
+      abossLaunchUrl,
     }),
   );
 }
@@ -1626,7 +1637,7 @@ async function renderRoute() {
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
-    else if (path === '/logo-creator') logoCreatorPage();
+    else if (path === '/logo-creator') await logoCreatorPage();
     else {
       history.replaceState({}, '', '/dashboard');
       dashboardPage();
@@ -1770,9 +1781,10 @@ document.addEventListener('click', async (event) => {
       });
       window.__aleyaInvalidateBusinessProfileCache?.();
       cache.businessProfile = result.profile;
-      logoStudioNotice = 'Logo saved. Aleya now uses it across your workspace and PDFs.';
+      logoStudioNotice =
+        'Brand Kit saved. Aleya uses it across the workspace, invoices and PDFs — and syncs to the shared Logo Creator platform when configured.';
       toast(logoStudioNotice);
-      logoCreatorPage();
+      await logoCreatorPage();
     });
     return;
   }
@@ -2213,7 +2225,7 @@ document.addEventListener('submit', async (event) => {
       });
       logoStudioConcepts = result.concepts || [];
       logoStudioNotice = 'Generated ' + logoStudioConcepts.length + ' logo concepts.';
-      logoCreatorPage();
+      await logoCreatorPage();
       toast(logoStudioNotice);
       return;
     }

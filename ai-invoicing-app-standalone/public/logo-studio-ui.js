@@ -59,7 +59,15 @@ export function brandMarkHtml(profile, options = {}) {
   return '<span class="brand-mark ' + sizeClass + '">' + escapeHtml(letter) + '</span>';
 }
 
-export function buildLogoCreatorPageHtml({ profile = {}, concepts = [], selectedId = '', notice = '' } = {}) {
+export function buildLogoCreatorPageHtml({
+  profile = {},
+  concepts = [],
+  selectedId = '',
+  notice = '',
+  standaloneUrl = '',
+  abossLaunchUrl = '',
+} = {}) {
+  const options = { standaloneUrl, abossLaunchUrl };
   const styleOptions = LOGO_STYLE_OPTIONS.map(
     (style) => '<option value="' + style + '">' + style.charAt(0).toUpperCase() + style.slice(1) + '</option>',
   ).join('');
@@ -101,11 +109,29 @@ export function buildLogoCreatorPageHtml({ profile = {}, concepts = [], selected
       '" alt="Active logo" width="280" height="160"></div>'
     : '<div class="notice"><strong>No logo selected yet</strong><br>Generate concepts, pick a favourite, and Aleya will apply it across your documents.</div>';
 
+  const standaloneUrl = options.standaloneUrl || '';
+  const abossLaunchUrl = options.abossLaunchUrl || '';
+  const platformLinks =
+    '<div class="logo-platform-links">' +
+    (standaloneUrl
+      ? '<a class="button secondary" href="' +
+        escapeHtml(standaloneUrl) +
+        '" target="_blank" rel="noopener">Open standalone Logo Creator</a>'
+      : '') +
+    (abossLaunchUrl
+      ? '<a class="button secondary" href="' +
+        escapeHtml(abossLaunchUrl) +
+        '" target="_blank" rel="noopener">Open from ABoss entry</a>'
+      : '') +
+    '<a class="button secondary" href="/api/logo-studio/export.svg">Export SVG</a>' +
+    '</div>';
+
   return (
     '<main class="page logo-studio-page">' +
-    '<header class="page-head"><div><span class="kicker">Aleya Branding</span><h1>Logo Creator</h1><p>Generate multiple logo concepts from your business identity, preview them, and save one as your active Aleya brand mark.</p></div>' +
+    '<header class="page-head"><div><span class="kicker">Aleya Branding</span><h1>Logo Creator</h1><p>Generate concepts, save Brand Kits, and sync the same active brand across Aleya Invoicing, ABoss and the standalone Logo Creator.</p></div>' +
     '<div class="page-actions"><a class="button secondary" href="/settings" data-route>Business profile</a></div></header>' +
     (notice ? '<div class="notice success">' + escapeHtml(notice) + '</div>' : '') +
+    platformLinks +
     '<section class="grid-2 logo-studio-grid">' +
     '<article class="panel"><header class="panel-head"><h2>Brand brief</h2></header>' +
     '<form class="form panel-body" id="logo-studio-form">' +
@@ -126,10 +152,11 @@ export function buildLogoCreatorPageHtml({ profile = {}, concepts = [], selected
     '<div class="form-actions"><button class="button" type="submit">Generate logo concepts</button>' +
     '<button class="button secondary" type="button" data-regenerate-logos>Regenerate alternatives</button></div>' +
     '</form></article>' +
-    '<article class="panel"><header class="panel-head"><h2>Active branding</h2></header><div class="panel-body stack">' +
+    '<article class="panel"><header class="panel-head"><h2>Active Brand Kit</h2></header><div class="panel-body stack">' +
     active +
+    '<p class="muted">Selecting a favourite saves a Brand Kit and applies it to dashboard, invoices and PDFs. Previously finalised invoices keep their original branding.</p>' +
     '</div></article></section>' +
-    '<section class="panel logo-results"><header class="panel-head"><h2>Generated concepts</h2><p class="muted">Select a favourite to save it as your workspace logo.</p></header>' +
+    '<section class="panel logo-results"><header class="panel-head"><h2>Generated concepts</h2><p class="muted">Select a favourite to save it as your active Brand Kit.</p></header>' +
     '<div class="panel-body logo-card-grid" data-logo-results>' +
     cards +
     '</div></section></main>'

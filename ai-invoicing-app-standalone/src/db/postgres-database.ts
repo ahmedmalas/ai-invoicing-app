@@ -792,6 +792,7 @@ export interface AppDatabase {
   ): DatabaseResult<InvoiceDraft[]>;
   deleteInvoiceDraft(id: string): DatabaseResult<void>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
+  getInvoiceBrandingSnapshot(invoiceId: string): DatabaseResult<BrandingProfile | null>;
   createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): DatabaseResult<Quote>;
   getQuoteById(id: string): DatabaseResult<(Quote & { lineItems: LineItemInput[] }) | null>;
@@ -2672,12 +2673,21 @@ export async function createPostgresDatabase(
           throw new Error('Failed to load finalised invoice');
         }
 
+        // Freeze active branding with the invoice so later Brand Kit changes
+        // do not rewrite previously issued documents.
+        const brandingProfile = await this.getBusinessProfile();
+        const snapshotPayload = {
+          invoice: finalised,
+          branding: brandingProfile,
+          brandedAt: now,
+        };
+
         await db
           .prepare(
             `INSERT INTO invoice_snapshots (id, invoice_id, snapshot_json, created_at)
            VALUES (?, ?, ?, ?)`,
           )
-          .run(randomUUID(), invoiceId, JSON.stringify(finalised), now);
+          .run(randomUUID(), invoiceId, JSON.stringify(snapshotPayload), now);
 
         assertNoInjectedFailure('finalise_invoice_after_snapshot');
         await timeline('invoice.finalised', invoiceId, {
@@ -2687,6 +2697,26 @@ export async function createPostgresDatabase(
 
         return finalised;
       })(id);
+    },
+
+    async getInvoiceBrandingSnapshot(invoiceId) {
+      const row = (await db
+        .prepare(
+          `SELECT snapshot_json FROM invoice_snapshots
+           WHERE invoice_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get(invoiceId)) as { snapshot_json: string } | undefined;
+      if (!row?.snapshot_json) return null;
+      try {
+        const parsed = JSON.parse(row.snapshot_json) as {
+          branding?: BrandingProfile | null;
+        };
+        return parsed?.branding ?? null;
+      } catch {
+        return null;
+      }
     },
 
     async createQuote(input) {

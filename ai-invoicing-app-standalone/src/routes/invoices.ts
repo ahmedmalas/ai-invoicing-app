@@ -89,7 +89,10 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: 'Invoice customer missing' });
     }
 
-    const businessProfile = await app.db.getBusinessProfile();
+    // Finalised invoices keep the branding frozen at issue time.
+    const frozenBranding =
+      invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
+    const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
     const pdfBuffer = await generateInvoicePdfBuffer({
       invoice,
       lineItems: invoice.lineItems,

@@ -9,4 +9,6 @@ export function buildLogoCreatorPageHtml(input?: {
   concepts?: Array<Record<string, unknown>>;
   selectedId?: string;
   notice?: string;
+  standaloneUrl?: string;
+  abossLaunchUrl?: string;
 }): string;
