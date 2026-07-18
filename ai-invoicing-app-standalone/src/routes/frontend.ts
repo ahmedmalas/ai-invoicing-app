@@ -8,6 +8,8 @@ const tracedAssets = {
   'styles.css': new URL('../../public/styles.css', import.meta.url),
   'app.js': new URL('../../public/app.js', import.meta.url),
   'form-interaction-guards.js': new URL('../../public/form-interaction-guards.js', import.meta.url),
+  'invoice-totals.js': new URL('../../public/invoice-totals.js', import.meta.url),
+  'invoice-workspace.js': new URL('../../public/invoice-workspace.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
@@ -55,6 +57,18 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .header('Cache-Control', 'no-cache')
       .send(asset('form-interaction-guards.js')),
   );
+  app.get('/assets/invoice-totals.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('invoice-totals.js')),
+  );
+  app.get('/assets/invoice-workspace.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('invoice-workspace.js')),
+  );
   app.get('/assets/launch-app.js', async (_request, reply) =>
     reply
       .type('application/javascript; charset=utf-8')
@@ -97,6 +111,7 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/workspace/customers',
     '/workspace/quotes',
     '/workspace/invoices',
+    '/workspace/invoices/new',
     '/workspace/payments',
     '/reports',
     '/timeline',
@@ -104,4 +119,5 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
   ]) {
     app.get(path, shell);
   }
+  app.get('/workspace/invoices/:invoiceId/edit', shell);
 };

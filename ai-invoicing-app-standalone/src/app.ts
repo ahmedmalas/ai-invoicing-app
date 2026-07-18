@@ -224,13 +224,19 @@ export async function buildApp(options: BuildAppOptions) {
       '/workspace/invoices', '/workspace/payments',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
       '/assets/form-interaction-guards.js',
+      '/assets/invoice-totals.js',
+      '/assets/invoice-workspace.js',
       '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',
+      '/workspace/invoices/new',
     ]) publicPaths.add(path);
   }
   const isPublicRoute = (url: string): boolean => {
     const path = sanitizePath(url);
     // Frontend bootstrap/static assets must remain public; auth applies to API/app data only.
     if (servesFrontend && path.startsWith('/assets/')) {
+      return true;
+    }
+    if (servesFrontend && /^\/workspace\/invoices\/[^/]+\/edit$/.test(path)) {
       return true;
     }
     return publicPaths.has(path);

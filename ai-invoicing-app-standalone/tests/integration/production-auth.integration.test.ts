@@ -219,9 +219,21 @@ describe('production account registration and recovery', () => {
     expect(script.body).toContain("localStorage.setItem(SESSION_KEY");
     expect(script.body).toContain("localStorage.removeItem(SESSION_KEY");
     expect(script.body).toContain('shouldCloseDrawerOnBackdropClick');
+    expect(script.body).toContain('mountInvoiceWorkspace');
+    expect(script.body).toContain('/workspace/invoices/new');
     const guards = await app.inject({ method: 'GET', url: '/assets/form-interaction-guards.js' });
     expect(guards.statusCode).toBe(200);
     expect(guards.body).toContain('shouldCloseDrawerOnBackdropClick');
+    const workspace = await app.inject({ method: 'GET', url: '/assets/invoice-workspace.js' });
+    expect(workspace.statusCode).toBe(200);
+    expect(workspace.body).toContain('TAX INVOICE');
+    expect(workspace.body).toContain('data-invoice-curtain');
+    const editShell = await app.inject({
+      method: 'GET',
+      url: '/workspace/invoices/sample-id/edit',
+    });
+    expect(editShell.statusCode).toBe(200);
+    expect(editShell.body).toContain('Aleya Invoicing');
     await app.close();
   });
 });
