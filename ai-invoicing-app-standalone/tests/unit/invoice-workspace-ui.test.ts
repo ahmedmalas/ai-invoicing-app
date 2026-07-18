@@ -29,6 +29,40 @@ describe('invoice workspace UI builder', () => {
     expect(html).not.toContain('id="sales-form"');
   });
 
+  it('shows a customer select for new invoices even when date defaults are provided', () => {
+    const html = buildInvoiceWorkspaceHtml({
+      profile: { companyName: 'Aleya Hire Co' },
+      customers: [
+        { id: 'c1', displayName: 'Site Co', email: 'site@example.com' },
+        { id: 'c2', displayName: 'PDF Site Co' },
+      ],
+      record: { issueDate: '2026-07-18', dueDate: '2026-08-01' },
+    });
+
+    expect(html).toContain('data-customer-select');
+    expect(html).toContain('Select customer');
+    expect(html).toContain('Site Co');
+    expect(html).not.toContain('invoice-billto-static');
+  });
+
+  it('locks the customer control when editing an existing draft', () => {
+    const html = buildInvoiceWorkspaceHtml({
+      profile: { companyName: 'Aleya Hire Co' },
+      customers: [{ id: 'c1', displayName: 'Site Co', email: 'site@example.com' }],
+      record: {
+        id: 'inv-1',
+        customerId: 'c1',
+        issueDate: '2026-07-18',
+        dueDate: '2026-08-01',
+        status: 'Draft',
+      },
+    });
+
+    expect(html).toContain('invoice-billto-static');
+    expect(html).toContain('Site Co');
+    expect(html).not.toContain('data-customer-select');
+  });
+
   it('keeps live totals aligned with saved invoice line math', () => {
     const lines = [
       { description: 'Tower', quantity: 2, unitPrice: 200, gstApplicable: true },
