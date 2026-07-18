@@ -57,7 +57,7 @@ describe('browser authentication and routing compatibility', () => {
 
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
-    expect(page.body).toContain('ABoss Invoicing');
+    expect(page.body).toContain('Aleya Invoicing');
     expect(setup.json()).toEqual({ setupRequired: false });
     expect(mutation.statusCode).toBe(401);
     await app.close();
@@ -77,6 +77,7 @@ describe('browser authentication and routing compatibility', () => {
       '/assets/auth-controls.css',
       '/assets/styles.css',
       '/assets/app.js',
+      '/assets/form-interaction-guards.js',
       '/favicon.svg',
     ]) {
       const response = await app.inject({ method: 'GET', url: path });

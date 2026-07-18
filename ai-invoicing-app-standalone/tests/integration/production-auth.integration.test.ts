@@ -210,7 +210,7 @@ describe('production account registration and recovery', () => {
     for (const path of ['/sign-in', '/create-account', '/forgot-password', '/reset-password', '/auth/callback']) {
       const response = await app.inject({ method: 'GET', url: path });
       expect(response.statusCode).toBe(200);
-      expect(response.body).toContain('ABoss Invoicing');
+      expect(response.body).toContain('Aleya Invoicing');
     }
     const script = await app.inject({ method: 'GET', url: '/assets/app.js' });
     expect(script.body).toContain('Create account');
@@ -218,6 +218,10 @@ describe('production account registration and recovery', () => {
     expect(script.body).toContain("callback.get('type') === 'recovery'");
     expect(script.body).toContain("localStorage.setItem(SESSION_KEY");
     expect(script.body).toContain("localStorage.removeItem(SESSION_KEY");
+    expect(script.body).toContain('shouldCloseDrawerOnBackdropClick');
+    const guards = await app.inject({ method: 'GET', url: '/assets/form-interaction-guards.js' });
+    expect(guards.statusCode).toBe(200);
+    expect(guards.body).toContain('shouldCloseDrawerOnBackdropClick');
     await app.close();
   });
 });
