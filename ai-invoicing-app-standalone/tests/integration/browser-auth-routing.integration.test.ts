@@ -62,4 +62,31 @@ describe('browser authentication and routing compatibility', () => {
     expect(mutation.statusCode).toBe(401);
     await app.close();
   });
+
+  it('serves frontend bootstrap assets publicly while protecting API routes', async () => {
+    const app = await buildApp({
+      dbPath: ':memory:',
+      nodeEnv: 'test',
+      authBypassForTesting: false,
+      serveFrontend: true,
+    });
+
+    for (const path of [
+      '/assets/launch-app.js',
+      '/assets/auth-controls.js',
+      '/assets/auth-controls.css',
+      '/assets/styles.css',
+      '/assets/app.js',
+      '/favicon.svg',
+    ]) {
+      const response = await app.inject({ method: 'GET', url: path });
+      expect(response.statusCode, path).toBe(200);
+      expect(response.headers['content-type']).not.toContain('application/json');
+    }
+
+    const protectedApi = await app.inject({ method: 'GET', url: '/api/customers' });
+    expect(protectedApi.statusCode).toBe(401);
+
+    await app.close();
+  });
 });

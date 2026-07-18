@@ -223,9 +223,17 @@ export async function buildApp(options: BuildAppOptions) {
       '/auth/callback', '/dashboard', '/workspace/customers', '/workspace/quotes',
       '/workspace/invoices', '/workspace/payments',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
+      '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',
     ]) publicPaths.add(path);
   }
-  const isPublicRoute = (url: string): boolean => publicPaths.has(sanitizePath(url));
+  const isPublicRoute = (url: string): boolean => {
+    const path = sanitizePath(url);
+    // Frontend bootstrap/static assets must remain public; auth applies to API/app data only.
+    if (servesFrontend && path.startsWith('/assets/')) {
+      return true;
+    }
+    return publicPaths.has(path);
+  };
 
   app.addHook('onRequest', async (request) => {
     app.opsMetrics.requestCount += 1;
