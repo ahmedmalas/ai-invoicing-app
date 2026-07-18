@@ -221,6 +221,8 @@ describe('production account registration and recovery', () => {
     expect(script.body).toContain('shouldCloseDrawerOnBackdropClick');
     expect(script.body).toContain('mountInvoiceWorkspace');
     expect(script.body).toContain('/workspace/invoices/new');
+    expect(script.body).toContain('isBusinessProfileReady');
+    expect(script.body).toContain('Open Settings');
     const guards = await app.inject({ method: 'GET', url: '/assets/form-interaction-guards.js' });
     expect(guards.statusCode).toBe(200);
     expect(guards.body).toContain('shouldCloseDrawerOnBackdropClick');
@@ -228,6 +230,10 @@ describe('production account registration and recovery', () => {
     expect(workspace.statusCode).toBe(200);
     expect(workspace.body).toContain('TAX INVOICE');
     expect(workspace.body).toContain('data-invoice-curtain');
+    const launch = await app.inject({ method: 'GET', url: '/assets/launch-app.js' });
+    expect(launch.statusCode).toBe(200);
+    expect(launch.body).not.toContain('BUSINESS_PROFILE_NOT_FOUND');
+    expect(launch.body).toContain('invalidateBusinessProfileCache');
     const editShell = await app.inject({
       method: 'GET',
       url: '/workspace/invoices/sample-id/edit',

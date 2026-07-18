@@ -217,7 +217,7 @@ export function buildInvoiceWorkspaceHtml({
         (profile.email ? '<br>' + escapeHtml(profile.email) : '') +
         (profile.phone ? '<br>' + escapeHtml(profile.phone) : '') +
         '</p><p class="muted">Update bank account instructions in notes if required.</p>'
-      : '<p class="muted">Add your business profile in Settings to show payment details here.</p>') +
+      : '<p class="muted">Add your business profile in Aleya Settings to show payment details here.</p>') +
     '</div></div>' +
     '<aside class="invoice-totals" aria-live="polite">' +
     '<div><span>Subtotal</span><strong data-total-subtotal>' +

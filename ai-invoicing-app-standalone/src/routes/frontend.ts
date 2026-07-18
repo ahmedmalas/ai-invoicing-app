@@ -8,6 +8,10 @@ const tracedAssets = {
   'styles.css': new URL('../../public/styles.css', import.meta.url),
   'app.js': new URL('../../public/app.js', import.meta.url),
   'form-interaction-guards.js': new URL('../../public/form-interaction-guards.js', import.meta.url),
+  'business-profile-readiness.js': new URL(
+    '../../public/business-profile-readiness.js',
+    import.meta.url,
+  ),
   'invoice-totals.js': new URL('../../public/invoice-totals.js', import.meta.url),
   'invoice-workspace.js': new URL('../../public/invoice-workspace.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
@@ -56,6 +60,12 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .type('application/javascript; charset=utf-8')
       .header('Cache-Control', 'no-cache')
       .send(asset('form-interaction-guards.js')),
+  );
+  app.get('/assets/business-profile-readiness.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('business-profile-readiness.js')),
   );
   app.get('/assets/invoice-totals.js', async (_request, reply) =>
     reply
