@@ -81,6 +81,7 @@ describe('browser authentication and routing compatibility', () => {
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
       '/assets/invoice-workspace.js',
+      '/assets/invoice-curtain.js',
       '/favicon.svg',
       '/workspace/invoices/new',
       '/settings',

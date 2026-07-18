@@ -230,6 +230,16 @@ describe('production account registration and recovery', () => {
     expect(workspace.statusCode).toBe(200);
     expect(workspace.body).toContain('TAX INVOICE');
     expect(workspace.body).toContain('data-invoice-curtain');
+    const curtain = await app.inject({ method: 'GET', url: '/assets/invoice-curtain.js' });
+    expect(curtain.statusCode).toBe(200);
+    expect(curtain.body).toContain('openInvoiceCurtain');
+    expect(curtain.body).toContain('prepareCurtainClosedFrame');
+    expect(curtain.body).toContain('curtain.animate');
+    expect(curtain.body).toContain('INVOICE_CURTAIN_DURATION_MS = 360');
+    expect(script.body).toContain('openInvoiceCurtain');
+    const styles = await app.inject({ method: 'GET', url: '/assets/styles.css' });
+    expect(styles.body).toContain('translate3d(0, -100%, 0)');
+    expect(styles.body).toContain('Web Animations API');
     const launch = await app.inject({ method: 'GET', url: '/assets/launch-app.js' });
     expect(launch.statusCode).toBe(200);
     expect(launch.body).not.toContain('BUSINESS_PROFILE_NOT_FOUND');

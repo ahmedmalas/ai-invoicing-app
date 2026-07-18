@@ -227,6 +227,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
       '/assets/invoice-workspace.js',
+      '/assets/invoice-curtain.js',
       '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',
       '/workspace/invoices/new',
     ]) publicPaths.add(path);
