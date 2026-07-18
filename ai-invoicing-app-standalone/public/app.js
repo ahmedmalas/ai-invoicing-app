@@ -5,6 +5,13 @@ import {
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from './form-interaction-guards.js';
+import { readLineItemsFromForm } from './invoice-totals.js';
+import {
+  bindInvoiceWorkspaceInteractions,
+  buildInvoiceWorkspaceHtml,
+  customerPreviewHtml,
+  refreshInvoiceWorkspaceTotals,
+} from './invoice-workspace.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -15,6 +22,8 @@ let recoveryAccessToken = null;
 let signOutInProgress = false;
 let drawerPointerDownTarget = null;
 let ignoreNextPopstate = false;
+let invoiceWorkspaceAction = 'save';
+let invoiceCurtainClosing = false;
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -121,8 +130,15 @@ async function api(path, options = {}, retry = true) {
   return type.includes('application/json') ? response.json() : response;
 }
 
+function unsavedWorkForm() {
+  return (
+    document.querySelector('#invoice-workspace-form') ||
+    document.querySelector('.drawer-backdrop form')
+  );
+}
+
 function confirmDiscardUnsavedDrawerWork() {
-  const form = document.querySelector('.drawer-backdrop form');
+  const form = unsavedWorkForm();
   if (!form || !isDrawerFormDirty(form)) return true;
   return window.confirm('You have unsaved changes. Discard them and leave this form?');
 }
@@ -130,6 +146,17 @@ function confirmDiscardUnsavedDrawerWork() {
 function navigate(path) {
   if (!confirmDiscardUnsavedDrawerWork()) return;
   closeDrawer();
+  const leavingWorkspace =
+    Boolean(document.querySelector('[data-invoice-curtain]')) &&
+    !isInvoiceWorkspacePath(path);
+  if (leavingWorkspace) {
+    void closeInvoiceWorkspace({ force: true, animate: true }).then(() => {
+      history.pushState({}, '', path);
+      if (currentUser) void renderRoute();
+      else renderPublicAuthRoute();
+    });
+    return;
+  }
   history.pushState({}, '', path);
   if (currentUser) void renderRoute();
   else renderPublicAuthRoute();
@@ -950,6 +977,168 @@ function requestCloseDrawer() {
   return true;
 }
 
+function isInvoiceWorkspacePath(path = location.pathname) {
+  return path === '/workspace/invoices/new' || /^\/workspace\/invoices\/[^/]+\/edit$/.test(path);
+}
+
+function parseInvoiceWorkspacePath(path = location.pathname) {
+  if (path === '/workspace/invoices/new') return { mode: 'create', id: null };
+  const match = path.match(/^\/workspace\/invoices\/([^/]+)\/edit$/);
+  if (match) return { mode: 'edit', id: match[1] };
+  return null;
+}
+
+function openInvoiceWorkspaceRoute(id = null) {
+  navigate(id ? '/workspace/invoices/' + id + '/edit' : '/workspace/invoices/new');
+}
+
+function updateCustomerPreview(form) {
+  const select = form?.querySelector('[data-customer-select]');
+  const preview = form?.querySelector('[data-customer-preview]');
+  if (!select || !preview) return;
+  const customer = cache.customers.find((item) => item.id === select.value);
+  preview.innerHTML = customerPreviewHtml(customer || null);
+}
+
+async function mountInvoiceWorkspace(record = null) {
+  if (!cache.customers.length) {
+    toast('Create a customer before creating an invoice.', true);
+    history.replaceState({}, '', '/workspace/customers');
+    customersPage();
+    return;
+  }
+  if (record && record.status && record.status !== 'Draft') {
+    toast('Final invoices are locked. Open the invoice details instead.', true);
+    history.replaceState({}, '', '/workspace/invoices');
+    invoicesPage();
+    return;
+  }
+  document.querySelector('[data-invoice-curtain]')?.remove();
+  const defaults = {
+    issueDate: record?.issueDate || date(),
+    dueDate: record?.dueDate || date(14),
+    ...record,
+  };
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    buildInvoiceWorkspaceHtml({
+      profile: cache.businessProfile || {},
+      customers: cache.customers,
+      record: defaults,
+    }),
+  );
+  const curtain = document.querySelector('[data-invoice-curtain]');
+  const form = document.querySelector('#invoice-workspace-form');
+  if (!form || !curtain) return;
+  if (!record) {
+    form.querySelector('[name="issueDate"]').value = defaults.issueDate;
+    form.querySelector('[name="endDate"]').value = defaults.dueDate;
+  }
+  bindInvoiceWorkspaceInteractions(form, { onToast: toast });
+  updateCustomerPreview(form);
+  form.addEventListener('change', (event) => {
+    if (event.target.matches('[data-customer-select]')) updateCustomerPreview(form);
+  });
+  markDrawerFormPristine(form);
+  refreshInvoiceWorkspaceTotals(form);
+  requestAnimationFrame(() => {
+    curtain.classList.add('is-open');
+    curtain.setAttribute('aria-hidden', 'false');
+    form.querySelector('[name="title"], [data-customer-select]')?.focus();
+  });
+}
+
+function closeInvoiceWorkspace({ force = false, animate = true } = {}) {
+  const curtain = document.querySelector('[data-invoice-curtain]');
+  if (!curtain) return Promise.resolve(true);
+  if (!force && !confirmDiscardUnsavedDrawerWork()) return Promise.resolve(false);
+  if (!animate || invoiceCurtainClosing) {
+    curtain.remove();
+    invoiceCurtainClosing = false;
+    return Promise.resolve(true);
+  }
+  invoiceCurtainClosing = true;
+  curtain.classList.remove('is-open');
+  curtain.classList.add('is-closing');
+  curtain.setAttribute('aria-hidden', 'true');
+  return new Promise((resolve) => {
+    const finish = () => {
+      curtain.remove();
+      invoiceCurtainClosing = false;
+      resolve(true);
+    };
+    curtain.addEventListener('transitionend', finish, { once: true });
+    setTimeout(finish, 500);
+  });
+}
+
+async function collectInvoiceWorkspacePayload(form) {
+  const data = Object.fromEntries(new FormData(form));
+  const lineItems = readLineItemsFromForm(form);
+  if (!lineItems.length) throw new Error('Add at least one line item.');
+  if (lineItems.some((item) => !item.description)) throw new Error('Each line needs a description.');
+  return {
+    customerId: data.customerId,
+    title: String(data.title || '').trim(),
+    issueDate: data.issueDate,
+    dueDate: data.endDate,
+    ...(data.notes ? { notes: String(data.notes) } : {}),
+    ...(data.paymentTerms ? { paymentTerms: String(data.paymentTerms) } : {}),
+    lineItems,
+  };
+}
+
+async function persistInvoiceWorkspace(form, { stay = true } = {}) {
+  const body = await collectInvoiceWorkspacePayload(form);
+  const recordId = form.dataset.recordId;
+  let saved;
+  if (recordId) {
+    const { customerId, ...invoiceBody } = body;
+    saved = await api('/api/invoices/' + recordId, {
+      method: 'PUT',
+      body: JSON.stringify({ ...invoiceBody, paymentState: form.dataset.paymentState || 'Draft' }),
+    });
+  } else {
+    saved = await api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
+  }
+  form.dataset.recordId = saved.id;
+  form.dataset.paymentState = saved.paymentState || 'Draft';
+  form.dataset.status = saved.status || 'Draft';
+  const number = form.querySelector('[data-invoice-number]');
+  if (number) number.textContent = saved.invoiceNumber || 'Draft';
+  markDrawerFormPristine(form);
+  if (stay) {
+    history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
+    toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
+  }
+  return saved;
+}
+
+async function requestCloseInvoiceWorkspace() {
+  const closed = await closeInvoiceWorkspace({ force: false, animate: true });
+  if (!closed) return false;
+  history.pushState({}, '', '/workspace/invoices');
+  await renderRoute();
+  return true;
+}
+
+async function previewInvoicePdf(id) {
+  if (!cache.businessProfile)
+    throw new Error('Configure the real business profile in Settings before generating PDFs.');
+  let response = await fetch('/api/invoices/' + id + '/pdf', {
+    headers: { authorization: 'Bearer ' + session.access_token },
+  });
+  if (response.status === 401 && (await refreshSession()))
+    response = await fetch('/api/invoices/' + id + '/pdf', {
+      headers: { authorization: 'Bearer ' + session.access_token },
+    });
+  if (!response.ok) throw new Error('The PDF could not be generated.');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function customerOptions(selected = '') {
   return cache.customers
     .map(
@@ -982,79 +1171,67 @@ function lineRow(item = {}) {
 }
 
 function salesForm(kind, record = null, duplicate = false) {
+  if (kind === 'invoice') {
+    openInvoiceWorkspaceRoute(record && !duplicate ? record.id : null);
+    return;
+  }
   if (!cache.customers.length) {
-    toast('Create a customer before creating a ' + kind + '.', true);
+    toast('Create a customer before creating a quote.', true);
     navigate('/workspace/customers');
     return;
   }
-  const quote = kind === 'quote';
   const editing = Boolean(record && !duplicate);
   const title = editing
-    ? 'Edit ' + (quote ? record.quoteNumber : record.invoiceNumber || 'invoice draft')
+    ? 'Edit ' + record.quoteNumber
     : duplicate
       ? 'Duplicate ' + record.quoteNumber
-      : 'New ' + kind;
-  const endDate = quote ? record?.expiryDate : record?.dueDate;
+      : 'New quote';
+  const endDate = record?.expiryDate;
   const customerControl =
-    editing && !quote
-      ? '<input type="hidden" name="customerId" value="' +
-        record.customerId +
-        '"><select disabled><option>' +
-        escapeHtml(
-          cache.customers.find((item) => item.id === record.customerId)?.displayName || 'Customer',
-        ) +
-        '</option></select>'
-      : '<select name="customerId" required><option value="">Select customer</option>' +
-        customerOptions(record?.customerId) +
-        '</select>';
-  const statusControl =
-    editing && quote
-      ? '<label>Status<select name="status">' +
-        quoteStatuses
-          .map(
-            (status) =>
-              '<option value="' +
-              status +
-              '"' +
-              (record.status === status ? ' selected' : '') +
-              '>' +
-              status +
-              '</option>',
-          )
-          .join('') +
-        '</select></label>'
-      : '';
+    '<select name="customerId" required><option value="">Select customer</option>' +
+    customerOptions(record?.customerId) +
+    '</select>';
+  const statusControl = editing
+    ? '<label>Status<select name="status">' +
+      quoteStatuses
+        .map(
+          (status) =>
+            '<option value="' +
+            status +
+            '"' +
+            (record.status === status ? ' selected' : '') +
+            '>' +
+            status +
+            '</option>',
+        )
+        .join('') +
+      '</select></label>'
+    : '';
   const lines = record?.lineItems?.length
     ? record.lineItems.map((item) => lineRow(item)).join('')
     : lineRow();
   drawer(
     title,
-    '<form class="form" id="sales-form" data-kind="' +
-      kind +
-      '" data-record-id="' +
+    '<form class="form" id="sales-form" data-kind="quote" data-record-id="' +
       (editing ? record.id : '') +
-      '" data-payment-state="' +
-      escapeHtml(record?.paymentState || 'Draft') +
       '"><div class="form-grid"><label class="wide">Customer' +
       customerControl +
       '</label><label class="wide">Title<input name="title" value="' +
       escapeHtml(duplicate ? record.title + ' (copy)' : record?.title || '') +
       '" required></label><label>Issue date<input name="issueDate" type="date" value="' +
       escapeHtml(record?.issueDate || date()) +
-      '" required></label><label>' +
-      (quote ? 'Valid until' : 'Due date') +
-      '<input name="endDate" type="date" value="' +
+      '" required></label><label>Valid until<input name="endDate" type="date" value="' +
       escapeHtml(endDate || date(14)) +
       '" required></label>' +
       statusControl +
       '<label class="wide">Payment terms<input name="paymentTerms" value="' +
-      escapeHtml((quote ? record?.terms : record?.paymentTerms) || '') +
+      escapeHtml(record?.terms || '') +
       '"></label><label class="wide">Notes<textarea name="notes">' +
       escapeHtml(record?.notes || '') +
       '</textarea></label></div><div class="stack"><div class="panel-head"><h2>Line items</h2><button class="button secondary small" type="button" data-add-line>Add line</button></div><div class="line-items">' +
       lines +
       '</div></div><button class="button" type="submit">' +
-      (editing ? 'Save changes' : 'Create ' + (quote ? 'quote draft' : 'invoice draft')) +
+      (editing ? 'Save changes' : 'Create quote draft') +
       '</button></form>',
   );
 }
@@ -1395,11 +1572,22 @@ async function downloadDocument(type, id) {
 
 async function renderRoute() {
   if (!currentUser) return;
+  const path = location.pathname === '/' ? '/dashboard' : location.pathname;
+  const invoiceRoute = parseInvoiceWorkspacePath(path);
   root.innerHTML =
     '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
   try {
     await loadWorkspace();
-    const path = location.pathname === '/' ? '/dashboard' : location.pathname;
+    if (invoiceRoute) {
+      invoicesPage();
+      if (invoiceRoute.mode === 'create') await mountInvoiceWorkspace(null);
+      else {
+        const invoice = await api('/api/invoices/' + invoiceRoute.id);
+        await mountInvoiceWorkspace(invoice);
+      }
+      return;
+    }
+    document.querySelector('[data-invoice-curtain]')?.remove();
     if (path === '/dashboard') dashboardPage();
     else if (path === '/workspace/customers') customersPage();
     else if (path === '/workspace/quotes') quotesPage();
@@ -1486,6 +1674,11 @@ document.addEventListener(
 );
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.querySelector('[data-invoice-curtain]')) {
+    event.preventDefault();
+    void requestCloseInvoiceWorkspace();
+    return;
+  }
   if (event.key === 'Escape' && document.querySelector('.drawer-backdrop')) {
     event.preventDefault();
     requestCloseDrawer();
@@ -1539,8 +1732,36 @@ document.addEventListener('click', async (event) => {
     return;
   }
   if (event.target.closest('[data-new-invoice]')) {
-    salesForm('invoice');
+    openInvoiceWorkspaceRoute();
     return;
+  }
+  const invoiceAction = event.target.closest('[data-invoice-action]');
+  if (invoiceAction) {
+    const action = invoiceAction.dataset.invoiceAction;
+    const form = document.querySelector('#invoice-workspace-form');
+    if (!form) return;
+    if (action === 'cancel') {
+      void requestCloseInvoiceWorkspace();
+      return;
+    }
+    if (action === 'draft' || action === 'save') {
+      invoiceWorkspaceAction = action;
+      return;
+    }
+    if (action === 'preview' || action === 'download') {
+      invoiceAction.disabled = true;
+      await runAction(async () => {
+        const saved = await persistInvoiceWorkspace(form, { stay: true });
+        if (action === 'preview') {
+          await previewInvoicePdf(saved.id);
+          toast('PDF preview opened.');
+        } else {
+          toast((await downloadDocument('invoice', saved.id)) + ' downloaded.');
+        }
+      });
+      invoiceAction.disabled = false;
+      return;
+    }
   }
   if (event.target.closest('[data-new-payment]')) {
     paymentForm();
@@ -1594,9 +1815,7 @@ document.addEventListener('click', async (event) => {
   }
   const editInvoice = event.target.closest('[data-edit-invoice]');
   if (editInvoice) {
-    await runAction(async () =>
-      salesForm('invoice', await api('/api/invoices/' + editInvoice.dataset.editInvoice)),
-    );
+    openInvoiceWorkspaceRoute(editInvoice.dataset.editInvoice);
     return;
   }
   const viewPayment = event.target.closest('[data-view-payment]');
@@ -1827,6 +2046,19 @@ document.addEventListener('submit', async (event) => {
       await renderRoute();
       return;
     }
+    if (form.id === 'invoice-workspace-form') {
+      const submitterAction = event.submitter?.getAttribute?.('data-invoice-action');
+      const action = submitterAction || invoiceWorkspaceAction || 'save';
+      invoiceWorkspaceAction = 'save';
+      const wasNew = !form.dataset.recordId;
+      await persistInvoiceWorkspace(form, { stay: action === 'draft' });
+      if (action === 'draft') return;
+      toast(wasNew ? 'Invoice draft created.' : 'Invoice saved.');
+      await closeInvoiceWorkspace({ force: true, animate: true });
+      history.pushState({}, '', '/workspace/invoices');
+      await renderRoute();
+      return;
+    }
     if (form.id === 'sales-form') {
       const lineItems = [...form.querySelectorAll('.line-row')].map((row) => ({
         description: row.querySelector('[name="description"]').value.trim(),
@@ -1838,43 +2070,22 @@ document.addEventListener('submit', async (event) => {
         customerId: data.customerId,
         title: data.title,
         issueDate: data.issueDate,
-        ...(form.dataset.kind === 'quote'
-          ? { expiryDate: data.endDate }
-          : { dueDate: data.endDate }),
+        expiryDate: data.endDate,
         ...(data.notes ? { notes: data.notes } : {}),
-        ...(data.paymentTerms
-          ? form.dataset.kind === 'quote'
-            ? { terms: data.paymentTerms }
-            : { paymentTerms: data.paymentTerms }
-          : {}),
+        ...(data.paymentTerms ? { terms: data.paymentTerms } : {}),
         lineItems,
       };
       const recordId = form.dataset.recordId;
-      if (recordId && form.dataset.kind === 'quote') {
+      if (recordId) {
         await api('/api/quotes/' + recordId, {
           method: 'PUT',
           body: JSON.stringify({ ...body, status: data.status }),
         });
-      } else if (recordId) {
-        const { customerId, ...invoiceBody } = body;
-        await api('/api/invoices/' + recordId, {
-          method: 'PUT',
-          body: JSON.stringify({ ...invoiceBody, paymentState: form.dataset.paymentState }),
-        });
       } else {
-        await api('/api/' + (form.dataset.kind === 'quote' ? 'quotes' : 'invoices'), {
-          method: 'POST',
-          body: JSON.stringify(body),
-        });
+        await api('/api/quotes', { method: 'POST', body: JSON.stringify(body) });
       }
       closeDrawer();
-      toast(
-        recordId
-          ? 'Changes saved.'
-          : form.dataset.kind === 'quote'
-            ? 'Quote draft created.'
-            : 'Invoice draft created.',
-      );
+      toast(recordId ? 'Changes saved.' : 'Quote draft created.');
       await renderRoute();
       return;
     }
@@ -2028,7 +2239,7 @@ window.addEventListener('popstate', () => {
 });
 
 window.addEventListener('beforeunload', (event) => {
-  const form = document.querySelector('.drawer-backdrop form');
+  const form = unsavedWorkForm();
   if (!form || !isDrawerFormDirty(form)) return;
   event.preventDefault();
   event.returnValue = '';
