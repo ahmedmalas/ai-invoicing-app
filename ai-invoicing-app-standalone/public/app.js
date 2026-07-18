@@ -12,6 +12,7 @@ import {
   customerPreviewHtml,
   refreshInvoiceWorkspaceTotals,
 } from './invoice-workspace.js';
+import { closeInvoiceCurtain, openInvoiceCurtain } from './invoice-curtain.js';
 import {
   businessProfileReadinessMessage,
   isBusinessProfileReady,
@@ -1030,20 +1031,21 @@ async function mountInvoiceWorkspace(record = null) {
   const defaults = {
     issueDate: record?.issueDate || date(),
     dueDate: record?.dueDate || date(14),
-    ...record,
+    ...(record || {}),
   };
   document.body.insertAdjacentHTML(
     'beforeend',
     buildInvoiceWorkspaceHtml({
       profile: cache.businessProfile || {},
       customers: cache.customers,
-      record: defaults,
+      // Pass date-only defaults for create so customer select renders (edit requires record.id).
+      record: record?.id ? defaults : { issueDate: defaults.issueDate, dueDate: defaults.dueDate },
     }),
   );
   const curtain = document.querySelector('[data-invoice-curtain]');
   const form = document.querySelector('#invoice-workspace-form');
   if (!form || !curtain) return;
-  if (!record) {
+  if (!record?.id) {
     form.querySelector('[name="issueDate"]').value = defaults.issueDate;
     form.querySelector('[name="endDate"]').value = defaults.dueDate;
   }
@@ -1054,10 +1056,10 @@ async function mountInvoiceWorkspace(record = null) {
   });
   markDrawerFormPristine(form);
   refreshInvoiceWorkspaceTotals(form);
-  requestAnimationFrame(() => {
-    curtain.classList.add('is-open');
-    curtain.setAttribute('aria-hidden', 'false');
-    form.querySelector('[name="title"], [data-customer-select]')?.focus();
+  await openInvoiceCurtain(curtain, {
+    onOpened: () => {
+      form.querySelector('[name="title"], [data-customer-select]')?.focus();
+    },
   });
 }
 
@@ -1065,23 +1067,12 @@ function closeInvoiceWorkspace({ force = false, animate = true } = {}) {
   const curtain = document.querySelector('[data-invoice-curtain]');
   if (!curtain) return Promise.resolve(true);
   if (!force && !confirmDiscardUnsavedDrawerWork()) return Promise.resolve(false);
-  if (!animate || invoiceCurtainClosing) {
-    curtain.remove();
-    invoiceCurtainClosing = false;
+  if (invoiceCurtainClosing) {
     return Promise.resolve(true);
   }
   invoiceCurtainClosing = true;
-  curtain.classList.remove('is-open');
-  curtain.classList.add('is-closing');
-  curtain.setAttribute('aria-hidden', 'true');
-  return new Promise((resolve) => {
-    const finish = () => {
-      curtain.remove();
-      invoiceCurtainClosing = false;
-      resolve(true);
-    };
-    curtain.addEventListener('transitionend', finish, { once: true });
-    setTimeout(finish, 500);
+  return closeInvoiceCurtain(curtain, { animate }).finally(() => {
+    invoiceCurtainClosing = false;
   });
 }
 
