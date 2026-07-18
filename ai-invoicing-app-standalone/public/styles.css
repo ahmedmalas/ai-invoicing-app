@@ -1345,3 +1345,90 @@ td.primary-cell {
   color: var(--muted);
 }
 
+
+/* Jobs + schedule */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--job-colour, #3b82f6) 18%, white);
+  color: var(--deep);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.status-pill::before {
+  content: '';
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--job-colour, #3b82f6);
+}
+.schedule-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.schedule-day {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+}
+.schedule-day header {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  font-weight: 650;
+}
+.schedule-dropzone {
+  flex: 1;
+  padding: 0.65rem;
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+.schedule-dropzone.drop-target {
+  background: color-mix(in srgb, var(--mint) 28%, white);
+}
+.schedule-card {
+  border-left: 4px solid var(--job-colour, #3b82f6);
+  background: white;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+  box-shadow: var(--shadow);
+  cursor: grab;
+}
+.schedule-card.dragging {
+  opacity: 0.55;
+}
+.schedule-card small {
+  color: var(--muted);
+}
+.schedule-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 0.5rem;
+}
+.portal-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+.portal-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+.portal-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  display: grid;
+  gap: 0.35rem;
+  background: var(--paper);
+}

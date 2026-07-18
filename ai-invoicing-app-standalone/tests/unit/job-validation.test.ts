@@ -12,9 +12,14 @@ describe('job status validation', () => {
   it('accepts all allowed statuses', () => {
     expect(jobStatusSchema.parse('Draft')).toBe('Draft');
     expect(jobStatusSchema.parse('Scheduled')).toBe('Scheduled');
+    expect(jobStatusSchema.parse('Assigned')).toBe('Assigned');
+    expect(jobStatusSchema.parse('Travelling')).toBe('Travelling');
+    expect(jobStatusSchema.parse('Commenced')).toBe('Commenced');
     expect(jobStatusSchema.parse('In Progress')).toBe('In Progress');
     expect(jobStatusSchema.parse('On Hold')).toBe('On Hold');
     expect(jobStatusSchema.parse('Completed')).toBe('Completed');
+    expect(jobStatusSchema.parse('Invoiced')).toBe('Invoiced');
+    expect(jobStatusSchema.parse('Paid')).toBe('Paid');
     expect(jobStatusSchema.parse('Cancelled')).toBe('Cancelled');
   });
 

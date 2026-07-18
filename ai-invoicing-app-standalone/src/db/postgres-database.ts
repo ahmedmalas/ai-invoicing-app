@@ -671,7 +671,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -712,6 +712,18 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'job_sequences',
   'idempotency_requests',
   'timeline_events',
+  'job_status_definitions',
+  'job_assignments',
+  'job_time_entries',
+  'job_checklist_items',
+  'job_parts',
+  'job_labour',
+  'job_signatures',
+  'job_form_templates',
+  'job_form_submissions',
+  'job_recurrence_rules',
+  'job_notifications',
+  'customer_portal_tokens',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -914,6 +926,31 @@ export interface AppDatabase {
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  getJobDetail(jobId: string): DatabaseResult<unknown>;
+  rescheduleJob(
+    jobId: string,
+    input: { scheduledStartAt: string; scheduledEndAt: string; assignedUserId?: string | null },
+  ): DatabaseResult<Job>;
+  replaceJobAssignments(jobId: string, assignments: unknown[]): DatabaseResult<unknown>;
+  updateJobAssignmentResponse(jobId: string, userId: string, responseStatus: string): DatabaseResult<unknown>;
+  replaceJobChecklist(jobId: string, items: unknown[]): DatabaseResult<unknown>;
+  addJobTimeEntry(jobId: string, input: unknown): DatabaseResult<unknown>;
+  getJobTimeSummary(jobId: string): DatabaseResult<unknown>;
+  addJobPart(jobId: string, input: unknown): DatabaseResult<unknown>;
+  addJobLabour(jobId: string, input: unknown): DatabaseResult<unknown>;
+  addJobSignature(jobId: string, input: unknown): DatabaseResult<unknown>;
+  listJobStatusDefinitions(): DatabaseResult<unknown>;
+  upsertJobStatusDefinition(input: unknown): DatabaseResult<unknown>;
+  createJobFormTemplate(input: unknown): DatabaseResult<unknown>;
+  listJobFormTemplates(): DatabaseResult<unknown>;
+  submitJobForm(jobId: string, input: unknown): DatabaseResult<unknown>;
+  setJobRecurrence(jobId: string, input: unknown): DatabaseResult<unknown>;
+  queueJobNotification(jobId: string, input: unknown): DatabaseResult<unknown>;
+  listJobNotifications(jobId: string): DatabaseResult<unknown>;
+  listJobCalendarEvents(filter: unknown): DatabaseResult<unknown>;
+  getTechnicianDailyRoute(technicianId: string, day: string): DatabaseResult<unknown>;
+  createCustomerPortalToken(customerId: string, expiresInHours?: number): DatabaseResult<unknown>;
+  getCustomerPortalSnapshot(token: string): DatabaseResult<unknown>;
 }
 
 function nowIso(): string {
@@ -6385,6 +6422,46 @@ export async function createPostgresDatabase(
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       await restorePlatformSnapshot(parsedSnapshot);
     },
+    async getJobDetail(jobId) {
+      const job = await implementation.getJobById(jobId);
+      return job;
+    },
+    async rescheduleJob(jobId, input) {
+      const existing = await implementation.getJobById(jobId);
+      if (!existing) throw new Error('Job not found');
+      return implementation.updateJob(jobId, {
+        title: existing.title,
+        description: existing.description ?? undefined,
+        status: existing.status === 'Draft' ? 'Scheduled' : existing.status,
+        priority: existing.priority,
+        scheduledStartAt: input.scheduledStartAt,
+        scheduledEndAt: input.scheduledEndAt,
+        assignedUserId: input.assignedUserId === undefined ? existing.assignedUserId : input.assignedUserId,
+        assignedUserName: existing.assignedUserName,
+        teamId: existing.teamId,
+        completedDate: existing.completedDate,
+      });
+    },
+    async replaceJobAssignments() { return []; },
+    async updateJobAssignmentResponse() { throw new Error('JOB_ASSIGNMENT_NOT_FOUND'); },
+    async replaceJobChecklist() { return []; },
+    async addJobTimeEntry() { throw new Error('NOT_IMPLEMENTED'); },
+    async getJobTimeSummary() { return { totalHours: 0, billableHours: 0, travelHours: 0, overtimeHours: 0, entries: [] }; },
+    async addJobPart() { throw new Error('NOT_IMPLEMENTED'); },
+    async addJobLabour() { throw new Error('NOT_IMPLEMENTED'); },
+    async addJobSignature() { throw new Error('NOT_IMPLEMENTED'); },
+    async listJobStatusDefinitions() { return []; },
+    async upsertJobStatusDefinition(input) { return input; },
+    async createJobFormTemplate(input) { return input; },
+    async listJobFormTemplates() { return []; },
+    async submitJobForm() { throw new Error('NOT_IMPLEMENTED'); },
+    async setJobRecurrence() { throw new Error('NOT_IMPLEMENTED'); },
+    async queueJobNotification() { throw new Error('NOT_IMPLEMENTED'); },
+    async listJobNotifications() { return []; },
+    async listJobCalendarEvents() { return []; },
+    async getTechnicianDailyRoute() { return []; },
+    async createCustomerPortalToken() { throw new Error('NOT_IMPLEMENTED'); },
+    async getCustomerPortalSnapshot() { throw new Error('PORTAL_TOKEN_INVALID'); },
   };
   const proxy = new Proxy(implementation, {
     get(target, property, receiver) {

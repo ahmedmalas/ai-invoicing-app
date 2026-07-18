@@ -13,13 +13,8 @@ export type DocumentType =
 export type PaymentState = 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
 
 export type ReminderState = 'None' | 'Scheduled' | 'Paused' | 'Stopped';
-export type JobStatus =
-  | 'Draft'
-  | 'Scheduled'
-  | 'In Progress'
-  | 'On Hold'
-  | 'Completed'
-  | 'Cancelled';
+import type { JobStatus as JobsDomainStatus } from '../domain/jobs/statuses.js';
+export type JobStatus = JobsDomainStatus;
 export type JobPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
 import type { TimelineEventKey } from '../domain/timeline/taxonomy.js';
@@ -155,6 +150,18 @@ export interface Job {
   completedDate: string | null;
   createdAt: string;
   updatedAt: string;
+  siteAddress?: string | null;
+  suburb?: string | null;
+  contactPerson?: string | null;
+  contactPhone?: string | null;
+  internalNotes?: string | null;
+  customerNotes?: string | null;
+  colour?: string | null;
+  quoteId?: string | null;
+  invoiceId?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  estimatedTravelMinutes?: number | null;
 }
 
 export type CreditNoteType = 'Full' | 'Partial';

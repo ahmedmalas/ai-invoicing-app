@@ -147,14 +147,26 @@ CREATE TABLE IF NOT EXISTS jobs (
   customer_id TEXT NOT NULL REFERENCES customers(id),
   status TEXT NOT NULL,
   priority TEXT NOT NULL,
-  scheduled_start_at TEXT,
-  scheduled_end_at TEXT,
+  scheduled_start_at TIMESTAMPTZ,
+  scheduled_end_at TIMESTAMPTZ,
   assigned_user_id TEXT,
   assigned_user_name TEXT,
   team_id TEXT REFERENCES teams(id),
   completed_date TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  site_address TEXT,
+  suburb TEXT,
+  contact_person TEXT,
+  contact_phone TEXT,
+  internal_notes TEXT,
+  customer_notes TEXT,
+  colour TEXT,
+  quote_id TEXT,
+  invoice_id TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  estimated_travel_minutes INTEGER,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS job_document_links (
@@ -777,6 +789,135 @@ CREATE TRIGGER trg_supplier_payment_allocations_immutable_delete BEFORE DELETE O
 -- Supabase exposes the public schema through PostgREST. The application uses a
 -- direct owner connection, so public tables must deny anon/authenticated access
 -- unless an explicit policy is introduced later.
+
+-- Jobs scheduling extensions (v45)
+CREATE TABLE IF NOT EXISTS job_status_definitions (
+  id TEXT PRIMARY KEY,
+  status_key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  colour TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_assignments (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  user_name TEXT NOT NULL DEFAULT '',
+  team_id TEXT,
+  response_status TEXT NOT NULL DEFAULT 'pending',
+  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+  responded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(job_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS job_time_entries (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  user_id TEXT,
+  entry_type TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  ended_at TIMESTAMPTZ,
+  break_minutes INTEGER NOT NULL DEFAULT 0,
+  billable BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_checklist_items (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  completed BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  completed_at TIMESTAMPTZ,
+  completed_by TEXT
+);
+CREATE TABLE IF NOT EXISTS job_parts (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL DEFAULT 1,
+  unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+  billable BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS job_labour (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  hours DOUBLE PRECISION NOT NULL DEFAULT 0,
+  rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  billable BOOLEAN NOT NULL DEFAULT TRUE,
+  user_id TEXT
+);
+CREATE TABLE IF NOT EXISTS job_signatures (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  signer_name TEXT NOT NULL,
+  signed_at TIMESTAMPTZ NOT NULL,
+  signature_data_url TEXT NOT NULL,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  purpose TEXT NOT NULL DEFAULT 'completion',
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_form_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  schema_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_form_submissions (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  template_id TEXT NOT NULL REFERENCES job_form_templates(id),
+  answers_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  submitted_by TEXT,
+  submitted_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_recurrence_rules (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+  frequency TEXT NOT NULL,
+  interval_count INTEGER NOT NULL DEFAULT 1,
+  until_date DATE,
+  by_weekday TEXT,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_notifications (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'email',
+  recipient TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  scheduled_for TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  provider_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS customer_portal_tokens (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_assign_job ON job_assignments(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_assign_user ON job_assignments(user_id);
+CREATE INDEX IF NOT EXISTS idx_job_time_job ON job_time_entries(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_notifications_job ON job_notifications(job_id);
+CREATE INDEX IF NOT EXISTS idx_portal_token ON customer_portal_tokens(token);
+
 ALTER TABLE app_database_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_profile ENABLE ROW LEVEL SECURITY;
 ALTER TABLE preferences ENABLE ROW LEVEL SECURITY;
@@ -815,3 +956,15 @@ ALTER TABLE job_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE idempotency_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timeline_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reminder_states ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_status_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_time_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_checklist_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_parts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_labour ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_signatures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_form_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_form_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_recurrence_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_portal_tokens ENABLE ROW LEVEL SECURITY;
