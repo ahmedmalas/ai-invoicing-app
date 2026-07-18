@@ -45,7 +45,7 @@ const replacements = new Map([
 ]);
 
 function applyBranding(root = document) {
-  document.title = 'Aleya Invoicing';
+  if (document.title !== 'Aleya Invoicing') document.title = 'Aleya Invoicing';
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   while (walker.nextNode()) nodes.push(walker.currentNode);
@@ -61,13 +61,16 @@ function applyBranding(root = document) {
 
 const observer = new MutationObserver((records) => {
   for (const record of records) {
+    // Title/head text updates must not re-enter branding (document.title is a childList mutation).
+    if (record.target === document.head || record.target?.nodeName === 'TITLE' || record.target?.closest?.('head')) {
+      continue;
+    }
     for (const node of record.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) applyBranding(node);
-      else if (node.nodeType === Node.TEXT_NODE) applyBranding(node.parentNode || document);
     }
   }
 });
-observer.observe(document.documentElement, { childList: true, subtree: true });
+observer.observe(document.body, { childList: true, subtree: true });
 applyBranding();
 
 const application = document.createElement('script');
