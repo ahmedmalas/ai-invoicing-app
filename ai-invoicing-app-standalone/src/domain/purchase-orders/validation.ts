@@ -12,6 +12,7 @@ export const purchaseOrderLineItemSchema = z.object({
   quantity: z.number().positive(),
   unitPrice: z.number().nonnegative(),
   gstApplicable: z.boolean(),
+  productId: z.string().uuid().optional().nullable(),
 });
 
 const draftBaseSchema = z.object({

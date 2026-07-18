@@ -48,6 +48,8 @@ import {
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
+import { createInventoryStore, ensureInventorySchemaSqlite } from './inventory-store.js';
+import type { Product, StockMovement, Stocktake, InventoryAlert, InventoryReportBundle, PurchaseOrderReceiptStatus } from '../domain/inventory/types.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
@@ -69,6 +71,7 @@ interface DbInvoiceLineItem {
   quantity: number;
   unit_price: number;
   gst_applicable: number;
+  product_id?: string | null;
 }
 
 interface DbInvoiceRow {
@@ -144,6 +147,9 @@ interface DbSupplierRow {
   address: string | null;
   tax_id: string | null;
   notes: string | null;
+  contact_person?: string | null;
+  website?: string | null;
+  payment_terms?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -216,6 +222,8 @@ interface DbPurchaseOrderLineItemRow {
   quantity: number;
   unit_price: number;
   gst_applicable: number;
+  product_id?: string | null;
+  quantity_received?: number;
 }
 
 interface DbJobRow {
@@ -279,6 +287,9 @@ export interface CreateSupplierInput {
   address?: string | undefined;
   taxId?: string | undefined;
   notes?: string | undefined;
+  contactPerson?: string | undefined;
+  website?: string | undefined;
+  paymentTerms?: string | undefined;
 }
 
 export interface UpsertBusinessProfileInput {
@@ -679,7 +690,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -718,6 +729,18 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'supplier_payment_sequences',
   'purchase_order_sequences',
   'job_sequences',
+  'products',
+  'inventory_balances',
+  'stock_movements',
+  'product_bundle_components',
+  'goods_receipts',
+  'goods_receipt_line_items',
+  'stocktakes',
+  'stocktake_lines',
+  'inventory_alerts',
+  'job_materials',
+  'goods_receipt_sequences',
+  'stocktake_sequences',
   'idempotency_requests',
   'timeline_events',
 ] as const;
@@ -920,6 +943,49 @@ export interface AppDatabase {
     options?: TimelineQueryOptions,
   ): DatabaseResult<Array<Record<string, unknown>>>;
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
+  createProduct(input: Record<string, unknown>): DatabaseResult<Product>;
+  updateProduct(id: string, input: Record<string, unknown>): DatabaseResult<Product>;
+  archiveProduct(id: string): DatabaseResult<Product>;
+  getProductById(id: string): DatabaseResult<Product | null>;
+  listProducts(filter?: Record<string, unknown>): DatabaseResult<Product[]>;
+  lookupProductByCode(code: string): DatabaseResult<Product | null>;
+  adjustStock(input: Record<string, unknown>): DatabaseResult<StockMovement>;
+  transferStock(input: Record<string, unknown>): DatabaseResult<{ out: StockMovement; in: StockMovement }>;
+  listStockMovements(filter?: Record<string, unknown>): DatabaseResult<StockMovement[]>;
+  receivePurchaseOrder(
+    purchaseOrderId: string,
+    input: {
+      lineItems: Array<{
+        purchaseOrderLineItemId: string;
+        quantityReceived: number;
+        productId?: string | undefined;
+      }>;
+      notes?: string | null | undefined;
+    },
+  ): DatabaseResult<{
+    receiptId: string;
+    receiptNumber: string;
+    movements: StockMovement[];
+    receiptStatus: PurchaseOrderReceiptStatus;
+  }>;
+  getPurchaseOrderReceiptStatus(purchaseOrderId: string): DatabaseResult<PurchaseOrderReceiptStatus>;
+  setJobMaterials(
+    jobId: string,
+    materials: Array<{ productId: string; quantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<Array<{ id: string; jobId: string; productId: string; quantity: number; notes: string | null }>>;
+  createStocktake(input: Record<string, unknown>): DatabaseResult<Stocktake>;
+  updateStocktakeCounts(
+    id: string,
+    lines: Array<{ productId: string; countedQuantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<Stocktake>;
+  submitStocktake(id: string): DatabaseResult<Stocktake>;
+  approveStocktake(id: string, approvedBy?: string | null): DatabaseResult<Stocktake>;
+  getStocktakeById(id: string): DatabaseResult<Stocktake | null>;
+  listStocktakes(limit?: number, offset?: number): DatabaseResult<Stocktake[]>;
+  listInventoryAlerts(includeDismissed?: boolean): DatabaseResult<InventoryAlert[]>;
+  dismissInventoryAlert(id: string): DatabaseResult<void>;
+  refreshAllInventoryAlerts(): DatabaseResult<InventoryAlert[]>;
+  getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
@@ -963,6 +1029,9 @@ function mapSupplierRow(row: DbSupplierRow): Supplier {
     address: row.address,
     taxId: row.tax_id,
     notes: row.notes,
+    contactPerson: row.contact_person ?? null,
+    website: row.website ?? null,
+    paymentTerms: row.payment_terms ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1350,6 +1419,8 @@ export function createDatabase(
     db.exec('ALTER TABLE purchase_orders ADD COLUMN closed_by TEXT;');
   }
 
+  ensureInventorySchemaSqlite(db);
+
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
     .all() as Array<{ name: string }>;
@@ -1373,6 +1444,7 @@ export function createDatabase(
     db.exec('ALTER TABLE timeline_events ADD COLUMN payload_schema TEXT;');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_timeline_event_key ON timeline_events(event_key);');
+  db.exec('DROP TRIGGER IF EXISTS trg_timeline_events_taxonomy_insert');
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_timeline_events_taxonomy_insert
     BEFORE INSERT ON timeline_events
@@ -1419,7 +1491,15 @@ export function createDatabase(
       'team.member_added',
       'team.member_removed',
       'team.deleted',
-      'job.assignment_scope_set'
+      'job.assignment_scope_set',
+      'inventory.product_created',
+      'inventory.product_updated',
+      'inventory.stock_moved',
+      'inventory.alert_raised',
+      'inventory.stocktake_created',
+      'inventory.stocktake_submitted',
+      'inventory.stocktake_approved',
+      'purchase_order.goods_received'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -1496,7 +1576,9 @@ export function createDatabase(
     | 'payment_sequences'
     | 'purchase_order_sequences'
     | 'supplier_bill_sequences'
-    | 'supplier_payment_sequences';
+    | 'supplier_payment_sequences'
+    | 'goods_receipt_sequences'
+    | 'stocktake_sequences';
 
   const getNextDocumentSequence = db.transaction(
     (
@@ -1542,6 +1624,11 @@ export function createDatabase(
     const nextSequence = getNextDocumentSequence(table, fallbackPrefix);
     return formatInvoiceNumber(nextSequence.prefix, nextSequence.year, nextSequence.sequence);
   }
+
+  const inventoryStore = createInventoryStore(db, {
+    timeline,
+    allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
+  });
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -2323,8 +2410,10 @@ export function createDatabase(
           const id = randomUUID();
           const now = nowIso();
           db.prepare(
-            `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO suppliers (
+              id, display_name, email, phone, address, tax_id, notes,
+              contact_person, website, payment_terms, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             id,
             txInput.displayName,
@@ -2333,6 +2422,9 @@ export function createDatabase(
             txInput.address ?? null,
             txInput.taxId ?? null,
             txInput.notes ?? null,
+            txInput.contactPerson ?? null,
+            txInput.website ?? null,
+            txInput.paymentTerms ?? null,
             now,
             now,
           );
@@ -2493,11 +2585,13 @@ export function createDatabase(
           assertNoInjectedFailure('create_invoice_after_insert');
 
           const insertLine = db.prepare(
-            `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           );
           const { calculatedItems } = calculateTotals(txInput.lineItems);
-          for (const item of calculatedItems) {
+          for (let index = 0; index < calculatedItems.length; index += 1) {
+            const item = calculatedItems[index]!;
+            const source = txInput.lineItems[index];
             insertLine.run(
               randomUUID(),
               id,
@@ -2508,6 +2602,7 @@ export function createDatabase(
               item.lineSubtotal,
               item.lineGst,
               item.lineTotal,
+              source && 'productId' in source ? ((source as { productId?: string | null }).productId ?? null) : null,
             );
           }
 
@@ -2553,11 +2648,13 @@ export function createDatabase(
 
         db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
         const insertLine = db.prepare(
-          `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const { calculatedItems } = calculateTotals(txInput.lineItems);
-        for (const item of calculatedItems) {
+        for (let index = 0; index < calculatedItems.length; index += 1) {
+          const item = calculatedItems[index]!;
+          const source = txInput.lineItems[index];
           insertLine.run(
             randomUUID(),
             invoiceId,
@@ -2568,6 +2665,9 @@ export function createDatabase(
             item.lineSubtotal,
             item.lineGst,
             item.lineTotal,
+            source && 'productId' in source
+              ? ((source as { productId?: string | null }).productId ?? null)
+              : null,
           );
         }
 
@@ -2597,7 +2697,7 @@ export function createDatabase(
       }
       const lineItemsRows = db
         .prepare(
-          'SELECT description, quantity, unit_price, gst_applicable FROM invoice_line_items WHERE invoice_id = ?',
+          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ?',
         )
         .all(id) as DbInvoiceLineItem[];
 
@@ -2606,6 +2706,7 @@ export function createDatabase(
         quantity: item.quantity,
         unitPrice: item.unit_price,
         gstApplicable: item.gst_applicable === 1,
+        productId: item.product_id ?? null,
       }));
 
       return {
@@ -2711,6 +2812,8 @@ export function createDatabase(
           invoiceNumber,
           total: finalised.totals.total,
         });
+
+        inventoryStore.applyInvoiceStockOut(invoiceId);
 
         return finalised;
       })(id);
@@ -3996,10 +4099,12 @@ export function createDatabase(
 
           const insertLine = db.prepare(
             `INSERT INTO purchase_order_line_items (
-              id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id, quantity_received
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           );
-          for (const item of calculatedItems) {
+          for (let index = 0; index < calculatedItems.length; index += 1) {
+            const item = calculatedItems[index]!;
+            const source = txInput.lineItems[index] as { productId?: string | null };
             insertLine.run(
               randomUUID(),
               id,
@@ -4010,6 +4115,7 @@ export function createDatabase(
               item.lineSubtotal,
               item.lineGst,
               item.lineTotal,
+              source?.productId ?? null,
             );
           }
 
@@ -4113,10 +4219,12 @@ export function createDatabase(
         );
         const insertLine = db.prepare(
           `INSERT INTO purchase_order_line_items (
-            id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id, quantity_received
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         );
-        for (const item of calculatedItems) {
+        for (let index = 0; index < calculatedItems.length; index += 1) {
+          const item = calculatedItems[index]!;
+          const source = txInput.lineItems[index] as { productId?: string | null };
           insertLine.run(
             randomUUID(),
             purchaseOrderId,
@@ -4127,6 +4235,7 @@ export function createDatabase(
             item.lineSubtotal,
             item.lineGst,
             item.lineTotal,
+            source?.productId ?? null,
           );
         }
 
@@ -4151,7 +4260,7 @@ export function createDatabase(
       }
       const lineItemsRows = db
         .prepare(
-          `SELECT id, description, quantity, unit_price, gst_applicable
+          `SELECT id, description, quantity, unit_price, gst_applicable, product_id, quantity_received
            FROM purchase_order_line_items
            WHERE purchase_order_id = ?`,
         )
@@ -4162,6 +4271,8 @@ export function createDatabase(
         quantity: item.quantity,
         unitPrice: item.unit_price,
         gstApplicable: item.gst_applicable === 1,
+        productId: item.product_id ?? null,
+        quantityReceived: item.quantity_received ?? 0,
       }));
       const purchaseOrder = {
         ...mapPurchaseOrderRow(row),
@@ -4188,6 +4299,7 @@ export function createDatabase(
         timeline('purchase_order.approved', purchaseOrderId, {
           purchaseOrderNumber: order.purchaseOrderNumber,
         });
+        inventoryStore.markPurchaseOrderIncoming(purchaseOrderId);
         return withPurchaseOrderBillingSummary(
           mapPurchaseOrderRow(
             db
@@ -5287,6 +5399,7 @@ export function createDatabase(
         timeline('job.completed', id, {
           jobNumber: existing.job_number,
         });
+        inventoryStore.consumeJobMaterials(id);
       }
 
       const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow;
@@ -6194,6 +6307,73 @@ export function createDatabase(
         documents,
         jobs,
       };
+    },
+
+    createProduct(input) {
+      return db.transaction(() => inventoryStore.createProduct(input))();
+    },
+    updateProduct(id, input) {
+      return db.transaction(() => inventoryStore.updateProduct(id, input))();
+    },
+    archiveProduct(id) {
+      return db.transaction(() => inventoryStore.archiveProduct(id))();
+    },
+    getProductById(id) {
+      return inventoryStore.getProductById(id);
+    },
+    listProducts(filter) {
+      return inventoryStore.listProducts(filter ?? {});
+    },
+    lookupProductByCode(code) {
+      return inventoryStore.lookupProductByCode(code);
+    },
+    adjustStock(input) {
+      return db.transaction(() => inventoryStore.adjustStock(input as never))();
+    },
+    transferStock(input) {
+      return db.transaction(() => inventoryStore.transferStock(input as never))();
+    },
+    listStockMovements(filter) {
+      return inventoryStore.listStockMovements(filter ?? {});
+    },
+    receivePurchaseOrder(purchaseOrderId, input) {
+      return db.transaction(() => inventoryStore.receivePurchaseOrder(purchaseOrderId, input))();
+    },
+    getPurchaseOrderReceiptStatus(purchaseOrderId) {
+      return inventoryStore.getPurchaseOrderReceiptStatus(purchaseOrderId);
+    },
+    setJobMaterials(jobId, materials) {
+      return db.transaction(() => inventoryStore.setJobMaterials(jobId, materials))();
+    },
+    createStocktake(input) {
+      return db.transaction(() => inventoryStore.createStocktake(input as never))();
+    },
+    updateStocktakeCounts(id, lines) {
+      return db.transaction(() => inventoryStore.updateStocktakeCounts(id, lines))();
+    },
+    submitStocktake(id) {
+      return db.transaction(() => inventoryStore.submitStocktake(id))();
+    },
+    approveStocktake(id, approvedBy) {
+      return db.transaction(() => inventoryStore.approveStocktake(id, approvedBy))();
+    },
+    getStocktakeById(id) {
+      return inventoryStore.getStocktakeById(id);
+    },
+    listStocktakes(limit, offset) {
+      return inventoryStore.listStocktakes(limit, offset);
+    },
+    listInventoryAlerts(includeDismissed) {
+      return inventoryStore.listInventoryAlerts(includeDismissed);
+    },
+    dismissInventoryAlert(id) {
+      return inventoryStore.dismissInventoryAlert(id);
+    },
+    refreshAllInventoryAlerts() {
+      return inventoryStore.refreshAllInventoryAlerts();
+    },
+    getInventoryReports() {
+      return inventoryStore.getInventoryReports();
     },
 
     exportPlatformSnapshot() {

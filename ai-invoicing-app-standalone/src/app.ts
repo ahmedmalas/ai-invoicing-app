@@ -25,6 +25,7 @@ import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
+import { productRoutes } from './routes/products.js';
 import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 import { createSystemRoutes } from './routes/system.js';
@@ -824,7 +825,7 @@ export async function buildApp(options: BuildAppOptions) {
     platformSnapshotRoutes, customerRoutes, businessProfileRoutes, logoStudioRoutes, preferenceRoutes, invoiceRoutes,
     quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,
     statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, supplierRoutes,
-    supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,
+    supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes, productRoutes,
   ];
   for (const plugin of businessPlugins) {
     await app.register(plugin);

@@ -228,6 +228,10 @@ const navItems = [
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/workspace/inventory', 'IV', 'Inventory'],
+  ['/workspace/purchase-orders', 'PO', 'Purchase Orders'],
+  ['/workspace/suppliers', 'SU', 'Suppliers'],
+  ['/workspace/stocktakes', 'ST', 'Stocktakes'],
   ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
@@ -1611,6 +1615,581 @@ async function downloadDocument(type, id) {
   return name;
 }
 
+async function inventoryPage() {
+  const [productsRes, alertsRes, reports] = await Promise.all([
+    api('/api/products?limit=500'),
+    api('/api/inventory/alerts'),
+    api('/api/inventory/reports'),
+  ]);
+  const products = productsRes.products || [];
+  const alerts = alertsRes.alerts || [];
+  const rows = products
+    .map((product) => {
+      const stock = product.stock || {};
+      return (
+        '<tr><td><strong>' +
+        escapeHtml(product.name) +
+        '</strong><div class="muted">' +
+        escapeHtml(product.sku) +
+        (product.barcode ? ' · ' + escapeHtml(product.barcode) : '') +
+        '</div></td><td>' +
+        escapeHtml(product.category || '—') +
+        '</td><td>' +
+        money(product.sellPrice) +
+        '</td><td>' +
+        Number(stock.available ?? 0) +
+        ' <span class="muted">/ ' +
+        Number(stock.onHand ?? 0) +
+        '</span></td><td>' +
+        Number(product.minimumStockLevel || 0) +
+        '</td><td><button class="button ghost small" data-inv-view="' +
+        product.id +
+        '">Open</button></td></tr>'
+      );
+    })
+    .join('');
+  const alertCards = alerts.length
+    ? alerts
+        .slice(0, 8)
+        .map(
+          (alert) =>
+            '<article class="inventory-alert"><strong>' +
+            escapeHtml(alert.kind.replaceAll('_', ' ')) +
+            '</strong><p>' +
+            escapeHtml(alert.message) +
+            '</p>' +
+            (alert.suggestedReorderQuantity != null
+              ? '<span>Reorder ' + alert.suggestedReorderQuantity + '</span>'
+              : '') +
+            '</article>',
+        )
+        .join('')
+    : '<p class="muted">No open stock alerts.</p>';
+  shell(
+    '<main class="page inventory-page">' +
+      pageHead(
+        'Inventory',
+        'Stock control',
+        'Catalogue, barcodes, low-stock intelligence, and movements linked to purchasing and invoices.',
+        '<button class="button" data-inv-new>New product</button><button class="button secondary" data-inv-scan>Scan barcode</button>',
+      ) +
+      '<section class="panel section-gap"><header class="panel-head"><h2>Alerts</h2><button class="button ghost small" data-inv-refresh-alerts>Refresh</button></header><div class="inventory-alert-grid">' +
+      alertCards +
+      '</div></section>' +
+      '<section class="panel section-gap"><header class="panel-head"><h2>Products</h2><span class="muted">' +
+      products.length +
+      ' items · valuation ' +
+      money(
+        (reports.stockValuation || []).reduce((sum, row) => sum + Number(row.valuation || 0), 0),
+      ) +
+      '</span></header><div class="table-wrap"><table><thead><tr><th>Product</th><th>Category</th><th>Sell</th><th>Available / On hand</th><th>Min</th><th></th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="6">' + empty('products') + '</td></tr>') +
+      '</tbody></table></div></section></main>',
+  );
+  document.querySelector('[data-inv-new]')?.addEventListener('click', () => openProductForm());
+  document.querySelector('[data-inv-scan]')?.addEventListener('click', () => openBarcodeScanner());
+  document.querySelector('[data-inv-refresh-alerts]')?.addEventListener('click', async () => {
+    await api('/api/inventory/alerts/refresh', { method: 'POST', body: '{}' });
+    await inventoryPage();
+  });
+  document.querySelectorAll('[data-inv-view]').forEach((button) => {
+    button.addEventListener('click', () => openProductDetail(button.getAttribute('data-inv-view')));
+  });
+}
+
+function openProductForm(product = null) {
+  drawer(
+    product ? 'Edit product' : 'New product',
+    '<form class="stack-form" data-product-form>' +
+      '<label>SKU<input name="sku" required value="' +
+      escapeHtml(product?.sku || '') +
+      '"></label>' +
+      '<label>Name<input name="name" required value="' +
+      escapeHtml(product?.name || '') +
+      '"></label>' +
+      '<label>Barcode<input name="barcode" value="' +
+      escapeHtml(product?.barcode || '') +
+      '" placeholder="USB scanner or type"></label>' +
+      '<label>Category<input name="category" value="' +
+      escapeHtml(product?.category || '') +
+      '"></label>' +
+      '<div class="form-grid-2"><label>Cost<input name="costPrice" type="number" min="0" step="0.01" value="' +
+      (product?.costPrice ?? 0) +
+      '"></label><label>Sell<input name="sellPrice" type="number" min="0" step="0.01" value="' +
+      (product?.sellPrice ?? 0) +
+      '"></label></div>' +
+      '<div class="form-grid-2"><label>Min stock<input name="minimumStockLevel" type="number" min="0" step="1" value="' +
+      (product?.minimumStockLevel ?? 0) +
+      '"></label><label>Reorder qty<input name="reorderQuantity" type="number" min="0" step="1" value="' +
+      (product?.reorderQuantity ?? 0) +
+      '"></label></div>' +
+      (!product
+        ? '<label>Opening stock<input name="openingStock" type="number" min="0" step="1" value="0"></label>'
+        : '') +
+      '<label>Notes<textarea name="notes" rows="3">' +
+      escapeHtml(product?.notes || '') +
+      '</textarea></label>' +
+      '<div class="drawer-actions"><button class="button" type="submit">Save product</button></div></form>',
+  );
+  document.querySelector('[data-product-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      sku: String(form.get('sku') || '').trim(),
+      name: String(form.get('name') || '').trim(),
+      barcode: String(form.get('barcode') || '').trim() || null,
+      category: String(form.get('category') || '').trim() || null,
+      costPrice: Number(form.get('costPrice') || 0),
+      sellPrice: Number(form.get('sellPrice') || 0),
+      minimumStockLevel: Number(form.get('minimumStockLevel') || 0),
+      reorderQuantity: Number(form.get('reorderQuantity') || 0),
+      notes: String(form.get('notes') || '').trim() || null,
+      trackStock: true,
+      gstStatus: 'gst',
+    };
+    if (!product) payload.openingStock = Number(form.get('openingStock') || 0);
+    if (product) await api('/api/products/' + product.id, { method: 'PUT', body: JSON.stringify(payload) });
+    else await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
+    closeDrawer();
+    await inventoryPage();
+  });
+}
+
+async function openProductDetail(id) {
+  const product = await api('/api/products/' + id);
+  const movements = await api('/api/inventory/movements?productId=' + encodeURIComponent(id) + '&limit=20');
+  const stock = product.stock || {};
+  drawer(
+    product.name,
+    '<div class="detail-grid"><div><span>SKU</span><strong>' +
+      escapeHtml(product.sku) +
+      '</strong></div><div><span>Barcode</span><strong>' +
+      escapeHtml(product.barcode || '—') +
+      '</strong></div><div><span>Available</span><strong>' +
+      Number(stock.available || 0) +
+      '</strong></div><div><span>On hand</span><strong>' +
+      Number(stock.onHand || 0) +
+      '</strong></div><div><span>Incoming</span><strong>' +
+      Number(stock.incoming || 0) +
+      '</strong></div><div><span>Margin</span><strong>' +
+      product.profitMargin +
+      '%</strong></div></div>' +
+      '<div class="form-actions"><a class="button secondary small" href="/api/products/' +
+      product.id +
+      '/barcode.svg" target="_blank" rel="noreferrer">Barcode</a><a class="button secondary small" href="/api/products/' +
+      product.id +
+      '/qr.svg" target="_blank" rel="noreferrer">QR</a><button class="button small" data-adj>Adjust stock</button><button class="button ghost small" data-edit>Edit</button><button class="button ghost small" data-archive>Archive</button></div>' +
+      '<section class="section-gap"><h3>Recent movements</h3><div class="table-wrap"><table><thead><tr><th>When</th><th>Type</th><th>Qty</th></tr></thead><tbody>' +
+      (movements.movements || [])
+        .map(
+          (movement) =>
+            '<tr><td>' +
+            readableTime(movement.createdAt) +
+            '</td><td>' +
+            escapeHtml(movement.movementType) +
+            '</td><td>' +
+            movement.quantityDelta +
+            '</td></tr>',
+        )
+        .join('') +
+      '</tbody></table></div></section>',
+  );
+  document.querySelector('[data-edit]')?.addEventListener('click', () => openProductForm(product));
+  document.querySelector('[data-archive]')?.addEventListener('click', async () => {
+    await api('/api/products/' + product.id + '/archive', { method: 'POST', body: '{}' });
+    closeDrawer();
+    await inventoryPage();
+  });
+  document.querySelector('[data-adj]')?.addEventListener('click', async () => {
+    const raw = prompt('Adjustment quantity (+/-)', '1');
+    if (raw == null || raw === '') return;
+    const quantityDelta = Number(raw);
+    if (!Number.isFinite(quantityDelta) || quantityDelta === 0) return;
+    await api('/api/inventory/adjust', {
+      method: 'POST',
+      body: JSON.stringify({ productId: product.id, quantityDelta, notes: 'Manual adjustment' }),
+    });
+    await openProductDetail(product.id);
+  });
+}
+
+function openBarcodeScanner() {
+  drawer(
+    'Scan barcode',
+    '<p class="muted">Use a USB scanner (keyboard wedge) or type/paste a barcode, SKU, or QR payload. On supported mobile browsers, camera scanning is attempted automatically.</p>' +
+      '<form class="stack-form" data-scan-form><label>Code<input name="code" autofocus autocomplete="off" required placeholder="Scan or type code"></label>' +
+      '<div class="drawer-actions"><button class="button" type="submit">Find product</button></div></form>' +
+      '<video data-scan-video playsinline style="display:none;width:100%;border-radius:12px;margin-top:12px;background:#111"></video>' +
+      '<div data-scan-result class="section-gap"></div>',
+  );
+  const form = document.querySelector('[data-scan-form]');
+  const result = document.querySelector('[data-scan-result]');
+  const video = document.querySelector('[data-scan-video]');
+  async function lookup(code) {
+    try {
+      const product = await api('/api/products/lookup?code=' + encodeURIComponent(code));
+      result.innerHTML =
+        '<div class="notice success"><strong>' +
+        escapeHtml(product.name) +
+        '</strong><br>SKU ' +
+        escapeHtml(product.sku) +
+        ' · Available ' +
+        Number(product.stock?.available || 0) +
+        '</div><button class="button small" data-open-found>Open product</button>';
+      result.querySelector('[data-open-found]')?.addEventListener('click', () => openProductDetail(product.id));
+    } catch {
+      result.innerHTML = '<div class="notice"><strong>No match</strong><br>No product found for that code.</div>';
+    }
+  }
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const code = String(new FormData(event.currentTarget).get('code') || '').trim();
+    if (code) await lookup(code);
+  });
+  if (typeof BarcodeDetector !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+    const detector = new BarcodeDetector({ formats: ['qr_code', 'ean_13', 'code_128', 'code_39'] });
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: 'environment' } })
+      .then((stream) => {
+        video.style.display = 'block';
+        video.srcObject = stream;
+        void video.play();
+        const timer = setInterval(async () => {
+          try {
+            const codes = await detector.detect(video);
+            if (codes[0]?.rawValue) {
+              clearInterval(timer);
+              stream.getTracks().forEach((track) => track.stop());
+              form.querySelector('input[name="code"]').value = codes[0].rawValue;
+              await lookup(codes[0].rawValue);
+            }
+          } catch {
+            /* ignore frame errors */
+          }
+        }, 700);
+      })
+      .catch(() => {
+        /* camera optional */
+      });
+  }
+}
+
+async function purchaseOrdersPage() {
+  const [ordersRes, suppliersRes, productsRes] = await Promise.all([
+    api('/api/purchase-orders'),
+    api('/api/suppliers'),
+    api('/api/products?limit=500'),
+  ]);
+  const orders = ordersRes.purchaseOrders || [];
+  const suppliers = suppliersRes.suppliers || [];
+  const products = productsRes.products || [];
+  const rows = orders
+    .map((order) => {
+      return (
+        '<tr><td><strong>' +
+        escapeHtml(order.purchaseOrderNumber) +
+        '</strong></td><td>' +
+        escapeHtml(order.status) +
+        '</td><td>' +
+        escapeHtml(order.billingStatus || '—') +
+        '</td><td>' +
+        money(order.totals?.total || 0) +
+        '</td><td><button class="button ghost small" data-po-open="' +
+        order.id +
+        '">Open</button></td></tr>'
+      );
+    })
+    .join('');
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Purchasing',
+        'Purchase orders',
+        'Create drafts, send to suppliers, and receive stock into inventory.',
+        '<button class="button" data-po-new>New purchase order</button>',
+      ) +
+      '<section class="panel"><div class="table-wrap"><table><thead><tr><th>Number</th><th>Status</th><th>Billing</th><th>Total</th><th></th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="5">' + empty('purchase orders') + '</td></tr>') +
+      '</tbody></table></div></section></main>',
+  );
+  document.querySelector('[data-po-new]')?.addEventListener('click', () => {
+    const supplierOptions = suppliers
+      .map((supplier) => '<option value="' + supplier.id + '">' + escapeHtml(supplier.displayName) + '</option>')
+      .join('');
+    const productOptions = products
+      .map(
+        (product) =>
+          '<option value="' +
+          product.id +
+          '" data-name="' +
+          escapeHtml(product.name) +
+          '" data-cost="' +
+          product.costPrice +
+          '">' +
+          escapeHtml(product.sku + ' · ' + product.name) +
+          '</option>',
+      )
+      .join('');
+    drawer(
+      'New purchase order',
+      '<form class="stack-form" data-po-form><label>Supplier<select name="supplierId" required>' +
+        supplierOptions +
+        '</select></label><label>Issue date<input type="date" name="issueDate" required value="' +
+        date() +
+        '"></label><label>Product<select name="productId">' +
+        '<option value="">Free-text line</option>' +
+        productOptions +
+        '</select></label><label>Description<input name="description" required value="Materials"></label><div class="form-grid-2"><label>Qty<input type="number" min="0.01" step="0.01" name="quantity" value="1" required></label><label>Unit price<input type="number" min="0" step="0.01" name="unitPrice" value="0" required></label></div><div class="drawer-actions"><button class="button" type="submit">Create draft</button></div></form>',
+    );
+    const form = document.querySelector('[data-po-form]');
+    form?.querySelector('[name="productId"]')?.addEventListener('change', (event) => {
+      const option = event.target.selectedOptions[0];
+      if (!option?.value) return;
+      form.querySelector('[name="description"]').value = option.getAttribute('data-name') || '';
+      form.querySelector('[name="unitPrice"]').value = option.getAttribute('data-cost') || '0';
+    });
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const productId = String(data.get('productId') || '') || null;
+      await api('/api/purchase-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          supplierId: String(data.get('supplierId')),
+          issueDate: String(data.get('issueDate')),
+          currency: 'AUD',
+          lineItems: [
+            {
+              description: String(data.get('description')),
+              quantity: Number(data.get('quantity')),
+              unitPrice: Number(data.get('unitPrice')),
+              gstApplicable: true,
+              productId,
+            },
+          ],
+        }),
+      });
+      closeDrawer();
+      await purchaseOrdersPage();
+    });
+  });
+  document.querySelectorAll('[data-po-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const order = await api('/api/purchase-orders/' + button.getAttribute('data-po-open'));
+      const receipt = await api('/api/purchase-orders/' + order.id + '/receipt-status').catch(() => ({
+        receiptStatus: 'unordered',
+      }));
+      const lines = (order.lineItems || [])
+        .map(
+          (line) =>
+            '<tr><td>' +
+            escapeHtml(line.description) +
+            '</td><td>' +
+            line.quantity +
+            '</td><td>' +
+            Number(line.quantityReceived || 0) +
+            '</td><td>' +
+            money(line.unitPrice) +
+            '</td></tr>',
+        )
+        .join('');
+      drawer(
+        order.purchaseOrderNumber,
+        '<div class="detail-grid"><div><span>Status</span><strong>' +
+          escapeHtml(order.status) +
+          '</strong></div><div><span>Receipt</span><strong>' +
+          escapeHtml(receipt.receiptStatus || '—') +
+          '</strong></div><div><span>Total</span><strong>' +
+          money(order.totals?.total || 0) +
+          '</strong></div></div><div class="form-actions">' +
+          (order.status === 'Draft'
+            ? '<button class="button small" data-approve>Send / Approve</button>'
+            : '') +
+          (order.status === 'Approved'
+            ? '<button class="button small" data-receive>Receive goods</button>'
+            : '') +
+          '</div><div class="table-wrap section-gap"><table><thead><tr><th>Line</th><th>Ordered</th><th>Received</th><th>Price</th></tr></thead><tbody>' +
+          lines +
+          '</tbody></table></div>',
+      );
+      document.querySelector('[data-approve]')?.addEventListener('click', async () => {
+        await api('/api/purchase-orders/' + order.id + '/approve', { method: 'POST', body: '{}' });
+        closeDrawer();
+        await purchaseOrdersPage();
+      });
+      document.querySelector('[data-receive]')?.addEventListener('click', async () => {
+        const payload = {
+          lineItems: (order.lineItems || []).map((line) => ({
+            purchaseOrderLineItemId: line.id,
+            quantityReceived: Math.max(0, Number(line.quantity) - Number(line.quantityReceived || 0)) || Number(line.quantity),
+            productId: line.productId || undefined,
+          })).filter((line) => line.quantityReceived > 0),
+        };
+        if (!payload.lineItems.length) {
+          alert('Nothing outstanding to receive.');
+          return;
+        }
+        await api('/api/purchase-orders/' + order.id + '/receive', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        closeDrawer();
+        await purchaseOrdersPage();
+      });
+    });
+  });
+}
+
+async function suppliersPage() {
+  const suppliersRes = await api('/api/suppliers');
+  const suppliers = suppliersRes.suppliers || [];
+  const rows = suppliers
+    .map(
+      (supplier) =>
+        '<tr><td><strong>' +
+        escapeHtml(supplier.displayName) +
+        '</strong><div class="muted">' +
+        escapeHtml(supplier.contactPerson || supplier.email || '—') +
+        '</div></td><td>' +
+        escapeHtml(supplier.phone || '—') +
+        '</td><td>' +
+        escapeHtml(supplier.paymentTerms || '—') +
+        '</td><td>' +
+        escapeHtml(supplier.taxId || '—') +
+        '</td></tr>',
+    )
+    .join('');
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Suppliers',
+        'Supplier directory',
+        'Contacts, payment terms, and purchasing history for inventory replenishment.',
+        '<button class="button" data-sup-new>New supplier</button>',
+      ) +
+      '<section class="panel"><div class="table-wrap"><table><thead><tr><th>Supplier</th><th>Phone</th><th>Terms</th><th>ABN</th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="4">' + empty('suppliers') + '</td></tr>') +
+      '</tbody></table></div></section></main>',
+  );
+  document.querySelector('[data-sup-new]')?.addEventListener('click', () => {
+    drawer(
+      'New supplier',
+      '<form class="stack-form" data-sup-form><label>Company<input name="displayName" required></label><label>Contact person<input name="contactPerson"></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><label>Website<input name="website" type="url" placeholder="https://"></label><label>ABN<input name="taxId"></label><label>Payment terms<input name="paymentTerms" placeholder="Net 30"></label><label>Notes<textarea name="notes" rows="3"></textarea></label><div class="drawer-actions"><button class="button" type="submit">Save</button></div></form>',
+    );
+    document.querySelector('[data-sup-form]')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const payload = {
+        displayName: String(data.get('displayName') || '').trim(),
+      };
+      for (const key of ['contactPerson', 'email', 'phone', 'website', 'taxId', 'paymentTerms', 'notes']) {
+        const value = String(data.get(key) || '').trim();
+        if (value) payload[key] = value;
+      }
+      await api('/api/suppliers', { method: 'POST', body: JSON.stringify(payload) });
+      closeDrawer();
+      await suppliersPage();
+    });
+  });
+}
+
+async function stocktakesPage() {
+  const stocktakesRes = await api('/api/stocktakes');
+  const stocktakes = stocktakesRes.stocktakes || [];
+  const rows = stocktakes
+    .map(
+      (stocktake) =>
+        '<tr><td><strong>' +
+        escapeHtml(stocktake.stocktakeNumber) +
+        '</strong></td><td>' +
+        escapeHtml(stocktake.type) +
+        '</td><td>' +
+        escapeHtml(stocktake.status) +
+        '</td><td><button class="button ghost small" data-stk="' +
+        stocktake.id +
+        '">Open</button></td></tr>',
+    )
+    .join('');
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Stocktakes',
+        'Count & reconcile',
+        'Full, partial, and cycle counts with variance approval and adjustment history.',
+        '<button class="button" data-stk-new>Start stocktake</button>',
+      ) +
+      '<section class="panel"><div class="table-wrap"><table><thead><tr><th>Number</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="4">' + empty('stocktakes') + '</td></tr>') +
+      '</tbody></table></div></section></main>',
+  );
+  document.querySelector('[data-stk-new]')?.addEventListener('click', async () => {
+    await api('/api/stocktakes', { method: 'POST', body: JSON.stringify({ type: 'full' }) });
+    await stocktakesPage();
+  });
+  document.querySelectorAll('[data-stk]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const stocktake = await api('/api/stocktakes/' + button.getAttribute('data-stk'));
+      const lines = (stocktake.lines || [])
+        .map(
+          (line) =>
+            '<tr><td>' +
+            escapeHtml(line.productId.slice(0, 8)) +
+            '</td><td>' +
+            line.expectedQuantity +
+            '</td><td><input data-count="' +
+            line.productId +
+            '" type="number" min="0" step="1" value="' +
+            (line.countedQuantity ?? line.expectedQuantity) +
+            '"></td><td>' +
+            (line.variance == null ? '—' : line.variance) +
+            '</td></tr>',
+        )
+        .join('');
+      drawer(
+        stocktake.stocktakeNumber,
+        '<p class="muted">' +
+          escapeHtml(stocktake.type) +
+          ' · ' +
+          escapeHtml(stocktake.status) +
+          '</p><div class="table-wrap"><table><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Variance</th></tr></thead><tbody>' +
+          lines +
+          '</tbody></table></div><div class="form-actions section-gap"><button class="button secondary small" data-save-counts>Save counts</button>' +
+          (stocktake.status === 'In Progress' || stocktake.status === 'Draft'
+            ? '<button class="button small" data-submit-stk>Submit</button>'
+            : '') +
+          (stocktake.status === 'Submitted'
+            ? '<button class="button small" data-approve-stk>Approve adjustments</button>'
+            : '') +
+          '</div>',
+      );
+      document.querySelector('[data-save-counts]')?.addEventListener('click', async () => {
+        const countLines = [...document.querySelectorAll('[data-count]')].map((input) => ({
+          productId: input.getAttribute('data-count'),
+          countedQuantity: Number(input.value || 0),
+        }));
+        await api('/api/stocktakes/' + stocktake.id + '/counts', {
+          method: 'PUT',
+          body: JSON.stringify({ lines: countLines }),
+        });
+        await stocktakesPage();
+      });
+      document.querySelector('[data-submit-stk]')?.addEventListener('click', async () => {
+        await api('/api/stocktakes/' + stocktake.id + '/submit', { method: 'POST', body: '{}' });
+        closeDrawer();
+        await stocktakesPage();
+      });
+      document.querySelector('[data-approve-stk]')?.addEventListener('click', async () => {
+        await api('/api/stocktakes/' + stocktake.id + '/approve', {
+          method: 'POST',
+          body: JSON.stringify({ approvedBy: currentUser?.displayName || currentUser?.email || 'owner' }),
+        });
+        closeDrawer();
+        await stocktakesPage();
+      });
+    });
+  });
+}
+
 async function renderRoute() {
   if (!currentUser) return;
   const path = location.pathname === '/' ? '/dashboard' : location.pathname;
@@ -1634,6 +2213,10 @@ async function renderRoute() {
     else if (path === '/workspace/quotes') quotesPage();
     else if (path === '/workspace/invoices') invoicesPage();
     else if (path === '/workspace/payments') paymentsPage();
+    else if (path === '/workspace/inventory') await inventoryPage();
+    else if (path === '/workspace/purchase-orders') await purchaseOrdersPage();
+    else if (path === '/workspace/suppliers') await suppliersPage();
+    else if (path === '/workspace/stocktakes') await stocktakesPage();
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();

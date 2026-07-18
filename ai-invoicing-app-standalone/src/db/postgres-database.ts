@@ -49,6 +49,7 @@ import {
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
+import type { Product, StockMovement, Stocktake, InventoryAlert, InventoryReportBundle, PurchaseOrderReceiptStatus } from '../domain/inventory/types.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 import {
@@ -671,7 +672,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -710,6 +711,18 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'supplier_payment_sequences',
   'purchase_order_sequences',
   'job_sequences',
+  'products',
+  'inventory_balances',
+  'stock_movements',
+  'product_bundle_components',
+  'goods_receipts',
+  'goods_receipt_line_items',
+  'stocktakes',
+  'stocktake_lines',
+  'inventory_alerts',
+  'job_materials',
+  'goods_receipt_sequences',
+  'stocktake_sequences',
   'idempotency_requests',
   'timeline_events',
 ] as const;
@@ -912,6 +925,49 @@ export interface AppDatabase {
     options?: TimelineQueryOptions,
   ): DatabaseResult<Array<Record<string, unknown>>>;
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
+  createProduct(input: Record<string, unknown>): DatabaseResult<Product>;
+  updateProduct(id: string, input: Record<string, unknown>): DatabaseResult<Product>;
+  archiveProduct(id: string): DatabaseResult<Product>;
+  getProductById(id: string): DatabaseResult<Product | null>;
+  listProducts(filter?: Record<string, unknown>): DatabaseResult<Product[]>;
+  lookupProductByCode(code: string): DatabaseResult<Product | null>;
+  adjustStock(input: Record<string, unknown>): DatabaseResult<StockMovement>;
+  transferStock(input: Record<string, unknown>): DatabaseResult<{ out: StockMovement; in: StockMovement }>;
+  listStockMovements(filter?: Record<string, unknown>): DatabaseResult<StockMovement[]>;
+  receivePurchaseOrder(
+    purchaseOrderId: string,
+    input: {
+      lineItems: Array<{
+        purchaseOrderLineItemId: string;
+        quantityReceived: number;
+        productId?: string | undefined;
+      }>;
+      notes?: string | null | undefined;
+    },
+  ): DatabaseResult<{
+    receiptId: string;
+    receiptNumber: string;
+    movements: StockMovement[];
+    receiptStatus: PurchaseOrderReceiptStatus;
+  }>;
+  getPurchaseOrderReceiptStatus(purchaseOrderId: string): DatabaseResult<PurchaseOrderReceiptStatus>;
+  setJobMaterials(
+    jobId: string,
+    materials: Array<{ productId: string; quantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<Array<{ id: string; jobId: string; productId: string; quantity: number; notes: string | null }>>;
+  createStocktake(input: Record<string, unknown>): DatabaseResult<Stocktake>;
+  updateStocktakeCounts(
+    id: string,
+    lines: Array<{ productId: string; countedQuantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<Stocktake>;
+  submitStocktake(id: string): DatabaseResult<Stocktake>;
+  approveStocktake(id: string, approvedBy?: string | null): DatabaseResult<Stocktake>;
+  getStocktakeById(id: string): DatabaseResult<Stocktake | null>;
+  listStocktakes(limit?: number, offset?: number): DatabaseResult<Stocktake[]>;
+  listInventoryAlerts(includeDismissed?: boolean): DatabaseResult<InventoryAlert[]>;
+  dismissInventoryAlert(id: string): DatabaseResult<void>;
+  refreshAllInventoryAlerts(): DatabaseResult<InventoryAlert[]>;
+  getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
@@ -6288,6 +6344,29 @@ export async function createPostgresDatabase(
         jobs,
       };
     },
+
+    createProduct() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    updateProduct() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    archiveProduct() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    async getProductById() { return null; },
+    async listProducts() { return []; },
+    async lookupProductByCode() { return null; },
+    adjustStock() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    transferStock() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    async listStockMovements() { return []; },
+    receivePurchaseOrder() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    getPurchaseOrderReceiptStatus() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    setJobMaterials() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    createStocktake() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    updateStocktakeCounts() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    submitStocktake() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    approveStocktake() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    async getStocktakeById() { return null; },
+    async listStocktakes() { return []; },
+    async listInventoryAlerts() { return []; },
+    dismissInventoryAlert() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
+    async refreshAllInventoryAlerts() { return []; },
+    getInventoryReports() { throw new Error('INVENTORY_NOT_IMPLEMENTED_ON_POSTGRES'); },
 
     async exportPlatformSnapshot() {
       const customerRows = (await db

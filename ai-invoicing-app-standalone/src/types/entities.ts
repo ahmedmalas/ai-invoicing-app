@@ -96,6 +96,7 @@ export interface LineItemInput {
   quantity: number;
   unitPrice: number;
   gstApplicable: boolean;
+  productId?: string | null | undefined;
 }
 
 export interface InvoiceTotals {
@@ -207,6 +208,9 @@ export interface Supplier {
   address: string | null;
   taxId: string | null;
   notes: string | null;
+  contactPerson?: string | null;
+  website?: string | null;
+  paymentTerms?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -263,11 +267,13 @@ export type PurchaseOrderStatus = 'Draft' | 'Approved' | 'Closed' | 'Cancelled';
 export type PurchaseOrderBillingStatus = 'unbilled' | 'partially_billed' | 'fully_billed';
 
 export interface PurchaseOrderLineItemInput {
-  id?: UUID;
+  id?: UUID | undefined;
   description: string;
   quantity: number;
   unitPrice: number;
   gstApplicable: boolean;
+  productId?: UUID | null | undefined;
+  quantityReceived?: number | undefined;
 }
 
 export interface PurchaseOrder {

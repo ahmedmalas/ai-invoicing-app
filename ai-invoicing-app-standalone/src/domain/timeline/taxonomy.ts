@@ -35,6 +35,14 @@ export const TIMELINE_EVENT_KEYS = [
   'team.member_removed',
   'team.deleted',
   'job.assignment_scope_set',
+  'inventory.product_created',
+  'inventory.product_updated',
+  'inventory.stock_moved',
+  'inventory.alert_raised',
+  'inventory.stocktake_created',
+  'inventory.stocktake_submitted',
+  'inventory.stocktake_approved',
+  'purchase_order.goods_received',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -50,7 +58,8 @@ export type TimelineCategory =
   | 'business_profile'
   | 'preferences'
   | 'job'
-  | 'team';
+  | 'team'
+  | 'inventory';
 
 export type TimelineActorType = 'system';
 export type TimelineSource = 'api';
@@ -441,5 +450,85 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.document.linked_to_job.v1',
     legacyEventType: 'Document Linked To Job',
+  },
+  'inventory.product_created': {
+    key: 'inventory.product_created',
+    version: 1,
+    category: 'inventory',
+    entityType: 'product',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.product_created.v1',
+    legacyEventType: 'Inventory Product Created',
+  },
+  'inventory.product_updated': {
+    key: 'inventory.product_updated',
+    version: 1,
+    category: 'inventory',
+    entityType: 'product',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.product_updated.v1',
+    legacyEventType: 'Inventory Product Updated',
+  },
+  'inventory.stock_moved': {
+    key: 'inventory.stock_moved',
+    version: 1,
+    category: 'inventory',
+    entityType: 'product',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.stock_moved.v1',
+    legacyEventType: 'Inventory Stock Moved',
+  },
+  'inventory.alert_raised': {
+    key: 'inventory.alert_raised',
+    version: 1,
+    category: 'inventory',
+    entityType: 'product',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.alert_raised.v1',
+    legacyEventType: 'Inventory Alert Raised',
+  },
+  'inventory.stocktake_created': {
+    key: 'inventory.stocktake_created',
+    version: 1,
+    category: 'inventory',
+    entityType: 'stocktake',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.stocktake_created.v1',
+    legacyEventType: 'Inventory Stocktake Created',
+  },
+  'inventory.stocktake_submitted': {
+    key: 'inventory.stocktake_submitted',
+    version: 1,
+    category: 'inventory',
+    entityType: 'stocktake',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.stocktake_submitted.v1',
+    legacyEventType: 'Inventory Stocktake Submitted',
+  },
+  'inventory.stocktake_approved': {
+    key: 'inventory.stocktake_approved',
+    version: 1,
+    category: 'inventory',
+    entityType: 'stocktake',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.inventory.stocktake_approved.v1',
+    legacyEventType: 'Inventory Stocktake Approved',
+  },
+  'purchase_order.goods_received': {
+    key: 'purchase_order.goods_received',
+    version: 1,
+    category: 'purchase_order',
+    entityType: 'purchase_order',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.purchase_order.goods_received.v1',
+    legacyEventType: 'Purchase Order Goods Received',
   },
 };
