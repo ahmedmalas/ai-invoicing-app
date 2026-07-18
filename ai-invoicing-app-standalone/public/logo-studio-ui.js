@@ -67,7 +67,6 @@ export function buildLogoCreatorPageHtml({
   standaloneUrl = '',
   abossLaunchUrl = '',
 } = {}) {
-  const options = { standaloneUrl, abossLaunchUrl };
   const styleOptions = LOGO_STYLE_OPTIONS.map(
     (style) => '<option value="' + style + '">' + style.charAt(0).toUpperCase() + style.slice(1) + '</option>',
   ).join('');
@@ -109,8 +108,6 @@ export function buildLogoCreatorPageHtml({
       '" alt="Active logo" width="280" height="160"></div>'
     : '<div class="notice"><strong>No logo selected yet</strong><br>Generate concepts, pick a favourite, and Aleya will apply it across your documents.</div>';
 
-  const standaloneUrl = options.standaloneUrl || '';
-  const abossLaunchUrl = options.abossLaunchUrl || '';
   const platformLinks =
     '<div class="logo-platform-links">' +
     (standaloneUrl
