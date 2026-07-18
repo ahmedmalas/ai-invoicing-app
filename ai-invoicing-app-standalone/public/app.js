@@ -1030,20 +1030,21 @@ async function mountInvoiceWorkspace(record = null) {
   const defaults = {
     issueDate: record?.issueDate || date(),
     dueDate: record?.dueDate || date(14),
-    ...record,
+    ...(record || {}),
   };
   document.body.insertAdjacentHTML(
     'beforeend',
     buildInvoiceWorkspaceHtml({
       profile: cache.businessProfile || {},
       customers: cache.customers,
-      record: defaults,
+      // Pass null for create so the customer select renders; only edit routes include an id.
+      record: record?.id ? defaults : { issueDate: defaults.issueDate, dueDate: defaults.dueDate },
     }),
   );
   const curtain = document.querySelector('[data-invoice-curtain]');
   const form = document.querySelector('#invoice-workspace-form');
   if (!form || !curtain) return;
-  if (!record) {
+  if (!record?.id) {
     form.querySelector('[name="issueDate"]').value = defaults.issueDate;
     form.querySelector('[name="endDate"]').value = defaults.dueDate;
   }

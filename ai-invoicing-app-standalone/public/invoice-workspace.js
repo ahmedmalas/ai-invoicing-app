@@ -106,7 +106,8 @@ export function buildInvoiceWorkspaceHtml({
   record = null,
   moneyFormat = money,
 }) {
-  const editing = Boolean(record);
+  // New invoices may pass date defaults without an id — only persisted drafts are "editing".
+  const editing = Boolean(record?.id);
   const status = record?.paymentState || record?.status || 'Draft';
   const invoiceNumber = record?.invoiceNumber || 'Draft';
   const lines = record?.lineItems?.length
