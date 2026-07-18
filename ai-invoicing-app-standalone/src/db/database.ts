@@ -50,6 +50,20 @@ import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.j
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
+import {
+  createSqliteReconciliationStore,
+  type CreateBankAccountInput,
+  type UpdateBankAccountInput,
+} from './reconciliation-store.js';
+import type {
+  BankAccount,
+  BankTransaction,
+  ReconciliationAuditEntry,
+  ReconciliationMatch,
+  ReconciliationReport,
+  ReconciliationWorkspace,
+  StatementImportResult,
+} from '../domain/reconciliation/index.js';
 
 function loadSchemaSql(): string {
   try {
@@ -679,7 +693,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -720,6 +734,10 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'job_sequences',
   'idempotency_requests',
   'timeline_events',
+  'bank_accounts',
+  'bank_transactions',
+  'reconciliation_matches',
+  'reconciliation_audit',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -922,6 +940,66 @@ export interface AppDatabase {
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  createBankAccount(input: CreateBankAccountInput): DatabaseResult<BankAccount>;
+  updateBankAccount(id: string, input: UpdateBankAccountInput): DatabaseResult<BankAccount>;
+  getBankAccountById(id: string): DatabaseResult<BankAccount | null>;
+  listBankAccounts(): DatabaseResult<BankAccount[]>;
+  importBankStatement(input: {
+    bankAccountId: string;
+    format: 'csv' | 'ofx' | 'qif';
+    filename: string;
+    content: string;
+    autoMatch?: boolean;
+    actor?: { userId?: string | null; email?: string | null };
+  }): DatabaseResult<StatementImportResult>;
+  listBankTransactions(filter?: {
+    bankAccountId?: string;
+    status?: string;
+    search?: string;
+    importBatchId?: string;
+  }): DatabaseResult<BankTransaction[]>;
+  getBankTransactionById(id: string): DatabaseResult<BankTransaction | null>;
+  listReconciliationMatches(filter?: {
+    bankTransactionId?: string;
+    status?: string;
+    bankAccountId?: string;
+  }): DatabaseResult<ReconciliationMatch[]>;
+  getReconciliationMatchById(id: string): DatabaseResult<ReconciliationMatch | null>;
+  approveReconciliationMatch(
+    matchId: string,
+    actor?: { userId?: string | null; email?: string | null },
+    allocations?: Array<{ invoiceId: string; amount: number }>,
+  ): DatabaseResult<{ match: ReconciliationMatch; payment: CustomerPayment }>;
+  manualReconciliationMatch(
+    input: {
+      bankTransactionId: string;
+      customerId: string;
+      allocations: Array<{ invoiceId: string; amount: number }>;
+      paymentMethod?: string;
+      reference?: string;
+      notes?: string;
+    },
+    actor?: { userId?: string | null; email?: string | null },
+  ): DatabaseResult<{ match: ReconciliationMatch; payment: CustomerPayment }>;
+  ignoreBankTransactions(
+    transactionIds: string[],
+    actor?: { userId?: string | null; email?: string | null },
+  ): DatabaseResult<number>;
+  unmatchBankTransaction(
+    transactionId: string,
+    actor?: { userId?: string | null; email?: string | null },
+  ): DatabaseResult<BankTransaction>;
+  rematchBankTransaction(
+    transactionId: string,
+    actor?: { userId?: string | null; email?: string | null },
+  ): DatabaseResult<BankTransaction>;
+  listReconciliationAudit(limit?: number): DatabaseResult<ReconciliationAuditEntry[]>;
+  getReconciliationWorkspace(filter?: {
+    bankAccountId?: string;
+    status?: string;
+    search?: string;
+  }): DatabaseResult<ReconciliationWorkspace>;
+  getReconciliationReport(): DatabaseResult<ReconciliationReport>;
 }
 
 export interface DatabaseInitOptions {
@@ -1373,6 +1451,7 @@ export function createDatabase(
     db.exec('ALTER TABLE timeline_events ADD COLUMN payload_schema TEXT;');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_timeline_event_key ON timeline_events(event_key);');
+  db.exec('DROP TRIGGER IF EXISTS trg_timeline_events_taxonomy_insert');
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_timeline_events_taxonomy_insert
     BEFORE INSERT ON timeline_events
@@ -1419,7 +1498,12 @@ export function createDatabase(
       'team.member_added',
       'team.member_removed',
       'team.deleted',
-      'job.assignment_scope_set'
+      'job.assignment_scope_set',
+      'reconciliation.imported',
+      'reconciliation.matched',
+      'reconciliation.suggested',
+      'reconciliation.ignored',
+      'reconciliation.unmatched'
     )
     BEGIN
       SELECT RAISE(ABORT, 'INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -2041,6 +2125,10 @@ export function createDatabase(
 
     insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
     insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
+    insertSnapshotRows('bank_accounts', snapshot.entities.bank_accounts);
+    insertSnapshotRows('bank_transactions', snapshot.entities.bank_transactions);
+    insertSnapshotRows('reconciliation_matches', snapshot.entities.reconciliation_matches);
+    insertSnapshotRows('reconciliation_audit', snapshot.entities.reconciliation_audit);
     insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
 
     const foreignKeyViolations = db.prepare('PRAGMA foreign_key_check').all() as Array<
@@ -2051,7 +2139,62 @@ export function createDatabase(
     }
   });
 
-  return {
+  const paymentApi: {
+    create: ((input: CreateCustomerPaymentInput) => CustomerPayment) | null;
+  } = { create: null };
+
+  function listOpenInvoiceCandidates() {
+    const rows = db
+      .prepare(
+        `SELECT i.*, c.display_name AS customer_name,
+                coalesce((
+                  SELECT sum(pa.amount) FROM payment_allocations pa WHERE pa.invoice_id = i.id
+                ), 0) AS paid_total,
+                coalesce((
+                  SELECT sum(cn.total_credit) FROM credit_notes cn WHERE cn.linked_invoice_id = i.id
+                ), 0) AS credited_total
+         FROM invoices i
+         LEFT JOIN customers c ON c.id = i.customer_id
+         WHERE i.status = 'Finalised'
+           AND i.payment_state <> 'Cancelled'
+           AND i.payment_state <> 'Paid'`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows
+      .map((row) => {
+        const total = Number(row.total);
+        const outstanding =
+          total - Number(row.paid_total ?? 0) - Number(row.credited_total ?? 0);
+        return {
+          invoiceId: String(row.id),
+          invoiceNumber: String(row.invoice_number ?? ''),
+          customerId: String(row.customer_id),
+          customerName: String(row.customer_name ?? 'Customer'),
+          issueDate: String(row.issue_date),
+          dueDate: String(row.due_date),
+          title: String(row.title ?? ''),
+          outstanding: Math.round(outstanding * 100) / 100,
+        };
+      })
+      .filter((row) => row.outstanding > 0.0001 && row.invoiceNumber);
+  }
+
+  const reconciliation = createSqliteReconciliationStore({
+    db,
+    nowIso,
+    createCustomerPayment: (input) => {
+      if (!paymentApi.create) {
+        throw new Error('PAYMENT_API_NOT_READY');
+      }
+      return paymentApi.create(input);
+    },
+    timeline: (eventKey, entityId, payload) => {
+      timeline(eventKey as TimelineEventKey, entityId, payload);
+    },
+    listOpenInvoiceCandidates,
+  });
+
+  const api: SqliteAppDatabase = {
     close() {
       db.close();
     },
@@ -6292,5 +6435,59 @@ export function createDatabase(
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       restorePlatformSnapshot(parsedSnapshot);
     },
+    createBankAccount(input) {
+      return reconciliation.createBankAccount(input);
+    },
+    updateBankAccount(id, input) {
+      return reconciliation.updateBankAccount(id, input);
+    },
+    getBankAccountById(id) {
+      return reconciliation.getBankAccountById(id);
+    },
+    listBankAccounts() {
+      return reconciliation.listBankAccounts();
+    },
+    importBankStatement(input) {
+      return reconciliation.importBankStatement(input);
+    },
+    listBankTransactions(filter) {
+      return reconciliation.listBankTransactions(filter);
+    },
+    getBankTransactionById(id) {
+      return reconciliation.getBankTransactionById(id);
+    },
+    listReconciliationMatches(filter) {
+      return reconciliation.listMatches(filter);
+    },
+    getReconciliationMatchById(id) {
+      return reconciliation.getMatchById(id);
+    },
+    approveReconciliationMatch(matchId, actor, allocations) {
+      return reconciliation.approveMatch(matchId, actor, allocations);
+    },
+    manualReconciliationMatch(input, actor) {
+      return reconciliation.manualMatch(input, actor);
+    },
+    ignoreBankTransactions(transactionIds, actor) {
+      return reconciliation.ignoreTransactions(transactionIds, actor);
+    },
+    unmatchBankTransaction(transactionId, actor) {
+      return reconciliation.unmatchTransaction(transactionId, actor);
+    },
+    rematchBankTransaction(transactionId, actor) {
+      return reconciliation.rematchTransaction(transactionId, actor);
+    },
+    listReconciliationAudit(limit) {
+      return reconciliation.listAudit(limit);
+    },
+    getReconciliationWorkspace(filter) {
+      return reconciliation.getWorkspace(filter);
+    },
+    getReconciliationReport() {
+      return reconciliation.getReport();
+    },
   };
+
+  paymentApi.create = (input) => api.createCustomerPayment(input);
+  return api;
 }

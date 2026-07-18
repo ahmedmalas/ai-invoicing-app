@@ -21,6 +21,7 @@ import { timelineRoutes } from './routes/timeline.js';
 import { statementRoutes } from './routes/statements.js';
 import { creditNoteRoutes } from './routes/credit-notes.js';
 import { paymentRoutes } from './routes/payments.js';
+import { reconciliationRoutes } from './routes/reconciliation.js';
 import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
@@ -106,7 +107,7 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
-    bodyLimit: options.requestBodyLimit ?? 1_048_576,
+    bodyLimit: options.requestBodyLimit ?? 5_242_880,
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   let db: AppDatabase;
@@ -222,7 +223,7 @@ export async function buildApp(options: BuildAppOptions) {
     for (const path of [
       '/', '/sign-in', '/create-account', '/forgot-password', '/reset-password',
       '/auth/callback', '/dashboard', '/workspace/customers', '/workspace/quotes',
-      '/workspace/invoices', '/workspace/payments',
+      '/workspace/invoices', '/workspace/payments', '/workspace/reconciliation',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
@@ -823,8 +824,8 @@ export async function buildApp(options: BuildAppOptions) {
   const businessPlugins = [
     platformSnapshotRoutes, customerRoutes, businessProfileRoutes, logoStudioRoutes, preferenceRoutes, invoiceRoutes,
     quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,
-    statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, supplierRoutes,
-    supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,
+    statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, reconciliationRoutes,
+    supplierRoutes, supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,
   ];
   for (const plugin of businessPlugins) {
     await app.register(plugin);

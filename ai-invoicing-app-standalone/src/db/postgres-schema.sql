@@ -777,6 +777,90 @@ CREATE TRIGGER trg_supplier_payment_allocations_immutable_delete BEFORE DELETE O
 -- Supabase exposes the public schema through PostgREST. The application uses a
 -- direct owner connection, so public tables must deny anon/authenticated access
 -- unless an explicit policy is introduced later.
+
+-- Bank reconciliation (v45)
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id TEXT PRIMARY KEY,
+  nickname TEXT NOT NULL,
+  account_type TEXT NOT NULL,
+  institution TEXT NOT NULL DEFAULT '',
+  account_number_masked TEXT NOT NULL DEFAULT '',
+  bsb_masked TEXT NOT NULL DEFAULT '',
+  currency TEXT NOT NULL DEFAULT 'AUD',
+  balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+  last_sync_at TIMESTAMPTZ,
+  source TEXT NOT NULL DEFAULT 'manual',
+  status TEXT NOT NULL DEFAULT 'active',
+  external_account_id TEXT,
+  connection_id TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  bank_account_id TEXT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+  external_fingerprint TEXT NOT NULL,
+  external_id TEXT,
+  booked_date DATE NOT NULL,
+  amount DOUBLE PRECISION NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  reference TEXT NOT NULL DEFAULT '',
+  counterparty_name TEXT NOT NULL DEFAULT '',
+  balance_after DOUBLE PRECISION,
+  bsb TEXT NOT NULL DEFAULT '',
+  account_number TEXT NOT NULL DEFAULT '',
+  source_format TEXT NOT NULL DEFAULT 'manual',
+  import_batch_id TEXT,
+  status TEXT NOT NULL DEFAULT 'unmatched',
+  raw_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(bank_account_id, external_fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_matches (
+  id TEXT PRIMARY KEY,
+  bank_transaction_id TEXT NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+  bank_account_id TEXT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+  customer_id TEXT,
+  status TEXT NOT NULL DEFAULT 'suggested',
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  confidence_band TEXT NOT NULL DEFAULT 'low',
+  match_method TEXT NOT NULL DEFAULT 'composite',
+  rationale_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  scores_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  allocations_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  customer_payment_id TEXT,
+  confirmed_by TEXT,
+  confirmed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_audit (
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  bank_transaction_id TEXT,
+  match_id TEXT,
+  user_id TEXT,
+  user_email TEXT,
+  original_values_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  new_values_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_txn_account ON bank_transactions(bank_account_id);
+CREATE INDEX IF NOT EXISTS idx_bank_txn_status ON bank_transactions(status);
+CREATE INDEX IF NOT EXISTS idx_bank_txn_date ON bank_transactions(booked_date);
+CREATE INDEX IF NOT EXISTS idx_bank_txn_fingerprint ON bank_transactions(external_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_recon_match_txn ON reconciliation_matches(bank_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_recon_match_status ON reconciliation_matches(status);
+CREATE INDEX IF NOT EXISTS idx_recon_audit_created ON reconciliation_audit(created_at);
+
 ALTER TABLE app_database_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_profile ENABLE ROW LEVEL SECURITY;
 ALTER TABLE preferences ENABLE ROW LEVEL SECURITY;
@@ -815,3 +899,7 @@ ALTER TABLE job_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE idempotency_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timeline_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reminder_states ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_matches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_audit ENABLE ROW LEVEL SECURITY;

@@ -138,6 +138,7 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/workspace/invoices',
     '/workspace/invoices/new',
     '/workspace/payments',
+    '/workspace/reconciliation',
     '/reports',
     '/timeline',
     '/settings',

@@ -1345,3 +1345,45 @@ td.primary-cell {
   color: var(--muted);
 }
 
+
+/* Bank reconciliation workspace */
+.recon-page .recon-filters {
+  align-items: end;
+}
+.recon-report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+.recon-report-grid div {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.recon-report-grid strong {
+  font-size: 0.92rem;
+}
+.recon-report-grid span {
+  color: var(--muted);
+}
+.status.unmatched,
+.status.low {
+  color: var(--warn);
+}
+.status.suggested,
+.status.medium {
+  color: #2f6f5e;
+}
+.status.matched,
+.status.high {
+  color: #1d6b45;
+}
+.status.ignored {
+  color: var(--muted);
+}
+@media (max-width: 900px) {
+  .recon-report-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
