@@ -50,6 +50,13 @@ import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.j
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
+import {
+  createSqliteJobsStore,
+  ensureJobsSchemaSqlite,
+  mapExtendedJobRow,
+  JOBS_SNAPSHOT_TABLES,
+} from './jobs-store.js';
+import type { JobStatus as CanonicalJobStatus } from '../domain/jobs/statuses.js';
 
 function loadSchemaSql(): string {
   try {
@@ -232,6 +239,18 @@ interface DbJobRow {
   assigned_user_name: string | null;
   team_id: string | null;
   completed_date: string | null;
+  site_address?: string | null;
+  suburb?: string | null;
+  contact_person?: string | null;
+  contact_phone?: string | null;
+  internal_notes?: string | null;
+  customer_notes?: string | null;
+  colour?: string | null;
+  quote_id?: string | null;
+  invoice_id?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  estimated_travel_minutes?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -405,6 +424,19 @@ export interface CreateJobInput {
   assignedUserName?: string | undefined;
   teamId?: string | undefined;
   completedDate?: string | undefined;
+  assigneeUserIds?: string[] | undefined;
+  siteAddress?: string | null | undefined;
+  suburb?: string | null | undefined;
+  contactPerson?: string | null | undefined;
+  contactPhone?: string | null | undefined;
+  internalNotes?: string | null | undefined;
+  customerNotes?: string | null | undefined;
+  colour?: string | null | undefined;
+  quoteId?: string | null | undefined;
+  invoiceId?: string | null | undefined;
+  latitude?: number | null | undefined;
+  longitude?: number | null | undefined;
+  estimatedTravelMinutes?: number | null | undefined;
 }
 
 export interface UpdateJobInput {
@@ -418,6 +450,19 @@ export interface UpdateJobInput {
   assignedUserName?: string | null | undefined;
   teamId?: string | null | undefined;
   completedDate?: string | null | undefined;
+  assigneeUserIds?: string[] | undefined;
+  siteAddress?: string | null | undefined;
+  suburb?: string | null | undefined;
+  contactPerson?: string | null | undefined;
+  contactPhone?: string | null | undefined;
+  internalNotes?: string | null | undefined;
+  customerNotes?: string | null | undefined;
+  colour?: string | null | undefined;
+  quoteId?: string | null | undefined;
+  invoiceId?: string | null | undefined;
+  latitude?: number | null | undefined;
+  longitude?: number | null | undefined;
+  estimatedTravelMinutes?: number | null | undefined;
 }
 
 export interface UpdateInvoiceDraftInput {
@@ -679,7 +724,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -720,6 +765,18 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'job_sequences',
   'idempotency_requests',
   'timeline_events',
+  'job_status_definitions',
+  'job_assignments',
+  'job_time_entries',
+  'job_checklist_items',
+  'job_parts',
+  'job_labour',
+  'job_signatures',
+  'job_form_templates',
+  'job_form_submissions',
+  'job_recurrence_rules',
+  'job_notifications',
+  'customer_portal_tokens',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -922,6 +979,43 @@ export interface AppDatabase {
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  getJobDetail(jobId: string): DatabaseResult<unknown>;
+  rescheduleJob(
+    jobId: string,
+    input: { scheduledStartAt: string; scheduledEndAt: string; assignedUserId?: string | null },
+  ): DatabaseResult<Job>;
+  replaceJobAssignments(
+    jobId: string,
+    assignments: Array<{
+      userId: string;
+      teamId?: string | null;
+      isPrimary?: boolean;
+      responseStatus?: string;
+    }>,
+  ): DatabaseResult<unknown>;
+  updateJobAssignmentResponse(
+    jobId: string,
+    userId: string,
+    responseStatus: string,
+  ): DatabaseResult<unknown>;
+  replaceJobChecklist(jobId: string, items: unknown[]): DatabaseResult<unknown>;
+  addJobTimeEntry(jobId: string, input: unknown): DatabaseResult<unknown>;
+  getJobTimeSummary(jobId: string): DatabaseResult<unknown>;
+  addJobPart(jobId: string, input: unknown): DatabaseResult<unknown>;
+  addJobLabour(jobId: string, input: unknown): DatabaseResult<unknown>;
+  addJobSignature(jobId: string, input: unknown): DatabaseResult<unknown>;
+  listJobStatusDefinitions(): DatabaseResult<unknown>;
+  upsertJobStatusDefinition(input: unknown): DatabaseResult<unknown>;
+  createJobFormTemplate(input: unknown): DatabaseResult<unknown>;
+  listJobFormTemplates(): DatabaseResult<unknown>;
+  submitJobForm(jobId: string, input: unknown): DatabaseResult<unknown>;
+  setJobRecurrence(jobId: string, input: unknown): DatabaseResult<unknown>;
+  queueJobNotification(jobId: string, input: unknown): DatabaseResult<unknown>;
+  listJobNotifications(jobId: string): DatabaseResult<unknown>;
+  listJobCalendarEvents(filter: unknown): DatabaseResult<unknown>;
+  getTechnicianDailyRoute(technicianId: string, day: string): DatabaseResult<unknown>;
+  createCustomerPortalToken(customerId: string, expiresInHours?: number): DatabaseResult<unknown>;
+  getCustomerPortalSnapshot(token: string): DatabaseResult<unknown>;
 }
 
 export interface DatabaseInitOptions {
@@ -1120,23 +1214,7 @@ function mapCustomerPaymentRow(
 }
 
 function mapJobRow(row: DbJobRow): Job {
-  return {
-    id: row.id,
-    jobNumber: row.job_number,
-    title: row.title,
-    description: row.description,
-    customerId: row.customer_id,
-    status: row.status,
-    priority: row.priority,
-    scheduledStartAt: row.scheduled_start_at,
-    scheduledEndAt: row.scheduled_end_at,
-    assignedUserId: row.assigned_user_id,
-    assignedUserName: row.assigned_user_name,
-    teamId: row.team_id,
-    completedDate: row.completed_date,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+  return mapExtendedJobRow(row as unknown as Record<string, unknown>);
 }
 
 function mapRoleRow(row: DbRoleRow): Role {
@@ -1201,6 +1279,7 @@ export function createDatabase(
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
   db.exec(schemaSql);
+  ensureJobsSchemaSqlite(db, nowIso);
   const initializedAt = nowIso();
   db.prepare(
     `INSERT OR IGNORE INTO auth_workspaces (id, schema_name, display_name, created_at)
@@ -1862,6 +1941,9 @@ export function createDatabase(
     parsed.entities.quotes ??= [];
     parsed.entities.quote_line_items ??= [];
     parsed.entities.quote_sequences ??= [];
+    for (const table of JOBS_SNAPSHOT_TABLES) {
+      parsed.entities[table] ??= [];
+    }
 
     const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
@@ -2041,6 +2123,9 @@ export function createDatabase(
 
     insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
     insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
+    for (const table of JOBS_SNAPSHOT_TABLES) {
+      insertSnapshotRows(table, snapshot.entities[table] ?? []);
+    }
     insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
 
     const foreignKeyViolations = db.prepare('PRAGMA foreign_key_check').all() as Array<
@@ -2049,6 +2134,54 @@ export function createDatabase(
     if (foreignKeyViolations.length > 0) {
       throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
     }
+  });
+
+  const jobsStore = createSqliteJobsStore({
+    db,
+    nowIso,
+    timeline: (eventKey, entityId, payload) => {
+      timeline(eventKey as TimelineEventKey, entityId, payload);
+    },
+    getJobById: (id) => {
+      const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
+      return row ? mapJobRow(row) : null;
+    },
+    updateJobSchedule: (id, input) => {
+      const existing = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow | undefined;
+      if (!existing) throw new Error('Job not found');
+      let assignedUserId = existing.assigned_user_id;
+      let assignedUserName = existing.assigned_user_name;
+      if (input.assignedUserId !== undefined) {
+        if (input.assignedUserId) {
+          const assignment = loadAssignableUserOrThrow(input.assignedUserId, null);
+          assignedUserId = assignment.userId;
+          assignedUserName = assignment.userName;
+        } else {
+          assignedUserId = null;
+          assignedUserName = null;
+        }
+      }
+      const nextStatus =
+        existing.status === 'Draft' || existing.status === 'Scheduled' || existing.status === 'Assigned'
+          ? assignedUserId
+            ? 'Assigned'
+            : 'Scheduled'
+          : existing.status;
+      db.prepare(
+        `UPDATE jobs SET scheduled_start_at = ?, scheduled_end_at = ?,
+          assigned_user_id = ?, assigned_user_name = ?, status = ?, updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        input.scheduledStartAt,
+        input.scheduledEndAt,
+        assignedUserId,
+        assignedUserName,
+        nextStatus,
+        nowIso(),
+        id,
+      );
+      return mapJobRow(db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow);
+    },
   });
 
   return {
@@ -5176,6 +5309,51 @@ export function createDatabase(
         timeline('job.completed', id, { jobNumber });
       }
 
+      jobsStore.patchJobExtras(id, {
+        siteAddress: input.siteAddress,
+        suburb: input.suburb,
+        contactPerson: input.contactPerson,
+        contactPhone: input.contactPhone,
+        internalNotes: input.internalNotes,
+        customerNotes: input.customerNotes,
+        colour: input.colour,
+        quoteId: input.quoteId,
+        invoiceId: input.invoiceId,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        estimatedTravelMinutes: input.estimatedTravelMinutes,
+      });
+
+      const assigneeIds =
+        input.assigneeUserIds ??
+        (assignment?.userId ? [assignment.userId] : []);
+      if (assigneeIds.length > 0) {
+        jobsStore.replaceAssignments(
+          id,
+          assigneeIds.map((userId, index) => ({
+            userId,
+            teamId: nextTeamId,
+            isPrimary: index === 0,
+            responseStatus: 'pending',
+          })),
+        );
+      }
+
+      if (input.scheduledStartAt && input.status === 'Scheduled') {
+        const email = db
+          .prepare('SELECT email FROM customers WHERE id = ?')
+          .get(input.customerId) as { email: string | null } | undefined;
+        if (email?.email) {
+          jobsStore.queueNotification(id, {
+            kind: 'booking_confirmation',
+            channel: 'email',
+            recipient: email.email,
+            subject: `Booking confirmation ${jobNumber}`,
+            body: `Your appointment for ${input.title} is scheduled.`,
+          });
+        }
+      }
+
       const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow;
       return mapJobRow(row);
     },
@@ -5287,6 +5465,31 @@ export function createDatabase(
         timeline('job.completed', id, {
           jobNumber: existing.job_number,
         });
+      }
+
+      jobsStore.patchJobExtras(id, {
+        siteAddress: input.siteAddress,
+        suburb: input.suburb,
+        contactPerson: input.contactPerson,
+        contactPhone: input.contactPhone,
+        internalNotes: input.internalNotes,
+        customerNotes: input.customerNotes,
+        colour: input.colour,
+        quoteId: input.quoteId,
+        invoiceId: input.invoiceId,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        estimatedTravelMinutes: input.estimatedTravelMinutes,
+      });
+      if (input.assigneeUserIds) {
+        jobsStore.replaceAssignments(
+          id,
+          input.assigneeUserIds.map((userId, index) => ({
+            userId,
+            teamId: input.teamId ?? existing.team_id,
+            isPrimary: index === 0,
+          })),
+        );
       }
 
       const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as DbJobRow;
@@ -6291,6 +6494,74 @@ export function createDatabase(
     restorePlatformSnapshot(snapshot) {
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       restorePlatformSnapshot(parsedSnapshot);
+    },
+    getJobDetail(jobId) {
+      return jobsStore.getEnrichedJob(jobId);
+    },
+    rescheduleJob(jobId, input) {
+      return jobsStore.rescheduleJob(jobId, input);
+    },
+    replaceJobAssignments(jobId, assignments) {
+      return jobsStore.replaceAssignments(jobId, assignments as any);
+    },
+    updateJobAssignmentResponse(jobId, userId, responseStatus) {
+      return jobsStore.updateAssignmentResponse(jobId, userId, responseStatus as any);
+    },
+    replaceJobChecklist(jobId, items) {
+      return jobsStore.replaceChecklist(jobId, items as any);
+    },
+    addJobTimeEntry(jobId, input) {
+      return jobsStore.addTimeEntry(jobId, input as any);
+    },
+    getJobTimeSummary(jobId) {
+      return jobsStore.summarizeTime(jobId);
+    },
+    addJobPart(jobId, input) {
+      return jobsStore.addPart(jobId, input as any);
+    },
+    addJobLabour(jobId, input) {
+      return jobsStore.addLabour(jobId, input as any);
+    },
+    addJobSignature(jobId, input) {
+      return jobsStore.addSignature(jobId, input as any);
+    },
+    listJobStatusDefinitions() {
+      return jobsStore.listStatusDefinitions();
+    },
+    upsertJobStatusDefinition(input) {
+      return jobsStore.upsertStatusDefinition(input as any);
+    },
+    createJobFormTemplate(input) {
+      return jobsStore.createFormTemplate(input as any);
+    },
+    listJobFormTemplates() {
+      return jobsStore.listFormTemplates();
+    },
+    submitJobForm(jobId, input) {
+      return jobsStore.submitForm(jobId, input as any);
+    },
+    setJobRecurrence(jobId, input) {
+      return jobsStore.setRecurrence(jobId, input as any);
+    },
+    queueJobNotification(jobId, input) {
+      return jobsStore.queueNotification(jobId, input as any);
+    },
+    listJobNotifications(jobId) {
+      return jobsStore.listNotifications(jobId);
+    },
+    listJobCalendarEvents(filter) {
+      return jobsStore.listCalendarEvents(filter as any);
+    },
+    getTechnicianDailyRoute(technicianId, day) {
+      return jobsStore.buildDailyRoute(technicianId, day);
+    },
+    createCustomerPortalToken(customerId, expiresInHours) {
+      return jobsStore.createPortalToken(customerId, expiresInHours);
+    },
+    getCustomerPortalSnapshot(token) {
+      const session = jobsStore.resolvePortalToken(token);
+      if (!session) throw new Error('PORTAL_TOKEN_INVALID');
+      return { session, ...jobsStore.getPortalSnapshot(session.customerId) };
     },
   };
 }

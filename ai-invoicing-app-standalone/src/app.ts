@@ -222,7 +222,8 @@ export async function buildApp(options: BuildAppOptions) {
     for (const path of [
       '/', '/sign-in', '/create-account', '/forgot-password', '/reset-password',
       '/auth/callback', '/dashboard', '/workspace/customers', '/workspace/quotes',
-      '/workspace/invoices', '/workspace/payments',
+      '/workspace/invoices', '/workspace/payments', '/workspace/jobs', '/workspace/schedule',
+      '/portal',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
@@ -242,6 +243,22 @@ export async function buildApp(options: BuildAppOptions) {
       return true;
     }
     if (servesFrontend && /^\/workspace\/invoices\/[^/]+\/edit$/.test(path)) {
+      return true;
+    }
+    // Customer portal pages + token-authenticated portal APIs
+    if (servesFrontend && (path === '/portal' || path.startsWith('/portal/'))) {
+      return true;
+    }
+    if (
+      /^\/api\/portal\/[^/]+$/.test(path) ||
+      /^\/portal\/[^/]+$/.test(path) ||
+      /^\/api\/portal\/[^/]+\/confirm$/.test(path) ||
+      /^\/api\/portal\/[^/]+\/reschedule-request$/.test(path) ||
+      /^\/api\/portal\/[^/]+\/quotes\/[^/]+\/approve$/.test(path) ||
+      /^\/portal\/[^/]+\/confirm$/.test(path) ||
+      /^\/portal\/[^/]+\/reschedule-request$/.test(path) ||
+      /^\/portal\/[^/]+\/quotes\/[^/]+\/approve$/.test(path)
+    ) {
       return true;
     }
     return publicPaths.has(path);

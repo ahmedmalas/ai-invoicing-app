@@ -228,6 +228,8 @@ const navItems = [
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/workspace/jobs', 'JB', 'Jobs'],
+  ['/workspace/schedule', 'SC', 'Schedule'],
   ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
@@ -689,6 +691,511 @@ function invoicesPage() {
         : empty('invoices', 'Convert an accepted quote or create an invoice directly.')) +
       '</section></main>',
   );
+}
+
+async function jobsPage() {
+  const [jobsRes, usersRes, statusesRes] = await Promise.all([
+    api('/api/jobs'),
+    api('/api/users'),
+    api('/api/job-statuses'),
+  ]);
+  const jobs = jobsRes.jobs || [];
+  const users = usersRes.users || [];
+  const statuses = statusesRes.statuses || [];
+  const statusColour = Object.fromEntries(statuses.map((s) => [s.key, s.colour]));
+
+  const rows = jobs
+    .map((job) => {
+      const customer = cache.customers.find((item) => item.id === job.customerId);
+      return (
+        '<tr data-job="' +
+        job.id +
+        '"><td class="primary-cell">' +
+        escapeHtml(job.jobNumber) +
+        '</td><td>' +
+        escapeHtml(job.title) +
+        '</td><td>' +
+        escapeHtml(customer?.displayName || 'Customer') +
+        '</td><td><span class="status-pill" style="--job-colour:' +
+        escapeHtml(job.colour || statusColour[job.status] || '#3B82F6') +
+        '">' +
+        escapeHtml(job.status) +
+        '</span></td><td>' +
+        escapeHtml(job.priority) +
+        '</td><td>' +
+        escapeHtml(job.assignedUserName || 'Unassigned') +
+        '</td><td>' +
+        (job.scheduledStartAt ? readableDate(job.scheduledStartAt.slice(0, 10)) : '—') +
+        '</td><td><div class="row-actions"><button class="button secondary small" data-open-job="' +
+        job.id +
+        '">Open</button></div></td></tr>'
+      );
+    })
+    .join('');
+
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Field service',
+        'Jobs',
+        'Schedule work, assign technicians, track time, capture signatures, and link invoices.',
+        '<button class="button secondary" data-goto-schedule>Open schedule</button><button class="button" data-new-job>New job</button>',
+      ) +
+      profileNotice() +
+      '<section class="panel">' +
+      filterBar('Search job, customer, suburb or technician') +
+      (rows
+        ? '<div class="table-wrap"><table><thead><tr><th>Job</th><th>Title</th><th>Customer</th><th>Status</th><th>Priority</th><th>Technician</th><th>Scheduled</th><th></th></tr></thead><tbody>' +
+          rows +
+          '</tbody></table></div>'
+        : empty('jobs', 'Create a job to start scheduling field work.')) +
+      '</section></main>',
+  );
+
+  document.querySelector('[data-goto-schedule]')?.addEventListener('click', () =>
+    navigate('/workspace/schedule'),
+  );
+
+  document.querySelector('[data-new-job]')?.addEventListener('click', async () => {
+    if (!cache.customers.length) {
+      alert('Create a customer first.');
+      return;
+    }
+    const customerId =
+      prompt(
+        'Customer id:\n' +
+          cache.customers
+            .slice(0, 12)
+            .map((c) => c.id + ' — ' + c.displayName)
+            .join('\n'),
+        cache.customers[0].id,
+      ) || '';
+    if (!customerId) return;
+    const title = prompt('Job title', 'Service call') || 'Service call';
+    const siteAddress = prompt('Site address', '') || '';
+    const suburb = prompt('Suburb', '') || '';
+    const start = prompt('Start (ISO)', new Date().toISOString().slice(0, 13) + ':00:00.000Z');
+    const endDate = new Date(Date.parse(start) + 3600_000).toISOString();
+    const techId = users[0]?.id;
+    const job = await api('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        customerId,
+        status: 'Scheduled',
+        priority: 'Normal',
+        scheduledStartAt: start,
+        scheduledEndAt: endDate,
+        siteAddress,
+        suburb,
+        assignedUserId: techId,
+        assigneeUserIds: techId ? [techId] : [],
+      }),
+    });
+    toast('Created ' + job.jobNumber);
+    await jobsPage();
+  });
+
+  document.querySelectorAll('[data-open-job]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const job = await api('/api/jobs/' + button.getAttribute('data-open-job'));
+      const time = await api('/api/jobs/' + job.id + '/time-summary');
+      const checklistHtml = (job.checklist || [])
+        .map(
+          (item) =>
+            '<li>' + (item.completed ? '✓ ' : '○ ') + escapeHtml(item.label) + '</li>',
+        )
+        .join('');
+      drawer(
+        'Job ' + job.jobNumber,
+        '<div class="stack">' +
+          '<p><strong>' +
+          escapeHtml(job.title) +
+          '</strong><br><span class="status-pill" style="--job-colour:' +
+          escapeHtml(job.colour || statusColour[job.status] || '#3B82F6') +
+          '">' +
+          escapeHtml(job.status) +
+          '</span></p>' +
+          '<p>' +
+          escapeHtml(job.siteAddress || 'No site address') +
+          (job.suburb ? ' · ' + escapeHtml(job.suburb) : '') +
+          '</p>' +
+          '<p>Technicians: ' +
+          escapeHtml(
+            (job.assignments || [])
+              .map((a) => a.userName + ' (' + a.responseStatus + ')')
+              .join(', ') ||
+              job.assignedUserName ||
+              'Unassigned',
+          ) +
+          '</p>' +
+          '<p>Time: ' +
+          (time.totalHours || 0) +
+          'h total · ' +
+          (time.billableHours || 0) +
+          'h billable</p>' +
+          '<div><strong>Checklist</strong><ul>' +
+          (checklistHtml || '<li>No checklist items</li>') +
+          '</ul></div>' +
+          '<div class="row-actions">' +
+          '<button class="button small" data-add-checklist>Checklist</button>' +
+          '<button class="button small" data-add-time>Log time</button>' +
+          '<button class="button small" data-add-signature>Capture signature</button>' +
+          '<button class="button secondary small" data-portal-link>Portal link</button>' +
+          '</div></div>',
+      );
+
+      document.querySelector('[data-add-checklist]')?.addEventListener('click', async () => {
+        const label = prompt('Checklist item', 'Safety briefing complete');
+        if (!label) return;
+        const items = [...(job.checklist || []).map((i) => ({ label: i.label, completed: i.completed })), { label }];
+        await api('/api/jobs/' + job.id + '/checklist', {
+          method: 'PUT',
+          body: JSON.stringify({ items }),
+        });
+        toast('Checklist updated');
+        await jobsPage();
+      });
+
+      document.querySelector('[data-add-time]')?.addEventListener('click', async () => {
+        const startedAt = new Date(Date.now() - 3600_000).toISOString();
+        const endedAt = new Date().toISOString();
+        await api('/api/jobs/' + job.id + '/time-entries', {
+          method: 'POST',
+          body: JSON.stringify({
+            entryType: 'work',
+            startedAt,
+            endedAt,
+            billable: true,
+          }),
+        });
+        toast('Time logged');
+      });
+
+      document.querySelector('[data-add-signature]')?.addEventListener('click', async () => {
+        const signerName = prompt('Printed name', 'Customer');
+        if (!signerName) return;
+        // Minimal SVG signature placeholder (base64 data URL)
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="80"><text x="10" y="50" font-size="28" font-family="cursive">' +
+          signerName.replace(/[<>&]/g, '') +
+          '</text></svg>';
+        const signatureDataUrl = 'data:image/svg+xml;base64,' + btoa(svg);
+        await api('/api/jobs/' + job.id + '/signatures', {
+          method: 'POST',
+          body: JSON.stringify({
+            signerName,
+            signatureDataUrl,
+            purpose: 'completion',
+          }),
+        });
+        toast('Signature captured');
+      });
+
+      document.querySelector('[data-portal-link]')?.addEventListener('click', async () => {
+        const token = await api('/api/portal/tokens', {
+          method: 'POST',
+          body: JSON.stringify({ customerId: job.customerId, expiresInHours: 72 }),
+        });
+        const url = location.origin + '/portal?token=' + token.token;
+        prompt('Customer portal link', url);
+      });
+    });
+  });
+}
+
+async function schedulePage() {
+  const view = new URLSearchParams(location.search).get('view') || 'week';
+  const anchor = new URLSearchParams(location.search).get('day') || new Date().toISOString().slice(0, 10);
+  const start = new Date(anchor + 'T00:00:00.000Z');
+  let from = start.toISOString();
+  let to = new Date(start.getTime() + 7 * 86400000).toISOString();
+  if (view === 'day') to = new Date(start.getTime() + 86400000).toISOString();
+  if (view === 'month') to = new Date(start.getTime() + 31 * 86400000).toISOString();
+
+  const [calendar, usersRes] = await Promise.all([
+    api(
+      '/api/jobs/calendar/events?view=' +
+        encodeURIComponent(view) +
+        '&from=' +
+        encodeURIComponent(from) +
+        '&to=' +
+        encodeURIComponent(to),
+    ),
+    api('/api/users'),
+  ]);
+  const events = calendar.events || [];
+  const users = usersRes.users || [];
+
+  const days = [];
+  const dayCount = view === 'day' ? 1 : view === 'month' ? 28 : 7;
+  for (let i = 0; i < dayCount; i += 1) {
+    const day = new Date(start.getTime() + i * 86400000).toISOString().slice(0, 10);
+    days.push(day);
+  }
+
+  const columns = days
+    .map((day) => {
+      const dayEvents = events.filter((event) => event.scheduledStartAt.slice(0, 10) === day);
+      const cards = dayEvents
+        .map(
+          (event) =>
+            '<article class="schedule-card" draggable="true" data-job-id="' +
+            event.id +
+            '" data-start="' +
+            event.scheduledStartAt +
+            '" data-end="' +
+            event.scheduledEndAt +
+            '" style="--job-colour:' +
+            escapeHtml(event.colour) +
+            '"><strong>' +
+            escapeHtml(event.jobNumber) +
+            '</strong><span>' +
+            escapeHtml(event.title) +
+            '</span><small>' +
+            escapeHtml(event.customerName || '') +
+            (event.suburb ? ' · ' + escapeHtml(event.suburb) : '') +
+            '</small><small>' +
+            escapeHtml(event.status) +
+            '</small></article>',
+        )
+        .join('');
+      return (
+        '<div class="schedule-day" data-day="' +
+        day +
+        '"><header>' +
+        readableDate(day) +
+        '</header><div class="schedule-dropzone" data-drop-day="' +
+        day +
+        '">' +
+        (cards || '<div class="schedule-empty">Drop jobs here</div>') +
+        '</div></div>'
+      );
+    })
+    .join('');
+
+  shell(
+    '<main class="page schedule-page">' +
+      pageHead(
+        'Scheduling',
+        'Schedule',
+        'Drag jobs between days. Filter by technician and jump between day, week, month and timeline views.',
+        '<a class="button secondary" data-route href="/workspace/jobs">Jobs list</a>',
+      ) +
+      '<section class="panel"><div class="panel-body filter-bar schedule-filters">' +
+      ['day', 'week', 'month', 'timeline']
+        .map(
+          (name) =>
+            '<button class="button ' +
+            (view === name ? '' : 'ghost') +
+            ' small" data-schedule-view="' +
+            name +
+            '">' +
+            name +
+            '</button>',
+        )
+        .join('') +
+      '<label>Technician<select id="schedule-tech"><option value="">All technicians</option>' +
+      users
+        .map((user) => '<option value="' + user.id + '">' + escapeHtml(user.displayName) + '</option>')
+        .join('') +
+      '</select></label>' +
+      '<button class="button secondary small" data-optimise-route>Optimise route</button>' +
+      '</div></div></section>' +
+      '<section class="schedule-board view-' +
+      escapeHtml(view) +
+      '">' +
+      columns +
+      '</section></main>',
+  );
+
+  document.querySelectorAll('[data-schedule-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const next = button.getAttribute('data-schedule-view');
+      history.pushState({}, '', '/workspace/schedule?view=' + next + '&day=' + anchor);
+      schedulePage();
+    });
+  });
+
+  let draggedId = null;
+  document.querySelectorAll('.schedule-card').forEach((card) => {
+    card.addEventListener('dragstart', () => {
+      draggedId = card.getAttribute('data-job-id');
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('[data-drop-day]').forEach((zone) => {
+    zone.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      zone.classList.add('drop-target');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drop-target'));
+    zone.addEventListener('drop', async (event) => {
+      event.preventDefault();
+      zone.classList.remove('drop-target');
+      if (!draggedId) return;
+      const day = zone.getAttribute('data-drop-day');
+      const card = document.querySelector('.schedule-card[data-job-id="' + draggedId + '"]');
+      const prevStart = card?.getAttribute('data-start');
+      const prevEnd = card?.getAttribute('data-end');
+      const duration = Math.max(30 * 60000, Date.parse(prevEnd) - Date.parse(prevStart) || 3600000);
+      const timePart = (prevStart || 'T09:00:00.000Z').slice(10);
+      const scheduledStartAt = day + timePart;
+      const scheduledEndAt = new Date(Date.parse(scheduledStartAt) + duration).toISOString();
+      await api('/api/jobs/' + draggedId + '/schedule', {
+        method: 'PATCH',
+        body: JSON.stringify({ scheduledStartAt, scheduledEndAt }),
+      });
+      toast('Rescheduled');
+      await schedulePage();
+    });
+  });
+
+  document.querySelector('[data-optimise-route]')?.addEventListener('click', async () => {
+    const technicianId = document.getElementById('schedule-tech')?.value || users[0]?.id;
+    if (!technicianId) {
+      alert('Select a technician');
+      return;
+    }
+    const route = await api(
+      '/api/jobs/routes/daily?technicianId=' +
+        encodeURIComponent(technicianId) +
+        '&day=' +
+        encodeURIComponent(anchor),
+    );
+    const lines = (route.stops || [])
+      .map(
+        (stop, index) =>
+          index +
+          1 +
+          '. ' +
+          stop.title +
+          (stop.siteAddress ? ' — ' + stop.siteAddress : '') +
+          (stop.mapsUrl ? '\n   ' + stop.mapsUrl : ''),
+      )
+      .join('\n');
+    alert(lines || 'No stops for this technician today.');
+  });
+}
+
+async function portalPage() {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  if (!token) {
+    root.innerHTML =
+      '<main class="page portal-page"><header class="page-head"><div><span class="kicker">Customer portal</span><h1>Aleya</h1><p>Open a portal link from your job confirmation email.</p></div></header></main>';
+    return;
+  }
+  try {
+    const snapshot = await fetch('/api/portal/' + encodeURIComponent(token)).then(async (res) => {
+      if (!res.ok) throw new Error('Portal link expired or invalid');
+      return res.json();
+    });
+    const appointments = (snapshot.appointments || [])
+      .map(
+        (job) =>
+          '<article class="portal-card"><strong>' +
+          escapeHtml(job.title) +
+          '</strong><span>' +
+          escapeHtml(job.status) +
+          '</span><span>' +
+          (job.scheduledStartAt ? readableDate(job.scheduledStartAt.slice(0, 10)) : 'Unscheduled') +
+          '</span><div class="row-actions"><button class="button small" data-confirm-job="' +
+          job.id +
+          '">Confirm</button><button class="button ghost small" data-reschedule-job="' +
+          job.id +
+          '">Request reschedule</button></div></article>',
+      )
+      .join('');
+    const invoices = (snapshot.invoices || [])
+      .map(
+        (invoice) =>
+          '<li>' +
+          escapeHtml(invoice.invoice_number || invoice.id) +
+          ' · ' +
+          money(invoice.total || 0) +
+          ' · <a href="/api/invoices/' +
+          invoice.id +
+          '/pdf" target="_blank">Download</a></li>',
+      )
+      .join('');
+    const quotes = (snapshot.quotes || [])
+      .map(
+        (quote) =>
+          '<li>' +
+          escapeHtml(quote.quote_number || quote.id) +
+          ' · ' +
+          escapeHtml(quote.status) +
+          (quote.status === 'Sent' || quote.status === 'Draft'
+            ? ' <button class="button ghost small" data-approve-quote="' +
+              quote.id +
+              '">Approve</button>'
+            : '') +
+          '</li>',
+      )
+      .join('');
+
+    root.innerHTML =
+      '<main class="page portal-page"><header class="page-head"><div><span class="kicker">Customer portal</span><h1>Aleya</h1><p>Appointments, quotes, invoices and job updates in one place.</p></div></header>' +
+      '<section class="panel"><div class="panel-head"><h2>Appointments</h2></div><div class="panel-body portal-grid">' +
+      (appointments || '<div class="empty">No appointments</div>') +
+      '</div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Quotes</h2></div><div class="panel-body"><ul>' +
+      (quotes || '<li>No quotes</li>') +
+      '</ul></div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Invoices</h2></div><div class="panel-body"><ul>' +
+      (invoices || '<li>No invoices</li>') +
+      '</ul></div></section></main>';
+
+    document.querySelectorAll('[data-confirm-job]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await fetch('/api/portal/' + encodeURIComponent(token) + '/confirm', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jobId: button.getAttribute('data-confirm-job') }),
+        });
+        alert('Appointment confirmed');
+        await portalPage();
+      });
+    });
+    document.querySelectorAll('[data-reschedule-job]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const preferredStartAt = prompt(
+          'Preferred start (ISO)',
+          new Date(Date.now() + 86400000).toISOString(),
+        );
+        if (!preferredStartAt) return;
+        await fetch('/api/portal/' + encodeURIComponent(token) + '/reschedule-request', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jobId: button.getAttribute('data-reschedule-job'),
+            preferredStartAt,
+          }),
+        });
+        alert('Reschedule request sent');
+      });
+    });
+    document.querySelectorAll('[data-approve-quote]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await fetch(
+          '/api/portal/' +
+            encodeURIComponent(token) +
+            '/quotes/' +
+            button.getAttribute('data-approve-quote') +
+            '/approve',
+          { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+        );
+        alert('Quote approved');
+        await portalPage();
+      });
+    });
+  } catch (error) {
+    root.innerHTML =
+      '<main class="page portal-page"><div class="notice"><strong>Portal unavailable</strong><br>' +
+      escapeHtml(error.message) +
+      '</div></main>';
+  }
 }
 
 function paymentsPage() {
@@ -1634,6 +2141,8 @@ async function renderRoute() {
     else if (path === '/workspace/quotes') quotesPage();
     else if (path === '/workspace/invoices') invoicesPage();
     else if (path === '/workspace/payments') paymentsPage();
+    else if (path === '/workspace/jobs') await jobsPage();
+    else if (path === '/workspace/schedule') await schedulePage();
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
@@ -1654,6 +2163,10 @@ async function renderRoute() {
 
 async function bootstrap() {
   try {
+    if (location.pathname === '/portal' || location.pathname.startsWith('/portal/')) {
+      await portalPage();
+      return;
+    }
     const callback = new URLSearchParams(location.hash.slice(1));
     const callbackError = callback.get('error_description') || callback.get('error');
     if (location.pathname === '/reset-password') {
