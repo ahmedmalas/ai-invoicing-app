@@ -142,6 +142,10 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/timeline',
     '/settings',
     '/logo-creator',
+    '/library',
+    '/library/recycle-bin',
+    '/workspace/jobs',
+    '/workspace/expenses',
   ]) {
     app.get(path, shell);
   }
