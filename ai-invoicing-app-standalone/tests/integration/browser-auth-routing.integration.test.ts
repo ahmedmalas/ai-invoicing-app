@@ -82,9 +82,11 @@ describe('browser authentication and routing compatibility', () => {
       '/assets/invoice-totals.js',
       '/assets/invoice-workspace.js',
       '/assets/invoice-curtain.js',
+      '/assets/logo-studio-ui.js',
       '/favicon.svg',
       '/workspace/invoices/new',
       '/settings',
+      '/logo-creator',
     ]) {
       const response = await app.inject({ method: 'GET', url: path });
       expect(response.statusCode, path).toBe(200);

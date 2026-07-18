@@ -1245,3 +1245,96 @@ td.primary-cell {
     transition: none !important;
   }
 }
+
+/* Brand logos */
+.brand-logo,
+.invoice-logo.brand-logo,
+.settings-logo-preview {
+  display: block;
+  object-fit: contain;
+  background: #fbfaf6;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.wordmark .brand-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.invoice-logo.brand-logo {
+  width: 52px;
+  height: 52px;
+}
+
+/* Logo Creator */
+.logo-studio-grid {
+  margin-bottom: 18px;
+}
+.logo-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.logo-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  overflow: hidden;
+  display: grid;
+  gap: 0;
+}
+.logo-card.is-selected {
+  border-color: var(--deep);
+  box-shadow: 0 0 0 1px var(--deep);
+}
+.logo-card-preview {
+  min-height: 140px;
+  background: linear-gradient(180deg, #f7f6f1, #fff);
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+.logo-card-preview svg {
+  width: 100%;
+  height: auto;
+  max-height: 160px;
+}
+.logo-card-meta,
+.logo-card-actions {
+  padding: 10px 12px;
+}
+.logo-card-meta {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+}
+.logo-card-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+.logo-card-meta strong {
+  text-transform: capitalize;
+}
+.logo-card-actions {
+  border-top: 1px solid var(--line);
+}
+.logo-active-preview {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.empty-state {
+  grid-column: 1 / -1;
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
