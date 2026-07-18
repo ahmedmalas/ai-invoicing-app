@@ -15,6 +15,27 @@ import type {
   SupplierBillLineItemInput,
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
+import { drawBusinessLogoMark } from './logo-pdf.js';
+
+type PdfDoc = InstanceType<typeof PDFDocument>;
+
+function writeBrandedHeader(
+  doc: PdfDoc,
+  profile: BrandingProfile | null,
+  brandPrimary: string,
+): void {
+  const logoHeight = drawBusinessLogoMark(doc, profile, 48, 48, 44);
+  const textX = logoHeight > 0 ? 104 : 48;
+  const textY = logoHeight > 0 ? 52 : 48;
+  doc
+    .fillColor(brandPrimary)
+    .fontSize(22)
+    .font('Helvetica-Bold')
+    .text(profile?.companyName ?? 'Business Name', textX, textY, { width: 280 });
+  doc.x = 48;
+  doc.y = Math.max(doc.y, 48 + (logoHeight || 28)) + 4;
+  doc.font('Helvetica');
+}
 
 export function generateInvoicePdfBuffer(input: {
   invoice: InvoiceDraft;
@@ -33,8 +54,7 @@ export function generateInvoicePdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
-    doc.moveDown(0.2);
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.fillColor('#111827').fontSize(11).text(profile?.address ?? 'Business address not set');
     if (profile?.abnTaxId) {
       doc.text(`ABN: ${profile.abnTaxId}`);
@@ -169,7 +189,7 @@ export function generateCustomerStatementPdfBuffer(input: {
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
     const statement = input.statement;
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(11).text('Customer Statement');
     doc.text(`Customer: ${statement.customer.displayName}`);
@@ -235,7 +255,7 @@ export function generateCreditNotePdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(16).text('Credit Note', { align: 'right' });
     doc.fontSize(11).text(`Credit Note #: ${input.creditNote.creditNoteNumber}`, { align: 'right' });
@@ -302,7 +322,7 @@ export function generatePaymentReceiptPdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(16).text('Payment Receipt', { align: 'right' });
     doc.fontSize(11).text(`Payment #: ${input.payment.paymentNumber}`, { align: 'right' });
@@ -376,7 +396,7 @@ export function generateSupplierBillPdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(16).text('Supplier Bill', { align: 'right' });
     doc.fontSize(11).text(`Bill Number: ${input.bill.billNumber ?? 'Draft'}`, { align: 'right' });
@@ -467,7 +487,7 @@ export function generateSupplierPaymentReceiptPdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(16).text('Supplier Payment Receipt', { align: 'right' });
     doc.fontSize(11).text(`Payment #: ${input.payment.paymentNumber}`, { align: 'right' });
@@ -541,7 +561,7 @@ export function generatePurchaseOrderPdfBuffer(input: {
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
 
-    doc.fillColor(brandPrimary).fontSize(24).text(profile?.companyName ?? 'Business Name');
+    writeBrandedHeader(doc, profile, brandPrimary);
     doc.moveDown(0.2);
     doc.fillColor('#111827').fontSize(16).text('Purchase Order', { align: 'right' });
     doc.fontSize(11).text(`PO Number: ${input.purchaseOrder.purchaseOrderNumber}`, { align: 'right' });

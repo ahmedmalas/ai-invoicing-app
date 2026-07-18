@@ -17,6 +17,7 @@ import {
   businessProfileReadinessMessage,
   isBusinessProfileReady,
 } from './business-profile-readiness.js';
+import { brandMarkHtml, buildLogoCreatorPageHtml, logoSrcFromProfile } from './logo-studio-ui.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -29,6 +30,8 @@ let drawerPointerDownTarget = null;
 let ignoreNextPopstate = false;
 let invoiceWorkspaceAction = 'save';
 let invoiceCurtainClosing = false;
+let logoStudioConcepts = [];
+let logoStudioNotice = '';
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -67,7 +70,7 @@ const errorMessages = {
   OWNER_ALREADY_PROVISIONED: 'Owner setup is already complete. Sign in instead.',
 };
 const friendlyMessage = (message) =>
-  errorMessages[message] || message || 'ABoss could not complete the request.';
+  errorMessages[message] || message || 'Aleya Invoicing could not complete the request.';
 
 function saveSession(value) {
   session = value;
@@ -169,7 +172,7 @@ function navigate(path) {
 
 function authPage(kind, message = '', success = false) {
   const pages = {
-    signin: ['Welcome back', 'Sign in', 'Use your ABoss Invoicing owner credentials.', 'Invoicing without the busywork.'],
+    signin: ['Welcome back', 'Sign in', 'Use your Aleya Invoicing owner credentials.', 'Invoicing without the busywork.'],
     signup: ['New workspace', 'Create account', 'Create a private invoicing workspace for your business.', 'Your business. Your secure workspace.'],
     forgot: ['Account recovery', 'Forgot password', 'Enter your email and we will send recovery instructions if an account exists.', 'A safe route back to your work.'],
     reset: ['Account recovery', 'Choose a new password', 'Use a strong password you have not used for this account before.', 'Secure your account. Keep moving.'],
@@ -179,7 +182,7 @@ function authPage(kind, message = '', success = false) {
   const page = pages[kind] || pages.signin;
   let form = '';
   if (kind === 'signin') {
-    form = '<form class="form" id="signin-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required minlength="12"></label><button class="button" type="submit">Continue to ABoss</button></form><nav class="auth-links" aria-label="Account options"><a href="/create-account" data-route>Create account</a><a href="/forgot-password" data-route>Forgot password?</a></nav>';
+    form = '<form class="form" id="signin-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required minlength="12"></label><button class="button" type="submit">Continue to Aleya</button></form><nav class="auth-links" aria-label="Account options"><a href="/create-account" data-route>Create account</a><a href="/forgot-password" data-route>Forgot password?</a></nav>';
   } else if (kind === 'signup') {
     form = '<form class="form" id="signup-form"><label>Name<input name="name" autocomplete="name" required minlength="2" maxlength="120"></label><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" aria-describedby="password-help"></label><span class="field-help" id="password-help">At least 12 characters with uppercase, lowercase, and a number.</span><label>Confirm password<input name="passwordConfirmation" type="password" autocomplete="new-password" required minlength="12"></label><button class="button" type="submit">Create my workspace</button></form><nav class="auth-links"><a href="/sign-in" data-route>Already have an account? Sign in</a></nav>';
   } else if (kind === 'forgot') {
@@ -193,10 +196,12 @@ function authPage(kind, message = '', success = false) {
   }
   root.innerHTML = [
     '<main class="auth-page"><section class="auth-story">',
-    '<a class="wordmark" href="/" data-route><span class="brand-mark">A</span><span><strong>ABoss</strong><small>Invoicing</small></span></a>',
+    '<a class="wordmark" href="/" data-route>' +
+      brandMarkHtml(null) +
+      '<span><strong>Aleya</strong><small>Invoicing</small></span></a>',
     '<div class="auth-copy"><span class="eyebrow">Secure business workspace</span><h1>', page[3], '</h1>',
     '<p>Customers, quotes, invoices, payments and reporting stay connected in one deliberate production workspace.</p></div>',
-    '<span class="auth-foot">ABoss Software · Australian business operations</span></section>',
+    '<span class="auth-foot">Aleya Invoicing · Professional Australian invoicing</span></section>',
     '<section class="auth-panel"><div class="auth-card"><span class="eyebrow">', page[0], '</span><h2>', page[1], '</h2><p>', page[2], '</p>',
     message ? '<div class="form-message' + (success ? ' success' : '') + '" role="status">' + escapeHtml(message) + '</div>' : '',
     form,
@@ -223,6 +228,7 @@ const navItems = [
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
   ['/settings', 'SE', 'Settings'],
@@ -234,7 +240,9 @@ function shell(content) {
     '<div class="app-shell">',
     '<div class="mobile-overlay" data-menu-close></div>',
     '<aside class="sidebar">',
-    '<a class="wordmark" href="/dashboard" data-route><span class="brand-mark">A</span><span><strong>ABoss</strong><small>Invoicing</small></span></a>',
+    '<a class="wordmark" href="/dashboard" data-route>' +
+      brandMarkHtml(cache.businessProfile) +
+      '<span><strong>Aleya</strong><small>Invoicing</small></span></a>',
     '<span class="nav-label">Workspace</span><nav class="sidebar-nav">',
     navItems
       .map(
@@ -429,7 +437,7 @@ function dashboardPage() {
   shell(
     '<main class="page">' +
       pageHead(
-        'ABoss Invoicing',
+        'Aleya Invoicing',
         'Good business starts with a clear view.',
         'Live figures from the PostgreSQL invoicing ledger.',
         '<button class="button" data-new-quote>New quote</button><button class="button secondary" data-new-payment>Record payment</button>',
@@ -941,7 +949,7 @@ function settingsPage() {
       pageHead(
         'Aleya Settings',
         'Business profile',
-        'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external ABoss settings page.',
+        'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external settings page.',
       ) +
       '<section class="grid-2 settings-grid"><article class="panel"><header class="panel-head"><h2>Business profile</h2></header><form class="form panel-body" id="profile-form"><label>Business name<input name="companyName" required value="' +
       escapeHtml(profile.companyName || '') +
@@ -959,7 +967,14 @@ function settingsPage() {
       escapeHtml(profile.primaryColor || '#173f35') +
       '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
       escapeHtml(profile.secondaryColor || '#c4f36b') +
-      '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Document readiness</h2></header><div class="panel-body stack"><div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s PostgreSQL database via <code>/api/business-profile</code>. There is no separate ABoss Settings dependency for this data.</div>' +
+      '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
+      (logoSrcFromProfile(profile)
+        ? '<div class="notice success"><strong>Logo active</strong><br>Your selected logo is used across the dashboard, invoices and PDFs.</div><img class="settings-logo-preview" src="' +
+          logoSrcFromProfile(profile) +
+          '" alt="Active logo" width="240" height="140">'
+        : '<div class="notice"><strong>No logo yet</strong><br>Create a logo once — Aleya applies it everywhere automatically.</div>') +
+      '<a class="button" href="/logo-creator" data-route>Open Logo Creator</a>' +
+      '<div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s database via <code>/api/business-profile</code>.</div>' +
       (ready
         ? '<div class="notice success"><strong>PDF downloads are ready</strong><br>' +
           escapeHtml(businessProfileReadinessMessage(profile)) +
@@ -971,11 +986,22 @@ function settingsPage() {
   );
 }
 
+function logoCreatorPage() {
+  shell(
+    buildLogoCreatorPageHtml({
+      profile: cache.businessProfile || {},
+      concepts: logoStudioConcepts,
+      selectedId: '',
+      notice: logoStudioNotice,
+    }),
+  );
+}
+
 function drawer(title, body) {
   document.querySelector('.drawer-backdrop')?.remove();
   document.body.insertAdjacentHTML(
     'beforeend',
-    '<div class="drawer-backdrop" data-drawer-backdrop><aside class="drawer"><header class="drawer-head"><div><span class="kicker">ABoss Invoicing</span><h2>' +
+    '<div class="drawer-backdrop" data-drawer-backdrop><aside class="drawer"><header class="drawer-head"><div><span class="kicker">Aleya Invoicing</span><h2>' +
       escapeHtml(title) +
       '</h2></div><button class="icon-button" data-close-drawer aria-label="Close">×</button></header>' +
       body +
@@ -1600,6 +1626,7 @@ async function renderRoute() {
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
+    else if (path === '/logo-creator') logoCreatorPage();
     else {
       history.replaceState({}, '', '/dashboard');
       dashboardPage();
@@ -1724,6 +1751,29 @@ document.addEventListener('click', async (event) => {
   }
   if (event.target.closest('[data-configure-profile]')) {
     navigate('/settings');
+    return;
+  }
+  if (event.target.closest('[data-regenerate-logos]')) {
+    const form = document.querySelector('#logo-studio-form');
+    if (form) form.requestSubmit();
+    return;
+  }
+  const selectLogo = event.target.closest('[data-select-logo]');
+  if (selectLogo) {
+    const concept = logoStudioConcepts.find((item) => item.id === selectLogo.dataset.selectLogo);
+    if (!concept) return;
+    await runAction(async () => {
+      const { svg, previewUrl, ...persisted } = concept;
+      const result = await api('/api/logo-studio/select', {
+        method: 'POST',
+        body: JSON.stringify({ concept: persisted }),
+      });
+      window.__aleyaInvalidateBusinessProfileCache?.();
+      cache.businessProfile = result.profile;
+      logoStudioNotice = 'Logo saved. Aleya now uses it across your workspace and PDFs.';
+      toast(logoStudioNotice);
+      logoCreatorPage();
+    });
     return;
   }
   if (event.target.closest('[data-new-customer]')) {
@@ -2129,6 +2179,9 @@ document.addEventListener('submit', async (event) => {
       if (!String(body.companyName || '').trim() || !String(body.address || '').trim()) {
         throw new Error('Business name and address are required to unlock PDF downloads.');
       }
+      if (cache.businessProfile?.logoReference) {
+        body.logoReference = cache.businessProfile.logoReference;
+      }
       const saved = await api('/api/business-profile', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -2141,6 +2194,27 @@ document.addEventListener('submit', async (event) => {
           : 'Business profile saved.',
       );
       await renderRoute();
+      return;
+    }
+    if (form.id === 'logo-studio-form') {
+      const payload = {
+        businessName: String(data.businessName || '').trim(),
+        industry: String(data.industry || '').trim(),
+        style: data.style,
+        primaryColor: data.primaryColor,
+        secondaryColor: data.secondaryColor,
+        ...(String(data.tagline || '').trim() ? { tagline: String(data.tagline).trim() } : {}),
+        ...(String(data.iconIdeas || '').trim() ? { iconIdeas: String(data.iconIdeas).trim() } : {}),
+        count: 6,
+      };
+      const result = await api('/api/logo-studio/generate', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      logoStudioConcepts = result.concepts || [];
+      logoStudioNotice = 'Generated ' + logoStudioConcepts.length + ' logo concepts.';
+      logoCreatorPage();
+      toast(logoStudioNotice);
       return;
     }
     if (form.id === 'report-filter') {

@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ABoss">
-  <rect width="64" height="64" rx="14" fill="#07120f"/>
-  <path d="M17 45 29 19l7 14 9-20 5 32h-8l-3-14-10 20-6-14-3 8Z" fill="#78e8a7"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aleya Invoicing">
+  <rect width="64" height="64" rx="14" fill="#0f2d26"/>
+  <path d="M18 46 30 16h7l12 30h-8l-2.4-6.5H28.4L26 46H18Zm11.2-13h7.6L33 22.8 29.2 33Z" fill="#c4f36b"/>
+  <circle cx="46" cy="18" r="4" fill="#78e8a7"/>
 </svg>

@@ -1,4 +1,5 @@
 import { calculateInvoiceTotals, calculateLineItem, readLineItemsFromForm } from './invoice-totals.js';
+import { logoSrcFromProfile } from './logo-studio-ui.js';
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -141,7 +142,15 @@ export function buildInvoiceWorkspaceHtml({
     escapeHtml(record?.status || 'Draft') +
     '">' +
     '<header class="invoice-toolbar">' +
-    '<div class="invoice-toolbar-brand"><span class="brand-mark">A</span><div><strong>Aleya Invoicing</strong><small>Tax invoice workspace</small></div></div>' +
+    '<div class="invoice-toolbar-brand">' +
+    (logoSrcFromProfile(profile)
+      ? '<img class="brand-logo" src="' +
+        logoSrcFromProfile(profile) +
+        '" alt="' +
+        escapeHtml(profile.companyName || 'Business logo') +
+        '" width="40" height="40">'
+      : '<span class="brand-mark">A</span>') +
+    '<div><strong>Aleya Invoicing</strong><small>Tax invoice workspace</small></div></div>' +
     '<div class="invoice-toolbar-actions">' +
     '<button type="submit" class="button secondary" data-invoice-action="draft">Save Draft</button>' +
     '<button type="submit" class="button" data-invoice-action="save">Save</button>' +
@@ -152,7 +161,15 @@ export function buildInvoiceWorkspaceHtml({
     '<div class="invoice-sheet">' +
     '<section class="invoice-doc-header">' +
     '<div class="invoice-company">' +
-    '<div class="invoice-logo brand-mark">A</div>' +
+    (logoSrcFromProfile(profile)
+      ? '<img class="invoice-logo brand-logo" src="' +
+        logoSrcFromProfile(profile) +
+        '" alt="' +
+        escapeHtml(profile.companyName || 'Business logo') +
+        '" width="52" height="52">'
+      : '<div class="invoice-logo brand-mark">' +
+        escapeHtml(String(profile.companyName || 'A').trim().charAt(0).toUpperCase() || 'A') +
+        '</div>') +
     '<div><h1>' +
     escapeHtml(profile.companyName || 'Your business name') +
     '</h1>' +
