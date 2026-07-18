@@ -224,6 +224,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/workspace/invoices', '/workspace/payments',
       '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
       '/assets/form-interaction-guards.js',
+      '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
       '/assets/invoice-workspace.js',
       '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',

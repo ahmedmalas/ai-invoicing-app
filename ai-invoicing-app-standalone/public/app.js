@@ -12,6 +12,10 @@ import {
   customerPreviewHtml,
   refreshInvoiceWorkspaceTotals,
 } from './invoice-workspace.js';
+import {
+  businessProfileReadinessMessage,
+  isBusinessProfileReady,
+} from './business-profile-readiness.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -289,8 +293,12 @@ function empty(label, action = '') {
 }
 
 function profileNotice() {
-  if (cache.businessProfile) return '';
-  return '<div class="notice profile-notice"><strong>Business profile required for PDFs</strong><span>Add the real business name and address before downloading customer documents.</span><button class="button small" data-configure-profile>Configure Settings</button></div>';
+  if (isBusinessProfileReady(cache.businessProfile)) return '';
+  return (
+    '<div class="notice profile-notice"><strong>Business profile required for PDFs</strong><span>' +
+    escapeHtml(businessProfileReadinessMessage(cache.businessProfile)) +
+    ' Open Aleya Settings to save your business identity.</span><button class="button small" data-configure-profile>Open Settings</button></div>'
+  );
 }
 
 function filterBar(placeholder, statuses = []) {
@@ -926,33 +934,38 @@ async function timelinePage() {
 
 function settingsPage() {
   const profile = cache.businessProfile || {};
+  const ready = isBusinessProfileReady(profile);
   shell(
     '<main class="page">' +
       pageHead(
-        'Workspace',
-        'Settings',
-        'Business identity used on every customer-facing invoice, quote and receipt.',
+        'Aleya Settings',
+        'Business profile',
+        'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external ABoss settings page.',
       ) +
       '<section class="grid-2 settings-grid"><article class="panel"><header class="panel-head"><h2>Business profile</h2></header><form class="form panel-body" id="profile-form"><label>Business name<input name="companyName" required value="' +
       escapeHtml(profile.companyName || '') +
-      '"></label><label>Legal name<input name="legalName" value="' +
+      '" autocomplete="organization"></label><label>Legal name<input name="legalName" value="' +
       escapeHtml(profile.legalName || '') +
       '"></label><div class="form-grid"><label>ABN / Tax ID<input name="abnTaxId" value="' +
       escapeHtml(profile.abnTaxId || '') +
       '"></label><label>Email<input name="email" type="email" value="' +
       escapeHtml(profile.email || '') +
-      '"></label><label>Phone<input name="phone" value="' +
+      '" autocomplete="email"></label><label>Phone<input name="phone" value="' +
       escapeHtml(profile.phone || '') +
-      '"></label><label>Address<textarea name="address">' +
+      '" autocomplete="tel"></label><label class="wide">Business address<textarea name="address" required rows="3" placeholder="Street, suburb, state, postcode">' +
       escapeHtml(profile.address || '') +
       '</textarea></label><label>Primary colour<input name="primaryColor" type="color" value="' +
       escapeHtml(profile.primaryColor || '#173f35') +
       '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
       escapeHtml(profile.secondaryColor || '#c4f36b') +
-      '" required></label></div><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Security boundary</h2></header><div class="panel-body stack"><div class="notice success"><strong>Supabase Auth</strong><br>Browser sessions use short-lived access tokens. Database service credentials never enter browser JavaScript.</div><p class="muted">ABoss Invoicing remains isolated in its own repository, Vercel project, Supabase project and PostgreSQL database while presenting one ABoss visual identity.</p>' +
-      (!cache.businessProfile
-        ? '<div class="notice"><strong>PDF downloads are paused</strong><br>Save genuine business details here before issuing customer documents.</div>'
-        : '<div class="notice success"><strong>Document identity configured</strong><br>New PDF downloads use this profile.</div>') +
+      '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Document readiness</h2></header><div class="panel-body stack"><div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s PostgreSQL database via <code>/api/business-profile</code>. There is no separate ABoss Settings dependency for this data.</div>' +
+      (ready
+        ? '<div class="notice success"><strong>PDF downloads are ready</strong><br>' +
+          escapeHtml(businessProfileReadinessMessage(profile)) +
+          '</div>'
+        : '<div class="notice"><strong>PDF downloads are paused</strong><br>' +
+          escapeHtml(businessProfileReadinessMessage(profile)) +
+          '</div>') +
       '</div></article></section></main>',
   );
 }
@@ -1123,8 +1136,8 @@ async function requestCloseInvoiceWorkspace() {
 }
 
 async function previewInvoicePdf(id) {
-  if (!cache.businessProfile)
-    throw new Error('Configure the real business profile in Settings before generating PDFs.');
+  if (!isBusinessProfileReady(cache.businessProfile))
+    throw new Error('Save your business name and address in Aleya Settings before generating PDFs.');
   let response = await fetch('/api/invoices/' + id + '/pdf', {
     headers: { authorization: 'Bearer ' + session.access_token },
   });
@@ -1541,8 +1554,8 @@ async function updateQuoteStatus(id, status) {
 }
 
 async function downloadDocument(type, id) {
-  if (!cache.businessProfile)
-    throw new Error('Configure the real business profile in Settings before generating PDFs.');
+  if (!isBusinessProfileReady(cache.businessProfile))
+    throw new Error('Save your business name and address in Aleya Settings before generating PDFs.');
   const endpoints = {
     quote: '/api/quotes/' + id + '/pdf',
     invoice: '/api/invoices/' + id + '/pdf',
@@ -1719,7 +1732,6 @@ document.addEventListener('click', async (event) => {
     return;
   }
   if (event.target.closest('[data-configure-profile]')) {
-    if (!requestCloseDrawer()) return;
     navigate('/settings');
     return;
   }
@@ -2123,8 +2135,20 @@ document.addEventListener('submit', async (event) => {
             ['primaryColor', 'secondaryColor'].includes(key) || String(value).trim(),
         ),
       );
-      await api('/api/business-profile', { method: 'POST', body: JSON.stringify(body) });
-      toast('Business profile saved. PDF downloads are ready.');
+      if (!String(body.companyName || '').trim() || !String(body.address || '').trim()) {
+        throw new Error('Business name and address are required to unlock PDF downloads.');
+      }
+      const saved = await api('/api/business-profile', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      window.__aleyaInvalidateBusinessProfileCache?.();
+      cache.businessProfile = saved;
+      toast(
+        isBusinessProfileReady(saved)
+          ? 'Business profile saved. PDF downloads are ready.'
+          : 'Business profile saved.',
+      );
       await renderRoute();
       return;
     }

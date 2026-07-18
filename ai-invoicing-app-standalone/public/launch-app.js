@@ -2,37 +2,76 @@ const originalFetch = window.fetch.bind(window);
 let businessProfileResponse = null;
 let businessProfileRequest = null;
 
+function requestUrl(input) {
+  return typeof input === 'string' ? input : input?.url || '';
+}
+
+function requestMethod(input, init = {}) {
+  return String(init.method || (typeof input !== 'string' ? input?.method : '') || 'GET').toUpperCase();
+}
+
+function businessProfilePathname(input) {
+  try {
+    return new URL(requestUrl(input), location.origin).pathname;
+  } catch {
+    return '';
+  }
+}
+
 function isBusinessProfileRead(input, init = {}) {
-  const url = typeof input === 'string' ? input : input?.url || '';
-  const method = String(init.method || (typeof input !== 'string' ? input?.method : '') || 'GET').toUpperCase();
-  return method === 'GET' && new URL(url, location.origin).pathname === '/api/business-profile';
+  return requestMethod(input, init) === 'GET' && businessProfilePathname(input) === '/api/business-profile';
+}
+
+function isBusinessProfileWrite(input, init = {}) {
+  const method = requestMethod(input, init);
+  return (
+    ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) &&
+    businessProfilePathname(input) === '/api/business-profile'
+  );
+}
+
+export function invalidateBusinessProfileCache() {
+  businessProfileResponse = null;
+  businessProfileRequest = null;
+}
+
+// Expose for app.js after profile save without relying on module graph cycles.
+window.__aleyaInvalidateBusinessProfileCache = invalidateBusinessProfileCache;
+
+async function cacheBusinessProfileResponse(response) {
+  const body = await response.clone().arrayBuffer();
+  businessProfileResponse = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  return businessProfileResponse;
 }
 
 window.fetch = async (input, init = {}) => {
+  if (isBusinessProfileWrite(input, init)) {
+    const response = await originalFetch(input, init);
+    if (response.ok) invalidateBusinessProfileCache();
+    return response;
+  }
+
   if (!isBusinessProfileRead(input, init)) return originalFetch(input, init);
 
   if (businessProfileResponse) return businessProfileResponse.clone();
 
   if (!businessProfileRequest) {
     businessProfileRequest = originalFetch(input, init)
-      .then(async (response) => {
-        const body = await response.clone().arrayBuffer();
-        businessProfileResponse = new Response(body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-        return businessProfileResponse;
-      })
-      .catch(() => null);
+      .then((response) => cacheBusinessProfileResponse(response))
+      .catch((error) => {
+        invalidateBusinessProfileCache();
+        throw error;
+      });
   }
 
-  // Business profile data is optional for the dashboard. Do not hold the
-  // complete login-to-dashboard path open while this endpoint wakes up.
-  return new Response(JSON.stringify({ status: 404, code: 'BUSINESS_PROFILE_NOT_FOUND' }), {
-    status: 404,
-    headers: { 'content-type': 'application/json' },
-  });
+  // Await the real response. Never return a synthetic 404 — that poisoned the
+  // dashboard/settings cache and left PDF generation permanently paused.
+  const response = await businessProfileRequest;
+  return response.clone();
 };
 
 const replacements = new Map([
