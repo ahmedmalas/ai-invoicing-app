@@ -228,6 +228,7 @@ const navItems = [
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/workspace/reconciliation', 'BK', 'Banking'],
   ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
@@ -765,6 +766,421 @@ function paymentsPage() {
         : empty('payments', 'Issue an invoice, then record the first receipt.')) +
       '</section></main>',
   );
+}
+
+async function reconciliationPage() {
+  const params = new URLSearchParams(location.search);
+  const statusFilter = params.get('status') || '';
+  const search = params.get('q') || '';
+  const accountId = params.get('accountId') || '';
+  const query = new URLSearchParams();
+  if (statusFilter) query.set('status', statusFilter);
+  if (search) query.set('search', search);
+  if (accountId) query.set('bankAccountId', accountId);
+  const [workspace, report] = await Promise.all([
+    api('/api/reconciliation/workspace' + (query.toString() ? '?' + query.toString() : '')),
+    api('/api/reconciliation/reports'),
+  ]);
+  const accounts = workspace.accounts || [];
+  const transactions = workspace.transactions || [];
+  const matches = (workspace.matches || []).filter((m) => m.status === 'suggested');
+  const summary = workspace.summary || { unmatched: 0, suggested: 0, matched: 0, ignored: 0 };
+
+  const accountOptions = accounts
+    .map(
+      (account) =>
+        '<option value="' +
+        account.id +
+        '"' +
+        (account.id === accountId ? ' selected' : '') +
+        '>' +
+        escapeHtml(account.nickname) +
+        ' (' +
+        escapeHtml(account.accountType.replace(/_/g, ' ')) +
+        ')</option>',
+    )
+    .join('');
+
+  const txnRows = transactions
+    .map((txn) => {
+      const related = matches.filter((m) => m.bankTransactionId === txn.id);
+      const top = related[0];
+      const suggestion = top
+        ? escapeHtml(
+            (top.allocations || [])
+              .map((a) => a.invoiceNumber || a.invoiceId.slice(0, 8))
+              .join(', ') +
+              ' · ' +
+              Math.round((top.confidence || 0) * 100) +
+              '%',
+          )
+        : '—';
+      return (
+        '<tr data-txn="' +
+        txn.id +
+        '"><td><input type="checkbox" data-txn-check value="' +
+        txn.id +
+        '"></td><td class="primary-cell">' +
+        readableDate(txn.bookedDate) +
+        '</td><td>' +
+        money(txn.amount) +
+        '</td><td>' +
+        escapeHtml(txn.description || txn.counterpartyName || '—') +
+        '</td><td>' +
+        escapeHtml(txn.reference || '—') +
+        '</td><td><span class="status ' +
+        escapeHtml(txn.status) +
+        '">' +
+        escapeHtml(txn.status) +
+        '</span></td><td>' +
+        suggestion +
+        '</td><td><div class="row-actions">' +
+        (top
+          ? '<button class="button small" data-approve-match="' +
+            top.id +
+            '">Approve</button>'
+          : '') +
+        (txn.status === 'unmatched' || txn.status === 'suggested'
+          ? '<button class="button ghost small" data-ignore-txn="' +
+            txn.id +
+            '">Ignore</button><button class="button ghost small" data-manual-match="' +
+            txn.id +
+            '">Match</button>'
+          : '') +
+        (txn.status === 'matched'
+          ? '<button class="button ghost small" data-unmatch-txn="' +
+            txn.id +
+            '">Unmatch</button>'
+          : '') +
+        '</div></td></tr>'
+      );
+    })
+    .join('');
+
+  const matchRows = matches
+    .map((match) => {
+      return (
+        '<tr><td><input type="checkbox" data-match-check value="' +
+        match.id +
+        '"></td><td class="primary-cell">' +
+        Math.round((match.confidence || 0) * 100) +
+        '% <span class="status ' +
+        escapeHtml(match.confidenceBand) +
+        '">' +
+        escapeHtml(match.confidenceBand) +
+        '</span></td><td>' +
+        escapeHtml((match.allocations || []).map((a) => a.invoiceNumber || 'Invoice').join(', ')) +
+        '</td><td>' +
+        money((match.allocations || []).reduce((sum, a) => sum + a.amount, 0)) +
+        '</td><td>' +
+        escapeHtml((match.rationale || []).slice(0, 2).join('; ') || match.matchMethod) +
+        '</td><td><button class="button small" data-approve-match="' +
+        match.id +
+        '">Approve</button></td></tr>'
+      );
+    })
+    .join('');
+
+  const accountCards = accounts.length
+    ? accounts
+        .map(
+          (account) =>
+            '<article class="metric"><span>' +
+            escapeHtml(account.nickname) +
+            '</span><strong>' +
+            money(account.balance) +
+            '</strong><small>' +
+            escapeHtml(account.institution || account.source) +
+            (account.accountNumberMasked
+              ? ' · ' + escapeHtml(account.accountNumberMasked)
+              : '') +
+            (account.lastSyncAt ? ' · synced ' + readableDate(account.lastSyncAt.slice(0, 10)) : '') +
+            '</small></article>',
+        )
+        .join('')
+    : '<div class="empty"><strong>No bank accounts yet</strong><span>Create a Business Cheque, Trust, or PayPal account to start importing.</span></div>';
+
+  shell(
+    '<main class="page recon-page">' +
+      pageHead(
+        'Banking',
+        'Reconciliation',
+        'Import statements, auto-match payments, and clear the review queue with a full audit trail.',
+        '<button class="button secondary" data-new-bank-account>Add account</button><button class="button" data-import-statement>Import statement</button>',
+      ) +
+      profileNotice() +
+      '<section class="metric-grid">' +
+      '<article class="metric"><span>Unmatched</span><strong>' +
+      summary.unmatched +
+      '</strong><small>Needs review</small></article>' +
+      '<article class="metric"><span>Suggested</span><strong>' +
+      summary.suggested +
+      '</strong><small>Awaiting approval</small></article>' +
+      '<article class="metric"><span>Matched</span><strong>' +
+      summary.matched +
+      '</strong><small>Reconciled</small></article>' +
+      '<article class="metric"><span>Cash received</span><strong>' +
+      money(report.cashReceived?.total || 0) +
+      '</strong><small>From matched credits</small></article>' +
+      '</section>' +
+      '<section class="panel"><div class="panel-head"><h2>Accounts</h2></div><div class="panel-body"><div class="metric-grid">' +
+      accountCards +
+      '</div></div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Workspace filters</h2></div><div class="panel-body">' +
+      '<form class="filter-bar recon-filters" data-recon-filters>' +
+      '<label>Account<select name="accountId"><option value="">All accounts</option>' +
+      accountOptions +
+      '</select></label>' +
+      '<label>Status<select name="status"><option value="">All</option>' +
+      ['unmatched', 'suggested', 'matched', 'ignored']
+        .map(
+          (status) =>
+            '<option value="' +
+            status +
+            '"' +
+            (status === statusFilter ? ' selected' : '') +
+            '>' +
+            status +
+            '</option>',
+        )
+        .join('') +
+      '</select></label>' +
+      '<label>Search<input name="q" value="' +
+      escapeHtml(search) +
+      '" placeholder="Description, reference, payee"></label>' +
+      '<button class="button secondary" type="submit">Apply</button>' +
+      '</form></div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Suggested matches</h2><div class="actions">' +
+      '<button class="button secondary small" data-bulk-approve>Bulk approve</button>' +
+      '</div></div><div class="panel-body">' +
+      (matchRows
+        ? '<div class="table-wrap"><table><thead><tr><th></th><th>Confidence</th><th>Invoice</th><th>Amount</th><th>Why</th><th></th></tr></thead><tbody>' +
+          matchRows +
+          '</tbody></table></div>'
+        : empty('suggested matches', 'High-confidence payments auto-reconcile; medium ones appear here.')) +
+      '</div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Imported transactions</h2><div class="actions">' +
+      '<button class="button ghost small" data-bulk-ignore>Bulk ignore</button>' +
+      '</div></div><div class="panel-body">' +
+      (txnRows
+        ? '<div class="table-wrap"><table><thead><tr><th></th><th>Date</th><th>Amount</th><th>Description</th><th>Reference</th><th>Status</th><th>Suggestion</th><th></th></tr></thead><tbody>' +
+          txnRows +
+          '</tbody></table></div>'
+        : empty('transactions', 'Import a CSV, OFX, or QIF statement to begin.')) +
+      '</div></section>' +
+      '<section class="panel"><div class="panel-head"><h2>Reporting snapshot</h2></div><div class="panel-body recon-report-grid">' +
+      '<div><strong>Outstanding invoices</strong><span>' +
+      (report.outstandingInvoices?.length || 0) +
+      ' · ' +
+      money(
+        (report.outstandingInvoices || []).reduce((sum, item) => sum + item.outstanding, 0),
+      ) +
+      '</span></div>' +
+      '<div><strong>Unmatched credits</strong><span>' +
+      (report.unmatchedPayments?.length || 0) +
+      '</span></div>' +
+      '<div><strong>Audit events</strong><span>' +
+      (report.reconciliationHistory?.length || 0) +
+      '</span></div>' +
+      '<div><strong>Aging 90+</strong><span>' +
+      money((report.paymentAging || []).find((b) => b.bucket.startsWith('90'))?.amount || 0) +
+      '</span></div>' +
+      '</div></section></main>',
+  );
+
+  document.querySelector('[data-recon-filters]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const next = new URLSearchParams();
+    if (form.get('accountId')) next.set('accountId', String(form.get('accountId')));
+    if (form.get('status')) next.set('status', String(form.get('status')));
+    if (form.get('q')) next.set('q', String(form.get('q')));
+    history.pushState({}, '', '/workspace/reconciliation' + (next.toString() ? '?' + next : ''));
+    reconciliationPage();
+  });
+
+  document.querySelector('[data-new-bank-account]')?.addEventListener('click', async () => {
+    const nickname = prompt('Account nickname', 'Business Cheque');
+    if (!nickname) return;
+    const accountType =
+      prompt(
+        'Type: business_cheque, savings, trust, cash, paypal, credit_card',
+        'business_cheque',
+      ) || 'business_cheque';
+    const institution = prompt('Institution', 'Commonwealth Bank') || '';
+    const accountNumberMasked = prompt('Masked account number', '•••• 1234') || '';
+    const bsbMasked = prompt('Masked BSB', '•••-•••') || '';
+    await api('/api/reconciliation/accounts', {
+      method: 'POST',
+      body: JSON.stringify({
+        nickname,
+        accountType,
+        institution,
+        accountNumberMasked,
+        bsbMasked,
+        currency: 'AUD',
+        source: 'manual',
+      }),
+    });
+    await reconciliationPage();
+  });
+
+  document.querySelector('[data-import-statement]')?.addEventListener('click', async () => {
+    if (!accounts.length) {
+      alert('Create a bank account first.');
+      return;
+    }
+    const selectedAccount =
+      accountId ||
+      prompt(
+        'Bank account id:\n' + accounts.map((a) => a.id + ' — ' + a.nickname).join('\n'),
+        accounts[0].id,
+      );
+    if (!selectedAccount) return;
+    const format = (prompt('Format: csv, ofx, or qif', 'csv') || 'csv').toLowerCase();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = format === 'csv' ? '.csv,text/csv' : format === 'ofx' ? '.ofx,.qfx' : '.qif';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      bytes.forEach((b) => {
+        binary += String.fromCharCode(b);
+      });
+      const contentBase64 = btoa(binary);
+      const result = await api('/api/reconciliation/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          bankAccountId: selectedAccount,
+          format,
+          filename: file.name,
+          contentBase64,
+          autoMatch: true,
+        }),
+      });
+      alert(
+        'Imported ' +
+          result.imported +
+          ' · duplicates ' +
+          result.duplicates +
+          ' · auto-matched ' +
+          result.autoMatched +
+          ' · suggested ' +
+          result.suggested,
+      );
+      await reconciliationPage();
+    };
+    input.click();
+  });
+
+  async function approveMatch(matchId) {
+    await api('/api/reconciliation/matches/' + matchId + '/approve', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    await reconciliationPage();
+  }
+
+  document.querySelectorAll('[data-approve-match]').forEach((button) => {
+    button.addEventListener('click', () => approveMatch(button.getAttribute('data-approve-match')));
+  });
+
+  document.querySelector('[data-bulk-approve]')?.addEventListener('click', async () => {
+    const matchIds = [...document.querySelectorAll('[data-match-check]:checked')].map(
+      (el) => el.value,
+    );
+    if (!matchIds.length) {
+      alert('Select suggested matches to approve.');
+      return;
+    }
+    await api('/api/reconciliation/matches/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ matchIds }),
+    });
+    await reconciliationPage();
+  });
+
+  document.querySelector('[data-bulk-ignore]')?.addEventListener('click', async () => {
+    const transactionIds = [...document.querySelectorAll('[data-txn-check]:checked')].map(
+      (el) => el.value,
+    );
+    if (!transactionIds.length) {
+      alert('Select transactions to ignore.');
+      return;
+    }
+    await api('/api/reconciliation/transactions/ignore', {
+      method: 'POST',
+      body: JSON.stringify({ transactionIds }),
+    });
+    await reconciliationPage();
+  });
+
+  document.querySelectorAll('[data-ignore-txn]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/reconciliation/transactions/ignore', {
+        method: 'POST',
+        body: JSON.stringify({ transactionIds: [button.getAttribute('data-ignore-txn')] }),
+      });
+      await reconciliationPage();
+    });
+  });
+
+  document.querySelectorAll('[data-unmatch-txn]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api(
+        '/api/reconciliation/transactions/' +
+          button.getAttribute('data-unmatch-txn') +
+          '/unmatch',
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      await reconciliationPage();
+    });
+  });
+
+  document.querySelectorAll('[data-manual-match]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const transactionId = button.getAttribute('data-manual-match');
+      const openInvoices = (cache.invoices || []).filter(
+        (invoice) =>
+          invoice.status === 'Finalised' &&
+          invoice.paymentState !== 'Paid' &&
+          invoice.paymentState !== 'Cancelled',
+      );
+      if (!openInvoices.length) {
+        alert('No open finalised invoices available to match.');
+        return;
+      }
+      const invoiceId =
+        prompt(
+          'Invoice id to allocate:\n' +
+            openInvoices
+              .slice(0, 12)
+              .map((invoice) => invoice.id + ' — ' + invoice.invoiceNumber)
+              .join('\n'),
+          openInvoices[0].id,
+        ) || '';
+      const invoice = openInvoices.find((item) => item.id === invoiceId);
+      if (!invoice) return;
+      const amount = Number(
+        prompt('Allocation amount', String(invoice.totals?.total || invoice.total || 0)),
+      );
+      if (!(amount > 0)) return;
+      await api('/api/reconciliation/manual-match', {
+        method: 'POST',
+        body: JSON.stringify({
+          bankTransactionId: transactionId,
+          customerId: invoice.customerId,
+          allocations: [{ invoiceId: invoice.id, amount }],
+          paymentMethod: 'Bank Transfer',
+        }),
+      });
+      await loadWorkspace();
+      await reconciliationPage();
+    });
+  });
 }
 
 function reportsPage() {
@@ -1634,6 +2050,7 @@ async function renderRoute() {
     else if (path === '/workspace/quotes') quotesPage();
     else if (path === '/workspace/invoices') invoicesPage();
     else if (path === '/workspace/payments') paymentsPage();
+    else if (path === '/workspace/reconciliation') await reconciliationPage();
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
