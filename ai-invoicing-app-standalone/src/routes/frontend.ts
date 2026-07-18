@@ -7,6 +7,7 @@ const tracedAssets = {
   'index.html': new URL('../../public/index.html', import.meta.url),
   'styles.css': new URL('../../public/styles.css', import.meta.url),
   'app.js': new URL('../../public/app.js', import.meta.url),
+  'form-interaction-guards.js': new URL('../../public/form-interaction-guards.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
@@ -47,6 +48,12 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .type('application/javascript; charset=utf-8')
       .header('Cache-Control', 'no-cache')
       .send(asset('app.js')),
+  );
+  app.get('/assets/form-interaction-guards.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('form-interaction-guards.js')),
   );
   app.get('/assets/launch-app.js', async (_request, reply) =>
     reply

@@ -1,3 +1,11 @@
+import {
+  hasActiveTextSelection,
+  isDrawerFormDirty,
+  markDrawerFormPristine,
+  shouldCloseDrawerOnBackdropClick,
+  shouldIgnoreGlobalShortcut,
+} from './form-interaction-guards.js';
+
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
 let session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
@@ -5,6 +13,8 @@ let currentUser = null;
 let cache = {};
 let recoveryAccessToken = null;
 let signOutInProgress = false;
+let drawerPointerDownTarget = null;
+let ignoreNextPopstate = false;
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -111,7 +121,15 @@ async function api(path, options = {}, retry = true) {
   return type.includes('application/json') ? response.json() : response;
 }
 
+function confirmDiscardUnsavedDrawerWork() {
+  const form = document.querySelector('.drawer-backdrop form');
+  if (!form || !isDrawerFormDirty(form)) return true;
+  return window.confirm('You have unsaved changes. Discard them and leave this form?');
+}
+
 function navigate(path) {
+  if (!confirmDiscardUnsavedDrawerWork()) return;
+  closeDrawer();
   history.pushState({}, '', path);
   if (currentUser) void renderRoute();
   else renderPublicAuthRoute();
@@ -922,8 +940,15 @@ function drawer(title, body) {
       body +
       '</aside></div>',
   );
+  const form = document.querySelector('.drawer-backdrop form');
+  if (form) markDrawerFormPristine(form);
 }
 const closeDrawer = () => document.querySelector('.drawer-backdrop')?.remove();
+function requestCloseDrawer() {
+  if (!confirmDiscardUnsavedDrawerWork()) return false;
+  closeDrawer();
+  return true;
+}
 
 function customerOptions(selected = '') {
   return cache.customers
@@ -1452,6 +1477,24 @@ async function runAction(action) {
   }
 }
 
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    drawerPointerDownTarget = event.target;
+  },
+  true,
+);
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.querySelector('.drawer-backdrop')) {
+    event.preventDefault();
+    requestCloseDrawer();
+    return;
+  }
+  // Future global shortcuts must not steal clipboard / text-editing keys from fields.
+  if (shouldIgnoreGlobalShortcut(event)) return;
+});
+
 document.addEventListener('click', async (event) => {
   const route = event.target.closest('[data-route]');
   if (route) {
@@ -1468,15 +1511,22 @@ document.addEventListener('click', async (event) => {
     document.querySelector('.app-shell')?.classList.remove('menu-open');
     return;
   }
+  if (event.target.closest('[data-close-drawer]')) {
+    requestCloseDrawer();
+    return;
+  }
   if (
-    event.target.closest('[data-close-drawer]') ||
-    event.target.matches('[data-drawer-backdrop]')
+    shouldCloseDrawerOnBackdropClick({
+      clickTarget: event.target,
+      pointerDownTarget: drawerPointerDownTarget,
+      hasTextSelection: hasActiveTextSelection(),
+    })
   ) {
-    closeDrawer();
+    requestCloseDrawer();
     return;
   }
   if (event.target.closest('[data-configure-profile]')) {
-    closeDrawer();
+    if (!requestCloseDrawer()) return;
     navigate('/settings');
     return;
   }
@@ -1963,5 +2013,25 @@ document.addEventListener('input', (event) => {
   }, 250);
 });
 
-window.addEventListener('popstate', () => void renderRoute());
+window.addEventListener('popstate', () => {
+  if (ignoreNextPopstate) {
+    ignoreNextPopstate = false;
+    return;
+  }
+  if (!confirmDiscardUnsavedDrawerWork()) {
+    ignoreNextPopstate = true;
+    history.go(1);
+    return;
+  }
+  closeDrawer();
+  void renderRoute();
+});
+
+window.addEventListener('beforeunload', (event) => {
+  const form = document.querySelector('.drawer-backdrop form');
+  if (!form || !isDrawerFormDirty(form)) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
 void bootstrap();
