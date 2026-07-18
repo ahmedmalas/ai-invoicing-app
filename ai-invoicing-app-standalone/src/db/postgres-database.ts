@@ -6,6 +6,19 @@ import { Pool, type PoolClient, type QueryResultRow, types as pgTypes } from 'pg
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
+import {
+  DEFAULT_DOCUMENT_TARGETS,
+  mapInvoiceTemplateRow,
+  type CreateInvoiceTemplateInput,
+  type InvoiceTemplate,
+  type UpdateInvoiceTemplateInput,
+} from '../domain/templates/invoice-template.js';
+import {
+  invoiceTemplateDesignSchema,
+  type DocumentTemplateTarget,
+  type InvoiceTemplateDesign,
+} from '../domain/templates/invoice-template-design.js';
+
 import type {
   BrandingProfile,
   CreditNote,
@@ -671,7 +684,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -712,6 +725,7 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'job_sequences',
   'idempotency_requests',
   'timeline_events',
+  'invoice_templates',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -793,6 +807,17 @@ export interface AppDatabase {
   deleteInvoiceDraft(id: string): DatabaseResult<void>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
   getInvoiceBrandingSnapshot(invoiceId: string): DatabaseResult<BrandingProfile | null>;
+  getInvoiceTemplateDesignSnapshot(invoiceId: string): DatabaseResult<InvoiceTemplateDesign | null>;
+
+  listInvoiceTemplates(): DatabaseResult<InvoiceTemplate[]>;
+  getInvoiceTemplateById(id: string, options?: { includeOriginal?: boolean }): DatabaseResult<InvoiceTemplate | null>;
+  getDefaultInvoiceTemplate(target?: DocumentTemplateTarget): DatabaseResult<InvoiceTemplate | null>;
+  createInvoiceTemplate(input: CreateInvoiceTemplateInput): DatabaseResult<InvoiceTemplate>;
+  updateInvoiceTemplate(id: string, input: UpdateInvoiceTemplateInput): DatabaseResult<InvoiceTemplate>;
+  duplicateInvoiceTemplate(id: string, name?: string): DatabaseResult<InvoiceTemplate>;
+  deleteInvoiceTemplate(id: string): DatabaseResult<void>;
+  setDefaultInvoiceTemplate(id: string): DatabaseResult<InvoiceTemplate>;
+
   createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): DatabaseResult<Quote>;
   getQuoteById(id: string): DatabaseResult<(Quote & { lineItems: LineItemInput[] }) | null>;
@@ -1794,6 +1819,7 @@ export async function createPostgresDatabase(
     parsed.entities.quotes ??= [];
     parsed.entities.quote_line_items ??= [];
     parsed.entities.quote_sequences ??= [];
+    parsed.entities.invoice_templates ??= [];
 
     const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
@@ -1804,7 +1830,10 @@ export async function createPostgresDatabase(
       entities[table] = rows.map((row) => ({ ...row }));
     }
 
-    return {
+  
+
+
+  return {
       version: parsed.version,
       products: parsed.products.map((row) => ({ ...row })),
       derived: {
@@ -1998,6 +2027,7 @@ export async function createPostgresDatabase(
 
     await insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
     await insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
+    await insertSnapshotRows('invoice_templates', snapshot.entities.invoice_templates ?? []);
     for (const row of snapshot.entities.timeline_events) {
       if (typeof row.event_key !== 'string' || typeof row.event_version !== 'number') {
         throw new Error('INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -2007,6 +2037,63 @@ export async function createPostgresDatabase(
     await insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
   });
 
+  async function applyTemplateBusinessDefaults(design: {
+    businessDefaults: {
+      companyName: string | null;
+      legalName: string | null;
+      abnTaxId: string | null;
+      address: string | null;
+      email: string | null;
+      phone: string | null;
+      website: string | null;
+      logoDataUrl?: string | null | undefined;
+    };
+    colors: { primary: string; secondary: string };
+  }): Promise<void> {
+    const defaults = design.businessDefaults;
+    const existing = (await db
+      .prepare('SELECT * FROM business_profile WHERE id = ?')
+      .get('business-profile')) as Record<string, unknown> | undefined;
+    const companyName =
+      defaults.companyName ||
+      (existing ? String(existing.company_name) : null) ||
+      'My Business';
+    const logoReference =
+      defaults.logoDataUrl && defaults.logoDataUrl.startsWith('data:')
+        ? defaults.logoDataUrl
+        : existing
+          ? ((existing.logo_reference as string | null) ?? null)
+          : null;
+    await db
+      .prepare(
+        `INSERT INTO business_profile (id, company_name, legal_name, abn_tax_id, address, email, phone, logo_reference, primary_color, secondary_color, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         company_name = excluded.company_name,
+         legal_name = COALESCE(excluded.legal_name, business_profile.legal_name),
+         abn_tax_id = COALESCE(excluded.abn_tax_id, business_profile.abn_tax_id),
+         address = COALESCE(excluded.address, business_profile.address),
+         email = COALESCE(excluded.email, business_profile.email),
+         phone = COALESCE(excluded.phone, business_profile.phone),
+         logo_reference = COALESCE(excluded.logo_reference, business_profile.logo_reference),
+         primary_color = excluded.primary_color,
+         secondary_color = excluded.secondary_color,
+         updated_at = excluded.updated_at`,
+      )
+      .run(
+        'business-profile',
+        companyName,
+        defaults.legalName,
+        defaults.abnTaxId,
+        defaults.address,
+        defaults.email,
+        defaults.phone,
+        logoReference,
+        design.colors.primary,
+        design.colors.secondary,
+        nowIso(),
+      );
+  }
   const implementation: AppDatabase = {
     async close() {
       await pool.end();
@@ -2673,12 +2760,14 @@ export async function createPostgresDatabase(
           throw new Error('Failed to load finalised invoice');
         }
 
-        // Freeze active branding with the invoice so later Brand Kit changes
-        // do not rewrite previously issued documents.
+        // Freeze active branding + template design so later Brand Kit / template
+        // changes do not rewrite previously issued documents.
         const brandingProfile = await this.getBusinessProfile();
+        const activeTemplate = await this.getDefaultInvoiceTemplate('invoice');
         const snapshotPayload = {
           invoice: finalised,
           branding: brandingProfile,
+          templateDesign: activeTemplate?.design ?? null,
           brandedAt: now,
         };
 
@@ -2717,6 +2806,229 @@ export async function createPostgresDatabase(
       } catch {
         return null;
       }
+    },
+
+    async getInvoiceTemplateDesignSnapshot(invoiceId) {
+      const row = (await db
+        .prepare(
+          `SELECT snapshot_json FROM invoice_snapshots
+           WHERE invoice_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get(invoiceId)) as { snapshot_json: string } | undefined;
+      if (!row?.snapshot_json) return null;
+      try {
+        const parsed = JSON.parse(row.snapshot_json) as {
+          templateDesign?: unknown;
+        };
+        if (!parsed?.templateDesign) return null;
+        return invoiceTemplateDesignSchema.parse(parsed.templateDesign);
+      } catch {
+        return null;
+      }
+    },
+
+    async listInvoiceTemplates() {
+      const rows = (await db
+        .prepare(
+          `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                  business_entity_id, document_targets_json, source, created_at, updated_at
+           FROM invoice_templates
+           ORDER BY is_default DESC, updated_at DESC, name ASC`,
+        )
+        .all()) as Record<string, unknown>[];
+      return rows.map((row) => mapInvoiceTemplateRow(row));
+    },
+
+    async getInvoiceTemplateById(id, options) {
+      const row = (await db
+        .prepare(
+          options?.includeOriginal
+            ? `SELECT * FROM invoice_templates WHERE id = ?`
+            : `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                      business_entity_id, document_targets_json, source, created_at, updated_at
+               FROM invoice_templates WHERE id = ?`,
+        )
+        .get(id)) as Record<string, unknown> | undefined;
+      return row
+        ? mapInvoiceTemplateRow(
+            row,
+            options?.includeOriginal ? { includeOriginal: true } : undefined,
+          )
+        : null;
+    },
+
+    async getDefaultInvoiceTemplate(target) {
+      const rows = (await db
+        .prepare(
+          `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                  business_entity_id, document_targets_json, source, created_at, updated_at
+           FROM invoice_templates
+           WHERE is_default = 1
+           ORDER BY updated_at DESC
+           LIMIT 5`,
+        )
+        .all()) as Record<string, unknown>[];
+      const mapped = rows.map((row) => mapInvoiceTemplateRow(row));
+      if (!mapped.length) return null;
+      if (!target) return mapped[0] ?? null;
+      return mapped.find((item) => item.documentTargets.includes(target)) ?? mapped[0] ?? null;
+    },
+
+    async createInvoiceTemplate(input) {
+      return db.transaction(async (txInput: CreateInvoiceTemplateInput) => {
+        const id = randomUUID();
+        const now = nowIso();
+        const targets = txInput.documentTargets?.length
+          ? txInput.documentTargets
+          : DEFAULT_DOCUMENT_TARGETS;
+        const makeDefault = txInput.isDefault !== false;
+        if (makeDefault) {
+          await db.prepare('UPDATE invoice_templates SET is_default = 0').run();
+        }
+        await db
+          .prepare(
+            `INSERT INTO invoice_templates (
+             id, name, is_default, design_json, original_filename, original_mime_type,
+             original_file_base64, business_entity_id, document_targets_json, source, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            txInput.name,
+            makeDefault ? 1 : 0,
+            JSON.stringify(txInput.design),
+            txInput.originalFilename ?? null,
+            txInput.originalMimeType ?? null,
+            txInput.originalFileBase64 ?? null,
+            txInput.businessEntityId ?? null,
+            JSON.stringify(targets),
+            txInput.source ?? 'manual',
+            now,
+            now,
+          );
+        if (txInput.applyBusinessDefaults) {
+          await applyTemplateBusinessDefaults(txInput.design);
+        }
+        await timeline('invoice_template.created', id, {
+          name: txInput.name,
+          source: txInput.source ?? 'manual',
+        });
+        const row = (await db
+          .prepare(
+            `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                  business_entity_id, document_targets_json, source, created_at, updated_at
+           FROM invoice_templates WHERE id = ?`,
+          )
+          .get(id)) as Record<string, unknown>;
+        return mapInvoiceTemplateRow(row);
+      })(input);
+    },
+
+    async updateInvoiceTemplate(id, input) {
+      return db.transaction(async (templateId: string, txInput: UpdateInvoiceTemplateInput) => {
+        const existing = (await db
+          .prepare('SELECT * FROM invoice_templates WHERE id = ?')
+          .get(templateId)) as Record<string, unknown> | undefined;
+        if (!existing) throw new Error('INVOICE_TEMPLATE_NOT_FOUND');
+        const now = nowIso();
+        if (txInput.isDefault === true) {
+          await db.prepare('UPDATE invoice_templates SET is_default = 0').run();
+        }
+        const nextName = txInput.name ?? String(existing.name);
+        const nextDesign = txInput.design
+          ? JSON.stringify(txInput.design)
+          : String(existing.design_json);
+        const nextTargets = txInput.documentTargets
+          ? JSON.stringify(txInput.documentTargets)
+          : String(existing.document_targets_json);
+        const nextDefault =
+          txInput.isDefault === undefined
+            ? Number(existing.is_default)
+            : txInput.isDefault
+              ? 1
+              : 0;
+        const nextEntity =
+          txInput.businessEntityId === undefined
+            ? (existing.business_entity_id as string | null)
+            : txInput.businessEntityId;
+        await db
+          .prepare(
+            `UPDATE invoice_templates
+           SET name = ?, is_default = ?, design_json = ?, business_entity_id = ?,
+               document_targets_json = ?, updated_at = ?
+           WHERE id = ?`,
+          )
+          .run(nextName, nextDefault, nextDesign, nextEntity, nextTargets, now, templateId);
+        if (txInput.applyBusinessDefaults && txInput.design) {
+          await applyTemplateBusinessDefaults(txInput.design);
+        }
+        await timeline('invoice_template.updated', templateId, { name: nextName });
+        const row = (await db
+          .prepare(
+            `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                  business_entity_id, document_targets_json, source, created_at, updated_at
+           FROM invoice_templates WHERE id = ?`,
+          )
+          .get(templateId)) as Record<string, unknown>;
+        return mapInvoiceTemplateRow(row);
+      })(id, input);
+    },
+
+    async duplicateInvoiceTemplate(id, name) {
+      const existing = await this.getInvoiceTemplateById(id, { includeOriginal: true });
+      if (!existing) throw new Error('INVOICE_TEMPLATE_NOT_FOUND');
+      return this.createInvoiceTemplate({
+        name: name?.trim() || `${existing.name} (Copy)`,
+        design: existing.design,
+        isDefault: false,
+        originalFilename: existing.originalFilename,
+        originalMimeType: existing.originalMimeType,
+        originalFileBase64: existing.originalFileBase64 ?? null,
+        businessEntityId: existing.businessEntityId,
+        documentTargets: existing.documentTargets,
+        source: 'duplicated',
+      });
+    },
+
+    async deleteInvoiceTemplate(id) {
+      const existing = (await db
+        .prepare('SELECT id, is_default FROM invoice_templates WHERE id = ?')
+        .get(id)) as { id: string; is_default: number } | undefined;
+      if (!existing) throw new Error('INVOICE_TEMPLATE_NOT_FOUND');
+      await db.prepare('DELETE FROM invoice_templates WHERE id = ?').run(id);
+      if (Number(existing.is_default) === 1) {
+        const next = (await db
+          .prepare(`SELECT id FROM invoice_templates ORDER BY updated_at DESC LIMIT 1`)
+          .get()) as { id: string } | undefined;
+        if (next) {
+          await db.prepare('UPDATE invoice_templates SET is_default = 1 WHERE id = ?').run(next.id);
+        }
+      }
+      await timeline('invoice_template.deleted', id, {});
+    },
+
+    async setDefaultInvoiceTemplate(id) {
+      return db.transaction(async (templateId: string) => {
+        const existing = (await db
+          .prepare('SELECT id FROM invoice_templates WHERE id = ?')
+          .get(templateId)) as { id: string } | undefined;
+        if (!existing) throw new Error('INVOICE_TEMPLATE_NOT_FOUND');
+        await db.prepare('UPDATE invoice_templates SET is_default = 0').run();
+        await db
+          .prepare('UPDATE invoice_templates SET is_default = 1, updated_at = ? WHERE id = ?')
+          .run(nowIso(), templateId);
+        await timeline('invoice_template.default_set', templateId, {});
+        const row = (await db
+          .prepare(
+            `SELECT id, name, is_default, design_json, original_filename, original_mime_type,
+                  business_entity_id, document_targets_json, source, created_at, updated_at
+           FROM invoice_templates WHERE id = ?`,
+          )
+          .get(templateId)) as Record<string, unknown>;
+        return mapInvoiceTemplateRow(row);
+      })(id);
     },
 
     async createQuote(input) {

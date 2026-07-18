@@ -142,6 +142,8 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/timeline',
     '/settings',
     '/logo-creator',
+    '/templates',
+    '/templates/import',
   ]) {
     app.get(path, shell);
   }

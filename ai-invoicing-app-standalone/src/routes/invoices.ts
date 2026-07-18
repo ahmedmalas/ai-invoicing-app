@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
+import { generateTemplatedInvoicePdfBuffer } from '../domain/templates/template-pdf.js';
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
 import { parsePagination } from './pagination.js';
 
@@ -89,16 +90,31 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: 'Invoice customer missing' });
     }
 
-    // Finalised invoices keep the branding frozen at issue time.
+    // Finalised invoices keep branding + template design frozen at issue time.
     const frozenBranding =
       invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
     const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
-    const pdfBuffer = await generateInvoicePdfBuffer({
-      invoice,
-      lineItems: invoice.lineItems,
-      customer,
-      businessProfile,
-    });
+    const frozenDesign =
+      invoice.status === 'Finalised'
+        ? await app.db.getInvoiceTemplateDesignSnapshot(invoice.id)
+        : null;
+    const liveTemplate =
+      invoice.status === 'Finalised' ? null : await app.db.getDefaultInvoiceTemplate('invoice');
+    const design = frozenDesign ?? liveTemplate?.design ?? null;
+    const pdfBuffer = design
+      ? await generateTemplatedInvoicePdfBuffer({
+          invoice,
+          lineItems: invoice.lineItems,
+          customer,
+          businessProfile,
+          design,
+        })
+      : await generateInvoicePdfBuffer({
+          invoice,
+          lineItems: invoice.lineItems,
+          customer,
+          businessProfile,
+        });
 
     return reply
       .code(200)

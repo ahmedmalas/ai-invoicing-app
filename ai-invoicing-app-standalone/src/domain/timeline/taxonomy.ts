@@ -22,6 +22,10 @@ export const TIMELINE_EVENT_KEYS = [
   'customer.updated',
   'business_profile.updated',
   'preferences.updated',
+  'invoice_template.created',
+  'invoice_template.updated',
+  'invoice_template.deleted',
+  'invoice_template.default_set',
   'job.created',
   'job.updated',
   'job.completed',
@@ -49,6 +53,7 @@ export type TimelineCategory =
   | 'customer'
   | 'business_profile'
   | 'preferences'
+  | 'invoice_template'
   | 'job'
   | 'team';
 
@@ -311,6 +316,46 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.preferences.updated.v1',
     legacyEventType: 'Preferences Updated',
+  },
+  'invoice_template.created': {
+    key: 'invoice_template.created',
+    version: 1,
+    category: 'invoice_template',
+    entityType: 'invoice_template',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.invoice_template.created.v1',
+    legacyEventType: 'Invoice Template Created',
+  },
+  'invoice_template.updated': {
+    key: 'invoice_template.updated',
+    version: 1,
+    category: 'invoice_template',
+    entityType: 'invoice_template',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.invoice_template.updated.v1',
+    legacyEventType: 'Invoice Template Updated',
+  },
+  'invoice_template.deleted': {
+    key: 'invoice_template.deleted',
+    version: 1,
+    category: 'invoice_template',
+    entityType: 'invoice_template',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.invoice_template.deleted.v1',
+    legacyEventType: 'Invoice Template Deleted',
+  },
+  'invoice_template.default_set': {
+    key: 'invoice_template.default_set',
+    version: 1,
+    category: 'invoice_template',
+    entityType: 'invoice_template',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.invoice_template.default_set.v1',
+    legacyEventType: 'Invoice Template Default Set',
   },
   'job.created': {
     key: 'job.created',

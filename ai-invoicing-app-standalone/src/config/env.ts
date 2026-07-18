@@ -30,7 +30,7 @@ const envSchema = z
       .url()
       .refine((value) => new URL(value).origin === value, 'PUBLIC_APP_URL must be a URL origin')
       .default('https://ai-invoicing-app.vercel.app'),
-    REQUEST_BODY_LIMIT: z.coerce.number().int().min(1024).max(10_485_760).default(1_048_576),
+    REQUEST_BODY_LIMIT: z.coerce.number().int().min(1024).max(15_728_640).default(5_242_880),
     ABOSS_INTEGRATION_SECRET: z.string().min(32).optional(),
     ABOSS_INTEGRATION_ACTOR_USER_ID: z.string().uuid().optional(),
     ABOSS_ALLOWED_ORGANIZATION_ID: z.string().uuid().optional(),
