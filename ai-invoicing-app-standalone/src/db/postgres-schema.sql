@@ -407,6 +407,81 @@ CREATE TABLE IF NOT EXISTS reminder_states (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS expenses (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  merchant TEXT,
+  expense_date TEXT NOT NULL,
+  total DOUBLE PRECISION NOT NULL,
+  gst DOUBLE PRECISION NOT NULL DEFAULT 0,
+  invoice_number TEXT,
+  reference_number TEXT,
+  notes TEXT,
+  customer_id TEXT,
+  job_id TEXT,
+  supplier_id TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  parent_entity_type TEXT NOT NULL,
+  parent_entity_id TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  caption TEXT,
+  notes TEXT,
+  job_photo_stage TEXT,
+  gps_latitude DOUBLE PRECISION,
+  gps_longitude DOUBLE PRECISION,
+  captured_at TEXT,
+  uploaded_by_user_id TEXT,
+  uploaded_by_name TEXT,
+  transform_json TEXT NOT NULL,
+  receipt_ocr_json TEXT,
+  storage_backend TEXT NOT NULL,
+  content_base64 TEXT,
+  checksum_sha256 TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attachment_versions (
+  id TEXT PRIMARY KEY,
+  attachment_id TEXT NOT NULL REFERENCES attachments(id),
+  version INTEGER NOT NULL,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  content_base64 TEXT,
+  checksum_sha256 TEXT NOT NULL,
+  transform_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by_user_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS storage_settings (
+  id TEXT PRIMARY KEY CHECK (id = 'storage-settings'),
+  retention_days INTEGER NOT NULL DEFAULT 365,
+  soft_delete_retention_days INTEGER NOT NULL DEFAULT 30,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status);
+CREATE INDEX IF NOT EXISTS idx_attachments_parent ON attachments(parent_entity_type, parent_entity_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_attachments_category ON attachments(category, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_attachments_deleted ON attachments(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_attachments_job_stage ON attachments(job_photo_stage);
+CREATE INDEX IF NOT EXISTS idx_attachment_versions_attachment ON attachment_versions(attachment_id, version);
+
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
 CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(display_name);
 CREATE INDEX IF NOT EXISTS idx_suppliers_created_order ON suppliers(created_at, id);

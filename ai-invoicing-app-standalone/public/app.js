@@ -227,12 +227,285 @@ const navItems = [
   ['/workspace/customers', 'CU', 'Customers'],
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
+  ['/workspace/jobs', 'JB', 'Jobs'],
+  ['/workspace/expenses', 'EX', 'Expenses'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/library', 'LB', 'Library'],
   ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
   ['/settings', 'SE', 'Settings'],
 ];
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',')[1] : result);
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function openAttachmentViewer(id) {
+  const headers = {};
+  if (session?.access_token) headers.authorization = 'Bearer ' + session.access_token;
+  const response = await fetch('/api/attachments/' + id + '/content', { headers });
+  if (!response.ok) throw new Error('Could not open attachment.');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 120_000);
+}
+
+function attachmentRowsHtml(attachments, options = {}) {
+  if (!attachments.length) {
+    return '<div class="notice"><strong>No files yet</strong><br>Upload receipts, job photos, warranties or supporting documents.</div>';
+  }
+  return (
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Category</th><th>Linked</th><th>Size</th><th></th></tr></thead><tbody>' +
+    attachments
+      .map((item) => {
+        const stage = item.jobPhotoStage ? ' · ' + item.jobPhotoStage : '';
+        return (
+          '<tr><td><strong>' +
+          escapeHtml(item.filename) +
+          '</strong><div class="muted">' +
+          escapeHtml(item.caption || item.mimeType) +
+          stage +
+          '</div></td><td>' +
+          escapeHtml(item.category) +
+          '</td><td class="muted">' +
+          escapeHtml(item.parentEntityType) +
+          '<br>' +
+          escapeHtml(String(item.parentEntityId).slice(0, 8)) +
+          '</td><td>' +
+          formatBytes(item.byteSize) +
+          '</td><td class="row-actions">' +
+          '<button type="button" class="button button-secondary" data-attachment-view="' +
+          escapeHtml(item.id) +
+          '">View</button>' +
+          (options.recycle
+            ? '<button type="button" class="button button-secondary" data-attachment-restore="' +
+              escapeHtml(item.id) +
+              '">Restore</button><button type="button" class="button button-danger" data-attachment-purge="' +
+              escapeHtml(item.id) +
+              '">Delete forever</button>'
+            : '<button type="button" class="button button-danger" data-attachment-delete="' +
+              escapeHtml(item.id) +
+              '">Delete</button>') +
+          '</td></tr>'
+        );
+      })
+      .join('') +
+    '</tbody></table></div>'
+  );
+}
+
+async function libraryPage(recycle = false) {
+  const params = new URLSearchParams({ limit: '100' });
+  if (recycle) params.set('deletedOnly', '1');
+  const q = new URLSearchParams(location.search).get('q');
+  if (q) params.set('q', q);
+  let payload = { attachments: [], totalBytes: 0, count: 0 };
+  let storage = null;
+  try {
+    payload = await api('/api/attachments?' + params.toString());
+    storage = await api('/api/attachments/storage');
+  } catch (error) {
+    toast(error.message, true);
+  }
+  shell(
+    '<main class="page">' +
+      pageHead(
+        recycle ? 'Recycle bin' : 'Document library',
+        recycle ? 'Soft-deleted files' : 'Central file library',
+        recycle
+          ? 'Restore deleted attachments or purge them permanently. Historical invoices stay unchanged.'
+          : 'Search and filter receipts, job photos, warranties and supporting documents across Aleya.',
+        recycle
+          ? '<a class="button button-secondary" href="/library" data-route>Back to library</a>'
+          : '<a class="button button-secondary" href="/library/recycle-bin" data-route>Recycle bin</a>',
+      ) +
+      (storage
+        ? '<section class="metric-grid"><article class="metric"><span>Active files</span><strong>' +
+          storage.activeCount +
+          '</strong><small>' +
+          formatBytes(storage.activeBytes) +
+          '</small></article><article class="metric"><span>Recycle bin</span><strong>' +
+          storage.deletedCount +
+          '</strong><small>' +
+          formatBytes(storage.deletedBytes) +
+          '</small></article><article class="metric"><span>Retention</span><strong>' +
+          storage.retentionDays +
+          'd</strong><small>Soft delete ' +
+          storage.softDeleteRetentionDays +
+          'd</small></article></section>'
+        : '') +
+      (recycle
+        ? ''
+        : '<section class="panel"><header class="panel-head"><h2>Upload</h2></header><form class="form panel-body" id="library-upload-form"><div class="form-grid"><label>Parent type<select name="parentEntityType" required><option value="customer">Customer</option><option value="job">Job</option><option value="quote">Quote</option><option value="invoice">Invoice</option><option value="expense" selected>Expense</option><option value="payment">Payment</option><option value="supplier">Supplier</option><option value="product">Product</option><option value="vehicle">Vehicle</option><option value="employee">Employee</option><option value="equipment">Equipment</option></select></label><label>Parent ID<input name="parentEntityId" required placeholder="Entity UUID"></label><label>Category<select name="category"><option value="receipt">Receipt</option><option value="job_photo">Job photo</option><option value="warranty">Warranty</option><option value="manual">Manual</option><option value="supporting" selected>Supporting</option><option value="other">Other</option></select></label><label>Tags<input name="tags" placeholder="site, warranty"></label><label>Caption<input name="caption" maxlength="400"></label><label class="wide">Files<input name="files" type="file" multiple required accept=".jpg,.jpeg,.png,.heic,.webp,.pdf,.docx,.xlsx,.txt,image/*,application/pdf" capture="environment"></label></div><button class="button" type="submit">Upload files</button></form></section>') +
+      '<section class="panel section-gap"><header class="panel-head"><h2>' +
+      (recycle ? 'Deleted files' : 'Files') +
+      '</h2><form class="filter-bar" id="library-search-form"><label>Search<input name="q" type="search" value="' +
+      escapeHtml(q || '') +
+      '" placeholder="Filename, caption, tags"></label><button class="button button-secondary" type="submit">Search</button></form></header><div class="panel-body">' +
+      attachmentRowsHtml(payload.attachments || [], { recycle }) +
+      '</div></section></main>',
+  );
+}
+
+async function jobsPage() {
+  let jobs = [];
+  try {
+    const result = await api('/api/jobs');
+    jobs = Array.isArray(result) ? result : result.jobs || [];
+  } catch (error) {
+    toast(error.message, true);
+  }
+  const selectedId = new URLSearchParams(location.search).get('jobId') || jobs[0]?.id || '';
+  let photos = { attachments: [] };
+  if (selectedId) {
+    try {
+      photos = await api(
+        '/api/entities/job/' +
+          selectedId +
+          '/attachments?category=job_photo&limit=100',
+      );
+    } catch {
+      photos = { attachments: [] };
+    }
+  }
+  const stages = ['before', 'during', 'after', 'completed'];
+  const stageBlocks = stages
+    .map((stage) => {
+      const items = (photos.attachments || []).filter((item) => item.jobPhotoStage === stage);
+      return (
+        '<article class="panel"><header class="panel-head"><h2>' +
+        stage.charAt(0).toUpperCase() +
+        stage.slice(1) +
+        '</h2><span class="muted">' +
+        items.length +
+        ' photo' +
+        (items.length === 1 ? '' : 's') +
+        '</span></header><div class="panel-body">' +
+        (items.length
+          ? '<div class="photo-grid">' +
+            items
+              .map(
+                (item) =>
+                  '<button type="button" class="photo-card" data-attachment-view="' +
+                  escapeHtml(item.id) +
+                  '"><strong>' +
+                  escapeHtml(item.filename) +
+                  '</strong><span class="muted">' +
+                  escapeHtml(item.caption || 'No caption') +
+                  '</span></button>',
+              )
+              .join('') +
+            '</div>'
+          : '<p class="muted">No photos in this stage yet.</p>') +
+        '</div></article>'
+      );
+    })
+    .join('');
+
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Jobs & site photos',
+        'Job photo management',
+        'Organise unlimited Before / During / After / Completed photo groups with captions, notes and GPS.',
+      ) +
+      '<section class="panel"><header class="panel-head"><h2>Select job</h2></header><div class="panel-body stack">' +
+      (jobs.length
+        ? '<label>Job<select id="job-photo-select">' +
+          jobs
+            .map(
+              (job) =>
+                '<option value="' +
+                escapeHtml(job.id) +
+                '"' +
+                (job.id === selectedId ? ' selected' : '') +
+                '>' +
+                escapeHtml((job.jobNumber || '') + ' ' + (job.title || 'Job')) +
+                '</option>',
+            )
+            .join('') +
+          '</select></label>'
+        : '<div class="notice">No jobs yet. Create a job via the API, then attach site photos here.</div>') +
+      (selectedId
+        ? '<form class="form" id="job-photo-upload-form"><input type="hidden" name="jobId" value="' +
+          escapeHtml(selectedId) +
+          '"><div class="form-grid"><label>Stage<select name="jobPhotoStage" required><option value="before">Before</option><option value="during">During</option><option value="after">After</option><option value="completed">Completed</option></select></label><label>Caption<input name="caption" maxlength="400"></label><label class="wide">Photos<input name="files" type="file" multiple required accept="image/*" capture="environment"></label></div><button class="button" type="submit">Upload job photos</button></form>'
+        : '') +
+      '</div></section><section class="grid-2 section-gap">' +
+      stageBlocks +
+      '</section></main>',
+  );
+}
+
+async function expensesPage() {
+  let expenses = [];
+  try {
+    const result = await api('/api/expenses');
+    expenses = result.expenses || [];
+  } catch (error) {
+    toast(error.message, true);
+  }
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Expenses & receipts',
+        'Receipt management',
+        'Attach receipt photos or PDFs, run OCR field extraction, and edit merchant/date/total before saving.',
+      ) +
+      '<section class="grid-2"><article class="panel"><header class="panel-head"><h2>New expense</h2></header><form class="form panel-body" id="expense-create-form"><div class="form-grid"><label>Title<input name="title" required maxlength="200"></label><label>Merchant<input name="merchant" maxlength="200"></label><label>Date<input name="expenseDate" type="date" required></label><label>Total<input name="total" type="number" min="0" step="0.01" required></label><label>GST<input name="gst" type="number" min="0" step="0.01" value="0"></label><label>Invoice # <input name="invoiceNumber"></label><label>Reference<input name="referenceNumber"></label><label class="wide">Notes<textarea name="notes" rows="2"></textarea></label></div><button class="button" type="submit">Create expense</button></form></article><article class="panel"><header class="panel-head"><h2>Attach receipt</h2></header><form class="form panel-body" id="expense-receipt-form"><div class="form-grid"><label>Expense<select name="expenseId" required><option value="">Select expense</option>' +
+      expenses
+        .map(
+          (item) =>
+            '<option value="' +
+            escapeHtml(item.id) +
+            '">' +
+            escapeHtml(item.title) +
+            ' · ' +
+            money(item.total) +
+            '</option>',
+        )
+        .join('') +
+      '</select></label><label class="wide">Receipt file<input name="file" type="file" required accept=".jpg,.jpeg,.png,.heic,.webp,.pdf,.docx,.txt,image/*,application/pdf" capture="environment"></label><label class="checkbox-row"><input type="checkbox" name="runOcr" checked> Run OCR extraction</label></div><div id="receipt-ocr-preview" class="notice" hidden></div><button class="button" type="submit">Upload receipt</button></form></article></section><section class="panel section-gap"><header class="panel-head"><h2>Expenses</h2></header><div class="panel-body">' +
+      (expenses.length
+        ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Merchant</th><th>Date</th><th>Total</th><th>Status</th></tr></thead><tbody>' +
+          expenses
+            .map(
+              (item) =>
+                '<tr><td>' +
+                escapeHtml(item.title) +
+                '</td><td>' +
+                escapeHtml(item.merchant || '—') +
+                '</td><td>' +
+                escapeHtml(item.expenseDate) +
+                '</td><td>' +
+                money(item.total) +
+                '</td><td>' +
+                escapeHtml(item.status) +
+                '</td></tr>',
+            )
+            .join('') +
+          '</tbody></table></div>'
+        : '<div class="notice">No expenses yet.</div>') +
+      '</div></section></main>',
+  );
+}
 
 function shell(content) {
   const path = location.pathname;
@@ -248,7 +521,12 @@ function shell(content) {
       .map(
         ([href, glyph, label]) =>
           '<a class="nav-item ' +
-          (path === href ? 'active' : '') +
+          (path === href ||
+          (href === '/library' && path.startsWith('/library')) ||
+          (href === '/workspace/jobs' && path.startsWith('/workspace/jobs')) ||
+          (href === '/workspace/expenses' && path.startsWith('/workspace/expenses'))
+            ? 'active'
+            : '') +
           '" href="' +
           href +
           '" data-route><span class="nav-glyph">' +
@@ -982,7 +1260,8 @@ function settingsPage() {
         : '<div class="notice"><strong>PDF downloads are paused</strong><br>' +
           escapeHtml(businessProfileReadinessMessage(profile)) +
           '</div>') +
-      '</div></article></section></main>',
+      '</div></article></section>' +
+      '<section class="panel section-gap"><header class="panel-head"><h2>Documents & photos</h2></header><div class="panel-body stack"><p class="muted">Central library for receipts, job photos, warranties and supporting files — with recycle bin restore.</p><a class="button" href="/library" data-route>Open document library</a><a class="button button-secondary" href="/workspace/expenses" data-route>Expense receipts</a><a class="button button-secondary" href="/workspace/jobs" data-route>Job photos</a></div></section></main>',
   );
 }
 
@@ -1638,6 +1917,10 @@ async function renderRoute() {
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
     else if (path === '/logo-creator') await logoCreatorPage();
+    else if (path === '/library') await libraryPage(false);
+    else if (path === '/library/recycle-bin') await libraryPage(true);
+    else if (path === '/workspace/jobs') await jobsPage();
+    else if (path === '/workspace/expenses') await expensesPage();
     else {
       history.replaceState({}, '', '/dashboard');
       dashboardPage();
@@ -1973,6 +2256,62 @@ document.addEventListener('click', async (event) => {
     await renderRoute();
     return;
   }
+  const attachmentView = event.target.closest('[data-attachment-view]');
+  if (attachmentView) {
+    try {
+      await openAttachmentViewer(attachmentView.getAttribute('data-attachment-view'));
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const attachmentDelete = event.target.closest('[data-attachment-delete]');
+  if (attachmentDelete) {
+    if (!window.confirm('Move this file to the recycle bin?')) return;
+    try {
+      await api('/api/attachments/' + attachmentDelete.getAttribute('data-attachment-delete'), {
+        method: 'DELETE',
+      });
+      toast('Moved to recycle bin.');
+      await libraryPage(false);
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const attachmentRestore = event.target.closest('[data-attachment-restore]');
+  if (attachmentRestore) {
+    try {
+      await api(
+        '/api/attachments/' +
+          attachmentRestore.getAttribute('data-attachment-restore') +
+          '/restore',
+        { method: 'POST', body: '{}' },
+      );
+      toast('Attachment restored.');
+      await libraryPage(true);
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const attachmentPurge = event.target.closest('[data-attachment-purge]');
+  if (attachmentPurge) {
+    if (!window.confirm('Permanently delete this file? This cannot be undone.')) return;
+    try {
+      await api(
+        '/api/attachments/' +
+          attachmentPurge.getAttribute('data-attachment-purge') +
+          '?purge=1',
+        { method: 'DELETE' },
+      );
+      toast('Attachment permanently deleted.');
+      await libraryPage(true);
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
   if (event.target.closest('[data-signout]')) {
     if (signOutInProgress) return;
     signOutInProgress = true;
@@ -1999,6 +2338,12 @@ function applyListFilters() {
 }
 
 document.addEventListener('change', (event) => {
+  if (event.target.matches('#job-photo-select')) {
+    const jobId = event.target.value;
+    history.replaceState({}, '', '/workspace/jobs?jobId=' + encodeURIComponent(jobId));
+    void jobsPage();
+    return;
+  }
   if (event.target.matches('#payment-form [name="invoiceId"]')) {
     const selected = event.target.selectedOptions[0];
     const outstanding = Number(selected?.dataset.outstanding || 0);
@@ -2179,6 +2524,146 @@ document.addEventListener('submit', async (event) => {
           : 'Final payment recorded. Invoice is paid.',
       );
       await renderRoute();
+      return;
+    }
+    if (form.id === 'library-search-form') {
+      const query = String(data.q || '').trim();
+      history.pushState({}, '', query ? '/library?q=' + encodeURIComponent(query) : '/library');
+      await libraryPage(false);
+      return;
+    }
+    if (form.id === 'library-upload-form') {
+      const files = [...(form.files?.files || [])];
+      if (!files.length) throw new Error('Choose at least one file.');
+      const tags = String(data.tags || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      for (const file of files) {
+        if (file.size > 4_500_000) throw new Error(file.name + ' is too large (max 4.5 MB).');
+        const contentBase64 = await readFileAsBase64(file);
+        await api('/api/attachments', {
+          method: 'POST',
+          body: JSON.stringify({
+            parentEntityType: data.parentEntityType,
+            parentEntityId: data.parentEntityId,
+            filename: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            contentBase64,
+            category: data.category || 'supporting',
+            tags,
+            caption: String(data.caption || '').trim() || null,
+            runReceiptOcr: data.category === 'receipt',
+          }),
+        });
+      }
+      toast('Uploaded ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '.');
+      await libraryPage(false);
+      return;
+    }
+    if (form.id === 'job-photo-upload-form') {
+      const files = [...(form.files?.files || [])];
+      if (!files.length) throw new Error('Choose at least one photo.');
+      for (const file of files) {
+        const contentBase64 = await readFileAsBase64(file);
+        await api('/api/attachments', {
+          method: 'POST',
+          body: JSON.stringify({
+            parentEntityType: 'job',
+            parentEntityId: data.jobId,
+            filename: file.name,
+            mimeType: file.type || 'image/jpeg',
+            contentBase64,
+            category: 'job_photo',
+            jobPhotoStage: data.jobPhotoStage,
+            caption: String(data.caption || '').trim() || null,
+            capturedAt: new Date().toISOString(),
+          }),
+        });
+      }
+      toast('Job photos uploaded.');
+      history.replaceState({}, '', '/workspace/jobs?jobId=' + encodeURIComponent(data.jobId));
+      await jobsPage();
+      return;
+    }
+    if (form.id === 'expense-create-form') {
+      await api('/api/expenses', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: String(data.title || '').trim(),
+          merchant: String(data.merchant || '').trim() || null,
+          expenseDate: data.expenseDate,
+          total: Number(data.total),
+          gst: Number(data.gst || 0),
+          invoiceNumber: String(data.invoiceNumber || '').trim() || null,
+          referenceNumber: String(data.referenceNumber || '').trim() || null,
+          notes: String(data.notes || '').trim() || null,
+        }),
+      });
+      toast('Expense created.');
+      await expensesPage();
+      return;
+    }
+    if (form.id === 'expense-receipt-form') {
+      const file = form.file?.files?.[0];
+      if (!file) throw new Error('Choose a receipt file.');
+      const contentBase64 = await readFileAsBase64(file);
+      const runOcr = form.querySelector('[name="runOcr"]')?.checked !== false;
+      let ocr = null;
+      if (runOcr) {
+        const preview = await api('/api/attachments/ocr-preview', {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            contentBase64,
+          }),
+        });
+        ocr = preview.ocr;
+        const box = document.querySelector('#receipt-ocr-preview');
+        if (box && ocr) {
+          box.hidden = false;
+          box.innerHTML =
+            '<strong>OCR preview (editable on expense)</strong><br>Merchant: ' +
+            escapeHtml(ocr.merchant || '—') +
+            '<br>Date: ' +
+            escapeHtml(ocr.date || '—') +
+            '<br>Total: ' +
+            escapeHtml(ocr.total == null ? '—' : String(ocr.total)) +
+            '<br>GST: ' +
+            escapeHtml(ocr.gst == null ? '—' : String(ocr.gst));
+        }
+        if (ocr && (ocr.merchant || ocr.total != null || ocr.date)) {
+          await api('/api/expenses/' + data.expenseId, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              ...(ocr.merchant ? { merchant: ocr.merchant } : {}),
+              ...(ocr.date && /^\d{4}-\d{2}-\d{2}$/.test(ocr.date)
+                ? { expenseDate: ocr.date }
+                : {}),
+              ...(ocr.total != null ? { total: ocr.total } : {}),
+              ...(ocr.gst != null ? { gst: ocr.gst } : {}),
+              ...(ocr.invoiceNumber ? { invoiceNumber: ocr.invoiceNumber } : {}),
+              ...(ocr.referenceNumber ? { referenceNumber: ocr.referenceNumber } : {}),
+            }),
+          });
+        }
+      }
+      await api('/api/attachments', {
+        method: 'POST',
+        body: JSON.stringify({
+          parentEntityType: 'expense',
+          parentEntityId: data.expenseId,
+          filename: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          contentBase64,
+          category: 'receipt',
+          runReceiptOcr: runOcr,
+          caption: 'Receipt',
+        }),
+      });
+      toast('Receipt uploaded' + (ocr ? ' with OCR fields applied for review.' : '.'));
+      await expensesPage();
       return;
     }
     if (form.id === 'profile-form') {

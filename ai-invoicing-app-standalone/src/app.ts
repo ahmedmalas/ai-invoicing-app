@@ -9,6 +9,8 @@ import { healthRoutes } from './routes/health.js';
 import { customerRoutes } from './routes/customers.js';
 import { businessProfileRoutes } from './routes/business-profile.js';
 import { logoStudioRoutes } from './routes/logo-studio.js';
+import { attachmentRoutes } from './routes/attachments.js';
+import { expenseRoutes } from './routes/expenses.js';
 import { invoiceRoutes } from './routes/invoices.js';
 import { quoteRoutes } from './routes/quotes.js';
 import { jobRoutes } from './routes/jobs.js';
@@ -233,6 +235,10 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',
       '/workspace/invoices/new',
       '/logo-creator',
+      '/library',
+      '/library/recycle-bin',
+      '/workspace/jobs',
+      '/workspace/expenses',
     ]) publicPaths.add(path);
   }
   const isPublicRoute = (url: string): boolean => {
@@ -821,7 +827,7 @@ export async function buildApp(options: BuildAppOptions) {
     createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey, publicAppUrl }),
   );
   const businessPlugins = [
-    platformSnapshotRoutes, customerRoutes, businessProfileRoutes, logoStudioRoutes, preferenceRoutes, invoiceRoutes,
+    platformSnapshotRoutes, customerRoutes, businessProfileRoutes, logoStudioRoutes, attachmentRoutes, expenseRoutes, preferenceRoutes, invoiceRoutes,
     quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,
     statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, supplierRoutes,
     supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,

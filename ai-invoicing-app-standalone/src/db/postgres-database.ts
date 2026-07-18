@@ -6,6 +6,9 @@ import { Pool, type PoolClient, type QueryResultRow, types as pgTypes } from 'pg
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
+import { createAttachmentStore } from './attachment-store.js';
+import { mapExpenseRow, type CreateExpenseInput, type UpdateExpenseInput } from '../domain/expenses/types.js';
+
 import type {
   BrandingProfile,
   CreditNote,
@@ -671,7 +674,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -712,6 +715,10 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'job_sequences',
   'idempotency_requests',
   'timeline_events',
+  'expenses',
+  'attachments',
+  'attachment_versions',
+  'storage_settings',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -793,6 +800,46 @@ export interface AppDatabase {
   deleteInvoiceDraft(id: string): DatabaseResult<void>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
   getInvoiceBrandingSnapshot(invoiceId: string): DatabaseResult<BrandingProfile | null>;
+
+  listAttachments(query: import('../domain/attachments/types.js').AttachmentLibraryQuery): DatabaseResult<{
+    attachments: import('../domain/attachments/types.js').AttachmentRecord[];
+    count: number;
+    totalBytes: number;
+  }>;
+  getAttachmentById(id: string, options?: { includeContent?: boolean; includeDeleted?: boolean }): DatabaseResult<import('../domain/attachments/types.js').AttachmentRecord | null>;
+  uploadAttachment(input: import('../domain/attachments/types.js').UploadAttachmentInput): DatabaseResult<import('../domain/attachments/types.js').AttachmentRecord>;
+  updateAttachment(id: string, input: import('../domain/attachments/types.js').UpdateAttachmentInput): DatabaseResult<import('../domain/attachments/types.js').AttachmentRecord>;
+  softDeleteAttachment(id: string): DatabaseResult<void>;
+  restoreAttachment(id: string): DatabaseResult<import('../domain/attachments/types.js').AttachmentRecord>;
+  purgeAttachment(id: string): DatabaseResult<void>;
+  listAttachmentVersions(id: string): DatabaseResult<Array<{
+    id: string;
+    version: number;
+    filename: string;
+    mimeType: string;
+    byteSize: number;
+    checksumSha256: string;
+    createdAt: string;
+    createdByUserId: string | null;
+  }>>;
+  getStorageUsage(): DatabaseResult<{
+    activeBytes: number;
+    deletedBytes: number;
+    activeCount: number;
+    deletedCount: number;
+    retentionDays: number;
+    softDeleteRetentionDays: number;
+  }>;
+  updateStorageSettings(input: { retentionDays?: number; softDeleteRetentionDays?: number }): DatabaseResult<{
+    retentionDays: number;
+    softDeleteRetentionDays: number;
+  }>;
+  listExpenses(): DatabaseResult<import('../domain/expenses/types.js').Expense[]>;
+  getExpenseById(id: string): DatabaseResult<import('../domain/expenses/types.js').Expense | null>;
+  createExpense(input: import('../domain/expenses/types.js').CreateExpenseInput): DatabaseResult<import('../domain/expenses/types.js').Expense>;
+  updateExpense(id: string, input: import('../domain/expenses/types.js').UpdateExpenseInput): DatabaseResult<import('../domain/expenses/types.js').Expense>;
+  deleteExpense(id: string): DatabaseResult<void>;
+
   createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): DatabaseResult<Quote>;
   getQuoteById(id: string): DatabaseResult<(Quote & { lineItems: LineItemInput[] }) | null>;
@@ -1794,6 +1841,10 @@ export async function createPostgresDatabase(
     parsed.entities.quotes ??= [];
     parsed.entities.quote_line_items ??= [];
     parsed.entities.quote_sequences ??= [];
+    parsed.entities.expenses ??= [];
+    parsed.entities.attachments ??= [];
+    parsed.entities.attachment_versions ??= [];
+    parsed.entities.storage_settings ??= [];
 
     const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
@@ -1998,6 +2049,10 @@ export async function createPostgresDatabase(
 
     await insertSnapshotRows('invoice_snapshots', snapshot.entities.invoice_snapshots);
     await insertSnapshotRows('reminder_states', snapshot.entities.reminder_states);
+    await insertSnapshotRows('expenses', snapshot.entities.expenses ?? []);
+    await insertSnapshotRows('attachments', snapshot.entities.attachments ?? []);
+    await insertSnapshotRows('attachment_versions', snapshot.entities.attachment_versions ?? []);
+    await insertSnapshotRows('storage_settings', snapshot.entities.storage_settings ?? []);
     for (const row of snapshot.entities.timeline_events) {
       if (typeof row.event_key !== 'string' || typeof row.event_version !== 'number') {
         throw new Error('INVALID_TIMELINE_EVENT_TAXONOMY');
@@ -2006,6 +2061,24 @@ export async function createPostgresDatabase(
     }
     await insertSnapshotRows('timeline_events', snapshot.entities.timeline_events);
   });
+
+
+  const attachmentStore = createAttachmentStore(
+    {
+      prepare: (sqlText: string) => {
+        const stmt = db.prepare(sqlText);
+        return {
+          run: (...params: unknown[]) => stmt.run(...params),
+          get: (...params: unknown[]) => stmt.get(...params),
+          all: (...params: unknown[]) => stmt.all(...params),
+        };
+      },
+    },
+    {
+      nowIso,
+      timeline,
+    },
+  );
 
   const implementation: AppDatabase = {
     async close() {
@@ -2717,6 +2790,122 @@ export async function createPostgresDatabase(
       } catch {
         return null;
       }
+    },
+
+
+    listAttachments(query) {
+      return attachmentStore.listAttachments(query);
+    },
+    getAttachmentById(id, options) {
+      return attachmentStore.getAttachmentById(id, options);
+    },
+    uploadAttachment(input) {
+      return attachmentStore.uploadAttachment(input);
+    },
+    updateAttachment(id, input) {
+      return attachmentStore.updateAttachment(id, input);
+    },
+    softDeleteAttachment(id) {
+      return attachmentStore.softDeleteAttachment(id);
+    },
+    restoreAttachment(id) {
+      return attachmentStore.restoreAttachment(id);
+    },
+    purgeAttachment(id) {
+      return attachmentStore.purgeAttachment(id);
+    },
+    listAttachmentVersions(id) {
+      return attachmentStore.listAttachmentVersions(id);
+    },
+    getStorageUsage() {
+      return attachmentStore.getStorageUsage();
+    },
+    updateStorageSettings(input) {
+      return attachmentStore.updateStorageSettings(input);
+    },
+
+    async listExpenses() {
+      const rows = (await db
+        .prepare('SELECT * FROM expenses ORDER BY expense_date DESC, created_at DESC, id DESC')
+        .all()) as Record<string, unknown>[];
+      return rows.map(mapExpenseRow);
+    },
+
+    async getExpenseById(id) {
+      const row = (await db.prepare('SELECT * FROM expenses WHERE id = ?').get(id)) as
+        | Record<string, unknown>
+        | undefined;
+      return row ? mapExpenseRow(row) : null;
+    },
+
+    async createExpense(input) {
+      const id = randomUUID();
+      const now = nowIso();
+      await db
+        .prepare(
+          `INSERT INTO expenses (
+           id, title, merchant, expense_date, total, gst, invoice_number, reference_number,
+           notes, customer_id, job_id, supplier_id, status, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.title,
+          input.merchant ?? null,
+          input.expenseDate,
+          input.total,
+          input.gst ?? 0,
+          input.invoiceNumber ?? null,
+          input.referenceNumber ?? null,
+          input.notes ?? null,
+          input.customerId ?? null,
+          input.jobId ?? null,
+          input.supplierId ?? null,
+          input.status ?? 'Draft',
+          now,
+          now,
+        );
+      await timeline('expense.created', id, { title: input.title, total: input.total });
+      return (await this.getExpenseById(id))!;
+    },
+
+    async updateExpense(id, input) {
+      const existing = await this.getExpenseById(id);
+      if (!existing) throw new Error('EXPENSE_NOT_FOUND');
+      const now = nowIso();
+      await db
+        .prepare(
+          `UPDATE expenses SET
+           title = ?, merchant = ?, expense_date = ?, total = ?, gst = ?,
+           invoice_number = ?, reference_number = ?, notes = ?,
+           customer_id = ?, job_id = ?, supplier_id = ?, status = ?, updated_at = ?
+         WHERE id = ?`,
+        )
+        .run(
+          input.title ?? existing.title,
+          input.merchant === undefined ? existing.merchant : input.merchant,
+          input.expenseDate ?? existing.expenseDate,
+          input.total ?? existing.total,
+          input.gst ?? existing.gst,
+          input.invoiceNumber === undefined ? existing.invoiceNumber : input.invoiceNumber,
+          input.referenceNumber === undefined ? existing.referenceNumber : input.referenceNumber,
+          input.notes === undefined ? existing.notes : input.notes,
+          input.customerId === undefined ? existing.customerId : input.customerId,
+          input.jobId === undefined ? existing.jobId : input.jobId,
+          input.supplierId === undefined ? existing.supplierId : input.supplierId,
+          input.status ?? existing.status,
+          now,
+          id,
+        );
+      await timeline('expense.updated', id, { title: input.title ?? existing.title });
+      return (await this.getExpenseById(id))!;
+    },
+
+    async deleteExpense(id) {
+      const existing = await this.getExpenseById(id);
+      if (!existing) throw new Error('EXPENSE_NOT_FOUND');
+      await db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
+      await timeline('expense.deleted', id, { title: existing.title });
     },
 
     async createQuote(input) {
@@ -5975,8 +6164,18 @@ export async function createPostgresDatabase(
 
     async getTimelineForEntity(entityType, entityId, options) {
       const queryOptions = options ?? {};
-      const whereClauses = ['entity_type = ?', 'entity_id = ?'];
-      const params: Array<string | number> = [entityType, entityId];
+      const whereClauses = [
+        `((entity_type = ? AND entity_id = ?)
+          OR (event_key IN ('attachment.linked', 'attachment.uploaded', 'attachment.deleted', 'attachment.restored')
+              AND event_payload LIKE ?
+              AND event_payload LIKE ?))`,
+      ];
+      const params: Array<string | number> = [
+        entityType,
+        entityId,
+        `%"parentEntityType":"${entityType}"%`,
+        `%"parentEntityId":"${entityId}"%`,
+      ];
       if (queryOptions.eventKey) {
         whereClauses.push('coalesce(event_key, event_type) = ?');
         params.push(queryOptions.eventKey);
