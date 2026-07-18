@@ -1266,6 +1266,13 @@ td.primary-cell {
   height: 52px;
 }
 
+.logo-platform-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+}
+
 /* Logo Creator */
 .logo-studio-grid {
   margin-bottom: 18px;
