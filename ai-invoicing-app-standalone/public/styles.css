@@ -1345,3 +1345,69 @@ td.primary-cell {
   color: var(--muted);
 }
 
+.template-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.template-compare h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.template-compare-media,
+.template-preview-frame {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+}
+.template-preview-frame {
+  display: block;
+}
+.button-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.button-danger {
+  background: transparent;
+  color: #9f1239;
+  border: 1px solid #fecdd3;
+}
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 18%, white);
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 600;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+@media (max-width: 900px) {
+  .template-compare {
+    grid-template-columns: 1fr;
+  }
+}
+

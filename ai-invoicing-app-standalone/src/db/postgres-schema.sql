@@ -407,6 +407,25 @@ CREATE TABLE IF NOT EXISTS reminder_states (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS invoice_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  design_json TEXT NOT NULL,
+  original_filename TEXT,
+  original_mime_type TEXT,
+  original_file_base64 TEXT,
+  business_entity_id TEXT,
+  document_targets_json TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_templates_default ON invoice_templates(is_default);
+CREATE INDEX IF NOT EXISTS idx_invoice_templates_name ON invoice_templates(name);
+CREATE INDEX IF NOT EXISTS idx_invoice_templates_entity ON invoice_templates(business_entity_id);
+
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(display_name);
 CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(display_name);
 CREATE INDEX IF NOT EXISTS idx_suppliers_created_order ON suppliers(created_at, id);

@@ -241,7 +241,7 @@ describe('slice 44 resilience, recovery, and failure injection hardening', () =>
       app.db.getOperationalDiagnostics = () => ({
         migration: { schemaVersion: 42, userVersion: 41, compatible: false },
         runtime: { journalMode: 'wal', foreignKeysEnabled: false, busyTimeoutMs: 5000, quickCheck: 'not ok' },
-        backupRestore: { snapshotVersion: 1, tableCount: 34 },
+        backupRestore: { snapshotVersion: 1, tableCount: 35 },
       });
 
       const degraded = await app.inject({ method: 'GET', url: '/health/ready' });

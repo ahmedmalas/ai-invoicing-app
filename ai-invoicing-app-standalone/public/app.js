@@ -229,10 +229,14 @@ const navItems = [
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
   ['/logo-creator', 'LG', 'Logo Creator'],
+  ['/templates', 'TP', 'Templates'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
   ['/settings', 'SE', 'Settings'],
 ];
+
+let templateImportState = null;
+let cachedTemplates = [];
 
 function shell(content) {
   const path = location.pathname;
@@ -248,7 +252,9 @@ function shell(content) {
       .map(
         ([href, glyph, label]) =>
           '<a class="nav-item ' +
-          (path === href ? 'active' : '') +
+          (path === href || (href === '/templates' && path.startsWith('/templates'))
+            ? 'active'
+            : '') +
           '" href="' +
           href +
           '" data-route><span class="nav-glyph">' +
@@ -443,6 +449,7 @@ function dashboardPage() {
         '<button class="button" data-new-quote>New quote</button><button class="button secondary" data-new-payment>Record payment</button>',
       ) +
       profileNotice() +
+      '<section class="panel section-gap onboarding-import"><div class="panel-body stack"><strong>Import Existing Invoice</strong><p class="muted">Upload one of your current invoices and Aleya recreates it as your default template — layout, colours, branding and reusable business details only.</p><a class="button" href="/templates/import" data-route>Import Existing Invoice</a></div></section>' +
       '<section class="metric-grid"><article class="metric"><span>Outstanding</span><strong>' +
       money(ar.totals.outstanding) +
       '</strong><small>Across final invoices</small></article><article class="metric"><span>Overdue</span><strong>' +
@@ -982,8 +989,270 @@ function settingsPage() {
         : '<div class="notice"><strong>PDF downloads are paused</strong><br>' +
           escapeHtml(businessProfileReadinessMessage(profile)) +
           '</div>') +
-      '</div></article></section></main>',
+      '</div></article></section>' +
+      '<section class="panel section-gap"><header class="panel-head"><h2>Import Existing Invoice</h2></header><div class="panel-body stack"><p class="muted">Upload a PDF, image, Word, or Excel invoice. Aleya recreates the design as your editable default template — without importing customers, prices, or transaction history.</p><a class="button" href="/templates/import" data-route>Import Existing Invoice</a><a class="button button-secondary" href="/templates" data-route>Manage templates</a></div></section></main>',
   );
+}
+
+function templateListHtml(templates) {
+  if (!templates.length) {
+    return '<div class="notice"><strong>No templates yet</strong><br>Import an existing invoice to create your first design.</div>';
+  }
+  return (
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Source</th><th>Default</th><th>Targets</th><th></th></tr></thead><tbody>' +
+    templates
+      .map((item) => {
+        return (
+          '<tr><td><strong>' +
+          escapeHtml(item.name) +
+          '</strong><div class="muted">' +
+          escapeHtml(item.design?.documentTitle || 'TAX INVOICE') +
+          '</div></td><td>' +
+          escapeHtml(item.source) +
+          '</td><td>' +
+          (item.isDefault ? '<span class="chip">Default</span>' : '—') +
+          '</td><td class="muted">' +
+          escapeHtml((item.documentTargets || []).join(', ')) +
+          '</td><td class="row-actions">' +
+          '<button type="button" class="button button-secondary" data-template-preview="' +
+          escapeHtml(item.id) +
+          '">Preview</button>' +
+          (item.isDefault
+            ? ''
+            : '<button type="button" class="button button-secondary" data-template-default="' +
+              escapeHtml(item.id) +
+              '">Set default</button>') +
+          '<button type="button" class="button button-secondary" data-template-duplicate="' +
+          escapeHtml(item.id) +
+          '">Duplicate</button>' +
+          '<button type="button" class="button button-secondary" data-template-rename="' +
+          escapeHtml(item.id) +
+          '" data-template-name="' +
+          escapeHtml(item.name) +
+          '">Rename</button>' +
+          '<button type="button" class="button button-danger" data-template-delete="' +
+          escapeHtml(item.id) +
+          '">Delete</button>' +
+          '</td></tr>'
+        );
+      })
+      .join('') +
+    '</tbody></table></div>'
+  );
+}
+
+async function templatesPage() {
+  try {
+    const result = await api('/api/invoice-templates');
+    cachedTemplates = result.templates || [];
+  } catch (error) {
+    cachedTemplates = [];
+    toast(error.message || 'Could not load templates', true);
+  }
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Invoice templates',
+        'Template library',
+        'Imported and custom designs drive new invoices, quotes, credit notes, statements and receipts. Previously issued invoices stay frozen.',
+      ) +
+      '<section class="panel"><header class="panel-head"><h2>Your templates</h2><div class="row-actions"><a class="button" href="/templates/import" data-route>Import Existing Invoice</a></div></header><div class="panel-body">' +
+      templateListHtml(cachedTemplates) +
+      '</div></section></main>',
+  );
+}
+
+function templateImportEditorHtml(design) {
+  const colors = design.colors || {};
+  const typography = design.typography || {};
+  const business = design.businessDefaults || {};
+  return (
+    '<form class="form panel-body" id="template-approve-form">' +
+    '<div class="form-grid">' +
+    '<label>Template name<input name="name" required maxlength="120" value="' +
+    escapeHtml((business.companyName || 'Imported') + ' invoice template') +
+    '"></label>' +
+    '<label>Invoice title<input name="documentTitle" required maxlength="80" value="' +
+    escapeHtml(design.documentTitle || 'TAX INVOICE') +
+    '"></label>' +
+    '<label>Primary colour<input name="primary" type="color" value="' +
+    escapeHtml(colors.primary || '#173f35') +
+    '"></label>' +
+    '<label>Secondary colour<input name="secondary" type="color" value="' +
+    escapeHtml(colors.secondary || '#c4f36b') +
+    '"></label>' +
+    '<label>Accent<input name="accent" type="color" value="' +
+    escapeHtml(colors.accent || '#0f2d26') +
+    '"></label>' +
+    '<label>Text colour<input name="text" type="color" value="' +
+    escapeHtml(colors.text || '#111827') +
+    '"></label>' +
+    '<label>Heading font<select name="headingFont"><option' +
+    (typography.headingFont === 'Helvetica-Bold' ? ' selected' : '') +
+    '>Helvetica-Bold</option><option' +
+    (typography.headingFont === 'Times-Bold' ? ' selected' : '') +
+    '>Times-Bold</option><option' +
+    (typography.headingFont === 'Courier' ? ' selected' : '') +
+    '>Courier</option></select></label>' +
+    '<label>Body font<select name="bodyFont"><option' +
+    (typography.bodyFont === 'Helvetica' ? ' selected' : '') +
+    '>Helvetica</option><option' +
+    (typography.bodyFont === 'Times-Roman' ? ' selected' : '') +
+    '>Times-Roman</option><option' +
+    (typography.bodyFont === 'Courier' ? ' selected' : '') +
+    '>Courier</option></select></label>' +
+    '<label>Title size<input name="titleSize" type="number" min="10" max="36" value="' +
+    escapeHtml(String(typography.titleSize || 18)) +
+    '"></label>' +
+    '<label>Company name<input name="companyName" value="' +
+    escapeHtml(business.companyName || '') +
+    '"></label>' +
+    '<label>ABN / Tax ID<input name="abnTaxId" value="' +
+    escapeHtml(business.abnTaxId || '') +
+    '"></label>' +
+    '<label>Email<input name="email" type="email" value="' +
+    escapeHtml(business.email || '') +
+    '"></label>' +
+    '<label>Phone<input name="phone" value="' +
+    escapeHtml(business.phone || '') +
+    '"></label>' +
+    '<label>Website<input name="website" value="' +
+    escapeHtml(business.website || '') +
+    '"></label>' +
+    '<label class="wide">Address<textarea name="address" rows="2">' +
+    escapeHtml(business.address || '') +
+    '</textarea></label>' +
+    '<label class="wide">Payment details<textarea name="paymentDetails" rows="3">' +
+    escapeHtml(design.paymentDetails || '') +
+    '</textarea></label>' +
+    '<label class="wide">Terms &amp; Conditions<textarea name="termsAndConditions" rows="3">' +
+    escapeHtml(design.termsAndConditions || '') +
+    '</textarea></label>' +
+    '<label class="wide">Replace logo<input name="logoFile" type="file" accept="image/png,image/jpeg"></label>' +
+    '</div>' +
+    '<label class="checkbox-row"><input type="checkbox" name="applyBusinessDefaults" checked> Apply reusable business details to Settings profile</label>' +
+    '<label class="checkbox-row"><input type="checkbox" name="isDefault" checked> Save as default template</label>' +
+    '<div class="row-actions">' +
+    '<button class="button button-secondary" type="button" data-template-refresh-preview>Refresh preview</button>' +
+    '<button class="button" type="submit">Approve &amp; save template</button>' +
+    '</div></form>'
+  );
+}
+
+function templateImportPage() {
+  const analysis = templateImportState?.analysis;
+  const original = templateImportState?.original;
+  const design = analysis?.design;
+  const originalPreview =
+    original && String(original.mimeType || '').startsWith('image/')
+      ? '<img class="template-compare-media" src="data:' +
+        escapeHtml(original.mimeType) +
+        ';base64,' +
+        original.contentBase64 +
+        '" alt="Original invoice">'
+      : original
+        ? '<div class="notice"><strong>Original retained</strong><br>' +
+          escapeHtml(original.filename) +
+          ' (' +
+          escapeHtml(original.mimeType) +
+          '). Open the recreated preview on the right, then approve.</div>'
+        : '<div class="notice">Upload a PDF, JPG, PNG, Word (.docx), or Excel (.xlsx) invoice to begin.</div>';
+
+  shell(
+    '<main class="page">' +
+      pageHead(
+        'Import Existing Invoice',
+        'Mirror your invoice',
+        'Aleya analyses layout, colours, typography and branding — then recreates an editable template. Customer names, invoice numbers, dates, products and prices are never imported.',
+      ) +
+      '<section class="panel"><header class="panel-head"><h2>Upload</h2></header><form class="form panel-body" id="template-import-form"><label class="wide">Invoice file<input name="file" type="file" required accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label><button class="button" type="submit">Analyse invoice</button></form></section>' +
+      (design
+        ? '<section class="panel section-gap"><header class="panel-head"><h2>Side-by-side review</h2></header><div class="panel-body"><div class="template-compare">' +
+          '<article><h3>Original</h3>' +
+          originalPreview +
+          '<p class="muted">Detected: ' +
+          escapeHtml((analysis.detectedElements || []).join(', ') || 'layout signals') +
+          '</p><p class="muted">Stripped: ' +
+          escapeHtml((analysis.strippedTransactionalFields || []).join(', ') || 'none flagged') +
+          '</p></article>' +
+          '<article><h3>Recreated template</h3><iframe class="template-preview-frame" title="Template preview" data-template-preview-frame></iframe></article>' +
+          '</div></div></section>' +
+          '<section class="panel section-gap"><header class="panel-head"><h2>Edit before saving</h2></header>' +
+          templateImportEditorHtml(design) +
+          '</section>'
+        : '') +
+      '</main>',
+  );
+
+  if (design) {
+    void refreshTemplatePreviewFrame(design);
+  }
+}
+
+function buildDesignFromImportForm(form, baseDesign) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const next = structuredClone(baseDesign);
+  next.documentTitle = String(data.documentTitle || next.documentTitle).trim();
+  next.colors = {
+    ...next.colors,
+    primary: String(data.primary || next.colors.primary),
+    secondary: String(data.secondary || next.colors.secondary),
+    accent: String(data.accent || next.colors.accent),
+    text: String(data.text || next.colors.text),
+  };
+  next.typography = {
+    ...next.typography,
+    headingFont: String(data.headingFont || next.typography.headingFont),
+    bodyFont: String(data.bodyFont || next.typography.bodyFont),
+    titleSize: Number(data.titleSize || next.typography.titleSize),
+  };
+  next.businessDefaults = {
+    ...next.businessDefaults,
+    companyName: String(data.companyName || '').trim() || null,
+    legalName: String(data.companyName || '').trim() || null,
+    abnTaxId: String(data.abnTaxId || '').trim() || null,
+    address: String(data.address || '').trim() || null,
+    email: String(data.email || '').trim() || null,
+    phone: String(data.phone || '').trim() || null,
+    website: String(data.website || '').trim() || null,
+  };
+  next.paymentDetails = String(data.paymentDetails || '').trim() || null;
+  next.termsAndConditions = String(data.termsAndConditions || '').trim() || null;
+  return { next, data };
+}
+
+async function refreshTemplatePreviewFrame(design) {
+  const frame = document.querySelector('[data-template-preview-frame]');
+  if (!frame) return;
+  try {
+    const headers = { 'content-type': 'application/json' };
+    if (session?.access_token) headers.authorization = 'Bearer ' + session.access_token;
+    const response = await fetch('/api/invoice-templates/preview-pdf', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ design }),
+    });
+    if (!response.ok) throw new Error('Preview failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    frame.src = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    toast(error.message || 'Could not refresh preview', true);
+  }
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64 || '');
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function logoCreatorPage() {
@@ -1638,6 +1907,8 @@ async function renderRoute() {
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
     else if (path === '/logo-creator') await logoCreatorPage();
+    else if (path === '/templates') await templatesPage();
+    else if (path === '/templates/import') templateImportPage();
     else {
       history.replaceState({}, '', '/dashboard');
       dashboardPage();
@@ -1973,6 +2244,96 @@ document.addEventListener('click', async (event) => {
     await renderRoute();
     return;
   }
+  const templatePreview = event.target.closest('[data-template-preview]');
+  if (templatePreview) {
+    try {
+      const id = templatePreview.getAttribute('data-template-preview');
+      let response = await fetch('/api/invoice-templates/' + id + '/preview-pdf', {
+        headers: { authorization: 'Bearer ' + session.access_token },
+      });
+      if (response.status === 401 && (await refreshSession())) {
+        response = await fetch('/api/invoice-templates/' + id + '/preview-pdf', {
+          headers: { authorization: 'Bearer ' + session.access_token },
+        });
+      }
+      if (!response.ok) throw new Error('The template preview could not be generated.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const templateDefault = event.target.closest('[data-template-default]');
+  if (templateDefault) {
+    try {
+      await api('/api/invoice-templates/' + templateDefault.getAttribute('data-template-default') + '/default', {
+        method: 'POST',
+        body: '{}',
+      });
+      toast('Default template updated.');
+      await templatesPage();
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const templateDuplicate = event.target.closest('[data-template-duplicate]');
+  if (templateDuplicate) {
+    try {
+      await api(
+        '/api/invoice-templates/' + templateDuplicate.getAttribute('data-template-duplicate') + '/duplicate',
+        { method: 'POST', body: '{}' },
+      );
+      toast('Template duplicated.');
+      await templatesPage();
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const templateRename = event.target.closest('[data-template-rename]');
+  if (templateRename) {
+    const current = templateRename.getAttribute('data-template-name') || '';
+    const name = window.prompt('Rename template', current);
+    if (!name || !name.trim() || name.trim() === current) return;
+    try {
+      await api('/api/invoice-templates/' + templateRename.getAttribute('data-template-rename'), {
+        method: 'PATCH',
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      toast('Template renamed.');
+      await templatesPage();
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  const templateDelete = event.target.closest('[data-template-delete]');
+  if (templateDelete) {
+    if (!window.confirm('Delete this template? Historical invoices stay unchanged.')) return;
+    try {
+      await api('/api/invoice-templates/' + templateDelete.getAttribute('data-template-delete'), {
+        method: 'DELETE',
+      });
+      toast('Template deleted.');
+      await templatesPage();
+    } catch (error) {
+      toast(error.message, true);
+    }
+    return;
+  }
+  if (event.target.closest('[data-template-refresh-preview]')) {
+    const form = document.querySelector('#template-approve-form');
+    if (!form || !templateImportState?.analysis?.design) return;
+    const { next } = buildDesignFromImportForm(form, templateImportState.analysis.design);
+    templateImportState.analysis.design = next;
+    await refreshTemplatePreviewFrame(next);
+    toast('Preview refreshed.');
+    return;
+  }
   if (event.target.closest('[data-signout]')) {
     if (signOutInProgress) return;
     signOutInProgress = true;
@@ -2179,6 +2540,62 @@ document.addEventListener('submit', async (event) => {
           : 'Final payment recorded. Invoice is paid.',
       );
       await renderRoute();
+      return;
+    }
+    if (form.id === 'template-import-form') {
+      const file = form.file?.files?.[0];
+      if (!file) throw new Error('Choose an invoice file to import.');
+      if (file.size > 4_500_000) throw new Error('File is too large. Keep uploads under 4.5 MB.');
+      const contentBase64 = await readFileAsBase64(file);
+      const result = await api('/api/invoice-templates/analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          contentBase64,
+        }),
+      });
+      templateImportState = {
+        analysis: result.analysis,
+        original: result.original,
+      };
+      toast('Invoice analysed. Review the side-by-side preview before saving.');
+      templateImportPage();
+      return;
+    }
+    if (form.id === 'template-approve-form') {
+      if (!templateImportState?.analysis?.design || !templateImportState?.original) {
+        throw new Error('Analyse an invoice before approving a template.');
+      }
+      const { next, data } = buildDesignFromImportForm(form, templateImportState.analysis.design);
+      const logoInput = form.querySelector('input[name="logoFile"]');
+      const logoFile = logoInput?.files?.[0];
+      if (logoFile) {
+        const logoBase64 = await readFileAsBase64(logoFile);
+        next.businessDefaults.logoDataUrl =
+          'data:' + (logoFile.type || 'image/png') + ';base64,' + logoBase64;
+      }
+      const saved = await api('/api/invoice-templates/approve', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: String(data.name || 'Imported invoice template').trim(),
+          design: next,
+          isDefault: form.querySelector('[name="isDefault"]')?.checked !== false,
+          applyBusinessDefaults:
+            form.querySelector('[name="applyBusinessDefaults"]')?.checked !== false,
+          originalFilename: templateImportState.original.filename,
+          originalMimeType: templateImportState.original.mimeType,
+          originalFileBase64: templateImportState.original.contentBase64,
+          source: 'imported',
+          documentTargets: ['invoice', 'quote', 'credit_note', 'statement', 'receipt'],
+        }),
+      });
+      templateImportState = null;
+      window.__aleyaInvalidateBusinessProfileCache?.();
+      cache.businessProfile = (await api('/api/business-profile').catch(() => cache.businessProfile)) || cache.businessProfile;
+      toast('Template saved' + (saved.isDefault ? ' and set as default.' : '.'));
+      history.pushState({}, '', '/templates');
+      await templatesPage();
       return;
     }
     if (form.id === 'profile-form') {
