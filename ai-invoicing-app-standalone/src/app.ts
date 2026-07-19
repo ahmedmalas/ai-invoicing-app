@@ -270,6 +270,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
+      '/assets/invoice-draft-persistence.js',
       '/assets/invoice-workspace.js',
       '/assets/invoice-curtain.js',
       '/assets/logo-studio-ui.js',

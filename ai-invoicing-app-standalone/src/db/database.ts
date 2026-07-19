@@ -2609,8 +2609,8 @@ export function createDatabase(
           upsertDocument(id, txInput.title, 'invoice', `${txInput.title} ${txInput.notes ?? ''}`);
           timeline('invoice.draft_created', id, { totals, lineItems: txInput.lineItems.length });
 
-          const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as DbInvoiceRow;
-          return mapInvoiceRow(row);
+          // Return the committed row + line items so clients can remount from persistence.
+          return this.getInvoiceById(id)!;
         }),
       )(input);
     },
@@ -2681,10 +2681,7 @@ export function createDatabase(
           lineItems: txInput.lineItems.length,
         });
 
-        const row = db
-          .prepare('SELECT * FROM invoices WHERE id = ?')
-          .get(invoiceId) as DbInvoiceRow;
-        return mapInvoiceRow(row);
+        return this.getInvoiceById(invoiceId)!;
       })(id, input);
     },
 
@@ -2696,7 +2693,7 @@ export function createDatabase(
       }
       const lineItemsRows = db
         .prepare(
-          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ?',
+          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ? ORDER BY rowid ASC',
         )
         .all(id) as DbInvoiceLineItem[];
 

@@ -7,6 +7,13 @@ import {
 } from './form-interaction-guards.js';
 import { readLineItemsFromForm } from './invoice-totals.js';
 import {
+  applyInvoiceDraftSnapshot,
+  clearInvoiceDraftSnapshot,
+  readInvoiceDraftSnapshot,
+  snapshotLooksRecoverable,
+  writeInvoiceDraftSnapshot,
+} from './invoice-draft-persistence.js';
+import {
   bindInvoiceWorkspaceInteractions,
   buildInvoiceWorkspaceHtml,
   customerPreviewHtml,
@@ -28,6 +35,8 @@ let workspaceCacheAt = 0;
 const WORKSPACE_CACHE_TTL_MS = 30_000;
 let recoveryAccessToken = null;
 let signOutInProgress = false;
+let invoiceAutosaveTimer = null;
+let invoiceAutosaveInFlight = false;
 let drawerPointerDownTarget = null;
 let ignoreNextPopstate = false;
 let invoiceWorkspaceAction = 'save';
@@ -1130,6 +1139,54 @@ function updateCustomerPreview(form) {
   preview.innerHTML = customerPreviewHtml(customer || null);
 }
 
+function scheduleInvoiceDraftSnapshot(form) {
+  if (!form) return;
+  writeInvoiceDraftSnapshot(form);
+  if (invoiceAutosaveTimer) clearTimeout(invoiceAutosaveTimer);
+  invoiceAutosaveTimer = setTimeout(() => {
+    void autosaveInvoiceWorkspace(form);
+  }, 1200);
+}
+
+function invoicePayloadIsAutosaveReady(body) {
+  return Boolean(
+    body?.customerId &&
+      String(body.title || '').trim() &&
+      Array.isArray(body.lineItems) &&
+      body.lineItems.length &&
+      body.lineItems.every((item) => String(item.description || '').trim() && Number(item.quantity) > 0),
+  );
+}
+
+async function autosaveInvoiceWorkspace(form) {
+  if (!form || invoiceAutosaveInFlight || form.dataset.autosaveLocked === 'true') return;
+  let body;
+  try {
+    body = await collectInvoiceWorkspacePayload(form);
+  } catch {
+    return;
+  }
+  if (!invoicePayloadIsAutosaveReady(body)) return;
+  invoiceAutosaveInFlight = true;
+  form.dataset.autosaveLocked = 'true';
+  try {
+    const saved = await persistInvoiceWorkspace(form, {
+      stay: true,
+      quiet: true,
+      source: 'autosave',
+    });
+    writeInvoiceDraftSnapshot(form, { recordId: saved.id });
+  } catch (error) {
+    // Keep local snapshot; user can still Save Draft / Save explicitly.
+    if (error?.status !== 401) {
+      /* quiet autosave failure */
+    }
+  } finally {
+    invoiceAutosaveInFlight = false;
+    form.dataset.autosaveLocked = 'false';
+  }
+}
+
 async function mountInvoiceWorkspace(record = null) {
   if (!cache.customers.length) {
     toast('Create a customer before creating an invoice.', true);
@@ -1144,6 +1201,29 @@ async function mountInvoiceWorkspace(record = null) {
     return;
   }
   document.querySelector('[data-invoice-curtain]')?.remove();
+  if (invoiceAutosaveTimer) {
+    clearTimeout(invoiceAutosaveTimer);
+    invoiceAutosaveTimer = null;
+  }
+  const recovered =
+    !record?.id && snapshotLooksRecoverable(readInvoiceDraftSnapshot())
+      ? readInvoiceDraftSnapshot()
+      : null;
+  // If a prior autosave already created a server draft, reload that record instead of a blank /new form.
+  if (!record?.id && recovered?.recordId) {
+    try {
+      const persisted = await api('/api/invoices/' + recovered.recordId);
+      if (persisted?.id && persisted.status === 'Draft') {
+        history.replaceState({}, '', '/workspace/invoices/' + persisted.id + '/edit');
+        clearInvoiceDraftSnapshot();
+        await mountInvoiceWorkspace(persisted);
+        toast('Restored your invoice draft after refresh.');
+        return;
+      }
+    } catch {
+      /* fall through to local snapshot recovery */
+    }
+  }
   const defaults = {
     issueDate: record?.issueDate || date(),
     dueDate: record?.dueDate || date(14),
@@ -1164,12 +1244,20 @@ async function mountInvoiceWorkspace(record = null) {
   if (!record?.id) {
     form.querySelector('[name="issueDate"]').value = defaults.issueDate;
     form.querySelector('[name="endDate"]').value = defaults.dueDate;
+    if (recovered) {
+      applyInvoiceDraftSnapshot(form, recovered);
+      toast('Restored unsaved invoice details from this browser session.');
+    }
+  } else {
+    clearInvoiceDraftSnapshot();
   }
   bindInvoiceWorkspaceInteractions(form, { onToast: toast });
   updateCustomerPreview(form);
   form.addEventListener('change', (event) => {
     if (event.target.matches('[data-customer-select]')) updateCustomerPreview(form);
+    scheduleInvoiceDraftSnapshot(form);
   });
+  form.addEventListener('input', () => scheduleInvoiceDraftSnapshot(form));
   markDrawerFormPristine(form);
   refreshInvoiceWorkspaceTotals(form);
   await openInvoiceCurtain(curtain, {
@@ -1208,7 +1296,7 @@ async function collectInvoiceWorkspacePayload(form) {
   };
 }
 
-async function persistInvoiceWorkspace(form, { stay = true } = {}) {
+async function persistInvoiceWorkspace(form, { stay = true, quiet = false, source = 'manual' } = {}) {
   const body = await collectInvoiceWorkspacePayload(form);
   const recordId = form.dataset.recordId;
   let saved;
@@ -1221,15 +1309,24 @@ async function persistInvoiceWorkspace(form, { stay = true } = {}) {
   } else {
     saved = await api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
   }
+  // Prefer server truth (includes committed line items) for any remount/reload.
+  if (!Array.isArray(saved.lineItems)) {
+    saved = await api('/api/invoices/' + saved.id);
+  }
   form.dataset.recordId = saved.id;
   form.dataset.paymentState = saved.paymentState || 'Draft';
   form.dataset.status = saved.status || 'Draft';
   const number = form.querySelector('[data-invoice-number]');
   if (number) number.textContent = saved.invoiceNumber || 'Draft';
   markDrawerFormPristine(form);
-  if (stay) {
-    history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
+  invalidateWorkspaceCache();
+  // Always bind the URL to the persisted id so refresh reloads from the database.
+  history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
+  writeInvoiceDraftSnapshot(form, { recordId: saved.id });
+  if (stay && !quiet) {
     toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
+  } else if (!stay && !quiet && source === 'manual') {
+    /* caller shows toast for Save */
   }
   return saved;
 }
@@ -1237,6 +1334,11 @@ async function persistInvoiceWorkspace(form, { stay = true } = {}) {
 async function requestCloseInvoiceWorkspace() {
   const closed = await closeInvoiceWorkspace({ force: false, animate: true });
   if (!closed) return false;
+  if (invoiceAutosaveTimer) {
+    clearTimeout(invoiceAutosaveTimer);
+    invoiceAutosaveTimer = null;
+  }
+  clearInvoiceDraftSnapshot();
   history.pushState({}, '', '/workspace/invoices');
   invalidateWorkspaceCache();
   await renderRoute({ forceReload: true });
@@ -2701,7 +2803,8 @@ document.addEventListener('change', (event) => {
 document.addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.target;
-  const submit = form.querySelector('[type="submit"]');
+  const submit =
+    event.submitter?.matches?.('[type="submit"]') ? event.submitter : form.querySelector('[type="submit"]');
   if (submit) submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
   try {
@@ -2803,13 +2906,20 @@ document.addEventListener('submit', async (event) => {
       const action = submitterAction || invoiceWorkspaceAction || 'save';
       invoiceWorkspaceAction = 'save';
       const wasNew = !form.dataset.recordId;
-      await persistInvoiceWorkspace(form, { stay: action === 'draft' });
+      const saved = await persistInvoiceWorkspace(form, { stay: action === 'draft' });
+      clearInvoiceDraftSnapshot();
       if (action === 'draft') return;
       toast(wasNew ? 'Invoice draft created.' : 'Invoice saved.');
       await closeInvoiceWorkspace({ force: true, animate: true });
       history.pushState({}, '', '/workspace/invoices');
       invalidateWorkspaceCache();
       await renderRoute({ forceReload: true });
+      // Ensure the saved invoice is present in the reloaded list (regression guard).
+      if (saved?.id && !cache.invoices?.some((invoice) => invoice.id === saved.id)) {
+        invalidateWorkspaceCache();
+        await loadWorkspace({ force: true });
+        invoicesPage();
+      }
       return;
     }
     if (form.id === 'sales-form') {
