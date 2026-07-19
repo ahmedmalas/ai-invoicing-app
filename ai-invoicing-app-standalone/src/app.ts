@@ -174,6 +174,27 @@ export async function buildApp(options: BuildAppOptions) {
     });
   }
 
+  // ABoss BFF sends Content-Type: application/json on DELETE with an empty body.
+  // Fastify's default JSON parser treats that as a fatal error (500). Accept empty
+  // JSON bodies as null so signed delete/get calls can reach route handlers.
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (request, body, done) => {
+      const raw = typeof body === 'string' ? body : '';
+      if (!raw.trim()) {
+        done(null, null);
+        return;
+      }
+      try {
+        done(null, JSON.parse(raw) as unknown);
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
+
   const machineCodeFromMessage = (message: string, fallback: string): string => {
     const trimmed = message.trim();
     if (!trimmed) {

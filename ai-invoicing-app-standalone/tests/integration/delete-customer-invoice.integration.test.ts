@@ -110,6 +110,32 @@ describe('production customer/invoice deletion path', () => {
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json()).toEqual({ deleted: true, id: verificationCustomer.id });
 
+    // ABoss BFF sends Content-Type: application/json with an empty DELETE body.
+    const emptyBodyCustomer = await app.db.createCustomer({
+      displayName: `${PRODUCTION_VERIFICATION_CUSTOMER} Empty Body`,
+      email: 'prod.verify.empty@example.test',
+    });
+    const emptyBodyPath = `/customers/${emptyBodyCustomer.id}`;
+    const emptyBodyHeaders = {
+      ...abossSignedHeaders({
+        secret,
+        method: 'DELETE',
+        path: emptyBodyPath,
+        abossUserId,
+        abossOrganizationId,
+      }),
+      'content-type': 'application/json',
+    };
+    const emptyBodyDeleted = await app.inject({
+      method: 'DELETE',
+      url: emptyBodyPath,
+      headers: emptyBodyHeaders,
+      payload: '',
+    });
+    expect(emptyBodyDeleted.statusCode).toBe(200);
+    expect(emptyBodyDeleted.statusCode).not.toBe(500);
+    expect(emptyBodyDeleted.json()).toEqual({ deleted: true, id: emptyBodyCustomer.id });
+
     const getHeaders = abossSignedHeaders({
       secret,
       method: 'GET',
