@@ -1473,6 +1473,7 @@ export function createDatabase(
       'document.updated',
       'invoice.draft_created',
       'invoice.draft_updated',
+      'invoice.draft_deleted',
       'invoice.finalised',
       'credit_note.created',
       'payment.created',
@@ -1490,6 +1491,7 @@ export function createDatabase(
       'supplier_bill.finalised',
       'customer.created',
       'customer.updated',
+      'customer.deleted',
       'business_profile.updated',
       'preferences.updated',
       'job.created',
@@ -2358,7 +2360,9 @@ export function createDatabase(
 
     deleteCustomer(id) {
       return db.transaction((customerId: string) => {
-        const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(customerId);
+        const existing = db
+          .prepare('SELECT id, display_name FROM customers WHERE id = ?')
+          .get(customerId) as { id: string; display_name: string } | undefined;
         if (!existing) {
           throw new Error('Customer not found');
         }
@@ -2399,6 +2403,7 @@ export function createDatabase(
         }
 
         db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
+        timeline('customer.deleted', customerId, { displayName: existing.display_name });
       })(id);
     },
 
@@ -2761,14 +2766,21 @@ export function createDatabase(
 
     deleteInvoiceDraft(id) {
       return db.transaction((invoiceId: string) => {
-        const row = db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId) as
-          { status: string } | undefined;
+        const row = db
+          .prepare('SELECT status, title, invoice_number FROM invoices WHERE id = ?')
+          .get(invoiceId) as
+          | { status: string; title: string; invoice_number: string | null }
+          | undefined;
         if (!row) throw new Error('Invoice not found');
         if (row.status !== 'Draft') throw new Error('Only draft invoices can be deleted');
         db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
         db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
         db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
         db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+        timeline('invoice.draft_deleted', invoiceId, {
+          title: row.title,
+          invoiceNumber: row.invoice_number,
+        });
       })(id);
     },
 

@@ -65,8 +65,19 @@ const errorMessages = {
   QUOTE_NOT_ACCEPTED: 'Accept the quote before converting it to an invoice.',
   PAYMENT_ALLOCATION_EXCEEDS_OUTSTANDING: 'The payment exceeds the invoice outstanding balance.',
   PAYMENT_ALLOCATION_REQUIRES_FINALISED_INVOICE: 'Only final invoices can receive payments.',
-  CUSTOMER_HAS_QUOTES: 'This customer cannot be deleted because quotes are linked to it.',
-  CUSTOMER_HAS_INVOICES: 'This customer cannot be deleted because invoices are linked to it.',
+  CUSTOMER_HAS_QUOTES:
+    'This customer cannot be deleted because quotes are linked to it. Keep the customer to preserve quote history.',
+  CUSTOMER_HAS_INVOICES:
+    'This customer cannot be deleted because invoices are linked to it. Keep the customer to preserve accounting records.',
+  CUSTOMER_HAS_PAYMENTS:
+    'This customer cannot be deleted because payments are linked to it. Keep the customer to preserve payment history.',
+  CUSTOMER_HAS_CREDIT_NOTES:
+    'This customer cannot be deleted because credit notes are linked to it. Keep the customer to preserve credit history.',
+  CUSTOMER_HAS_JOBS:
+    'This customer cannot be deleted because jobs are linked to it. Keep the customer to preserve job history.',
+  'Only draft invoices can be deleted':
+    'Only draft invoices can be deleted. Finalised invoices are kept for accounting integrity.',
+  AUTH_FORBIDDEN: 'You do not have permission to make this change.',
   OWNER_ALREADY_PROVISIONED: 'Owner setup is already complete. Sign in instead.',
 };
 const friendlyMessage = (message) =>
@@ -504,7 +515,11 @@ function customersPage() {
         customer.id +
         '">View</button><button class="button ghost small" data-edit-customer="' +
         customer.id +
-        '">Edit</button><button class="button ghost small" data-timeline="customer" data-id="' +
+        '">Edit</button><button class="button danger small" data-delete-customer="' +
+        customer.id +
+        '" data-name="' +
+        escapeHtml(customer.displayName) +
+        '">Delete</button><button class="button ghost small" data-timeline="customer" data-id="' +
         customer.id +
         '">Audit</button></div></td></tr>'
       );
@@ -665,7 +680,11 @@ function invoicesPage() {
             invoice.id +
             '">Edit</button><button class="button small" data-finalise-invoice="' +
             invoice.id +
-            '">Issue</button>'
+            '">Issue</button><button class="button danger small" data-delete-invoice="' +
+            invoice.id +
+            '" data-name="' +
+            escapeHtml(invoice.invoiceNumber || invoice.title || 'Draft') +
+            '">Delete</button>'
           : '<button class="button secondary small" data-pdf="invoice" data-id="' +
             invoice.id +
             '">PDF</button>') +
@@ -1030,6 +1049,65 @@ function requestCloseDrawer() {
   if (!confirmDiscardUnsavedDrawerWork()) return false;
   closeDrawer();
   return true;
+}
+
+function confirmDestructive({ title, message, confirmLabel = 'Delete' }) {
+  return new Promise((resolve) => {
+    document.querySelector('.confirm-backdrop')?.remove();
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<div class="confirm-backdrop" data-confirm-backdrop role="presentation"><div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-destructive-title" aria-describedby="confirm-destructive-message"><h3 id="confirm-destructive-title">' +
+        escapeHtml(title) +
+        '</h3><p id="confirm-destructive-message">' +
+        escapeHtml(message) +
+        '</p><div class="confirm-actions"><button type="button" class="button ghost" data-confirm-cancel>Cancel</button><button type="button" class="button danger" data-confirm-ok>' +
+        escapeHtml(confirmLabel) +
+        '</button></div></div></div>',
+    );
+    const backdrop = document.querySelector('.confirm-backdrop');
+    const finish = (value) => {
+      backdrop?.remove();
+      resolve(value);
+    };
+    backdrop?.querySelector('[data-confirm-cancel]')?.addEventListener('click', () => finish(false));
+    backdrop?.querySelector('[data-confirm-ok]')?.addEventListener('click', () => finish(true));
+    backdrop?.addEventListener('click', (event) => {
+      if (event.target === backdrop) finish(false);
+    });
+    backdrop?.querySelector('[data-confirm-ok]')?.focus();
+  });
+}
+
+async function deleteCustomerRecord(customerId, displayName) {
+  const confirmed = await confirmDestructive({
+    title: 'Delete customer?',
+    message:
+      'Delete "' +
+      (displayName || 'this customer') +
+      '" permanently? This cannot be undone. Customers with invoices, quotes, payments, credit notes, or jobs cannot be deleted.',
+    confirmLabel: 'Delete customer',
+  });
+  if (!confirmed) return;
+  await api('/api/customers/' + customerId, { method: 'DELETE' });
+  closeDrawer();
+  toast('Customer deleted.');
+  await renderRoute();
+}
+
+async function deleteInvoiceRecord(invoiceId, label) {
+  const confirmed = await confirmDestructive({
+    title: 'Delete invoice draft?',
+    message:
+      'Delete "' +
+      (label || 'this draft invoice') +
+      '" permanently? Finalised invoices cannot be deleted because they are part of accounting history.',
+    confirmLabel: 'Delete draft',
+  });
+  if (!confirmed) return;
+  await api('/api/invoices/' + invoiceId, { method: 'DELETE' });
+  closeDrawer();
+  toast('Invoice draft deleted.');
+  await renderRoute();
 }
 
 function isInvoiceWorkspacePath(path = location.pathname) {
@@ -1398,7 +1476,11 @@ async function customerDetails(id) {
       escapeHtml(customer.notes || '—') +
       '</strong></div></div><div class="drawer-actions"><button class="button" data-edit-customer="' +
       id +
-      '">Edit customer</button><button class="button ghost" data-timeline="customer" data-id="' +
+      '">Edit customer</button><button class="button danger" data-delete-customer="' +
+      id +
+      '" data-name="' +
+      escapeHtml(customer.displayName) +
+      '">Delete customer</button><button class="button ghost" data-timeline="customer" data-id="' +
       id +
       '">Audit timeline</button></div><section class="panel section-gap"><header class="panel-head"><h2>Invoice history</h2></header>' +
       (rows
@@ -1502,7 +1584,11 @@ async function invoiceDetails(id) {
           id +
           '">Edit draft</button><button class="button" data-finalise-invoice="' +
           id +
-          '">Issue invoice</button>'
+          '">Issue invoice</button><button class="button danger" data-delete-invoice="' +
+          id +
+          '" data-name="' +
+          escapeHtml(invoice.invoiceNumber || invoice.title || 'Draft') +
+          '">Delete draft</button>'
         : '<button class="button secondary" data-pdf="invoice" data-id="' +
           id +
           '">Download PDF</button>') +
@@ -2437,6 +2523,15 @@ document.addEventListener('click', async (event) => {
     );
     return;
   }
+  const deleteCustomer = event.target.closest('[data-delete-customer]');
+  if (deleteCustomer) {
+    deleteCustomer.disabled = true;
+    await runAction(() =>
+      deleteCustomerRecord(deleteCustomer.dataset.deleteCustomer, deleteCustomer.dataset.name),
+    );
+    deleteCustomer.disabled = false;
+    return;
+  }
   const viewQuote = event.target.closest('[data-view-quote]');
   if (viewQuote) {
     await runAction(() => quoteDetails(viewQuote.dataset.viewQuote));
@@ -2464,6 +2559,15 @@ document.addEventListener('click', async (event) => {
   const editInvoice = event.target.closest('[data-edit-invoice]');
   if (editInvoice) {
     openInvoiceWorkspaceRoute(editInvoice.dataset.editInvoice);
+    return;
+  }
+  const deleteInvoice = event.target.closest('[data-delete-invoice]');
+  if (deleteInvoice) {
+    deleteInvoice.disabled = true;
+    await runAction(() =>
+      deleteInvoiceRecord(deleteInvoice.dataset.deleteInvoice, deleteInvoice.dataset.name),
+    );
+    deleteInvoice.disabled = false;
     return;
   }
   const viewPayment = event.target.closest('[data-view-payment]');

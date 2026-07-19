@@ -640,6 +640,44 @@ td.primary-cell {
   justify-items: end;
   background: rgba(7, 18, 15, 0.48);
 }
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 18, 15, 0.56);
+}
+.confirm-dialog {
+  width: min(420px, 100%);
+  padding: 22px 22px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+}
+.confirm-dialog h3 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  color: var(--ink);
+}
+.confirm-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.confirm-actions {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.button.danger:hover {
+  background: #f3d5cf;
+}
 .drawer {
   width: min(620px, 100%);
   height: 100%;

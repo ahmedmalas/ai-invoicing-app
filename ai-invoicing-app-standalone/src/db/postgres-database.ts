@@ -2329,7 +2329,9 @@ export async function createPostgresDatabase(
 
     async deleteCustomer(id) {
       return db.transaction(async (customerId: string) => {
-        const existing = await db.prepare('SELECT id FROM customers WHERE id = ?').get(customerId);
+        const existing = (await db
+          .prepare('SELECT id, display_name FROM customers WHERE id = ?')
+          .get(customerId)) as { id: string; display_name: string } | undefined;
         if (!existing) {
           throw new Error('Customer not found');
         }
@@ -2370,6 +2372,7 @@ export async function createPostgresDatabase(
         }
 
         await db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
+        await timeline('customer.deleted', customerId, { displayName: existing.display_name });
       })(id);
     },
 
@@ -2756,14 +2759,20 @@ export async function createPostgresDatabase(
     async deleteInvoiceDraft(id) {
       return db.transaction(async (invoiceId: string) => {
         const row = (await db
-          .prepare('SELECT status FROM invoices WHERE id = ?')
-          .get(invoiceId)) as { status: string } | undefined;
+          .prepare('SELECT status, title, invoice_number FROM invoices WHERE id = ?')
+          .get(invoiceId)) as
+          | { status: string; title: string; invoice_number: string | null }
+          | undefined;
         if (!row) throw new Error('Invoice not found');
         if (row.status !== 'Draft') throw new Error('Only draft invoices can be deleted');
         await db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
         await db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
         await db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
         await db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+        await timeline('invoice.draft_deleted', invoiceId, {
+          title: row.title,
+          invoiceNumber: row.invoice_number,
+        });
       })(id);
     },
 
