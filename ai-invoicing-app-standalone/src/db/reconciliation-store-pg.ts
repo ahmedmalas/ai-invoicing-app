@@ -142,7 +142,7 @@ export function createPostgresReconciliationStore(deps: PostgresReconciliationSt
         id, nickname, account_type, institution, account_number_masked, bsb_masked,
         currency, balance, last_sync_at, source, status, external_account_id, connection_id,
         notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'active', ?, ?, '', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.nickname,
@@ -155,6 +155,7 @@ export function createPostgresReconciliationStore(deps: PostgresReconciliationSt
       input.source ?? 'manual',
       input.externalAccountId ?? null,
       input.connectionId ?? null,
+      input.notes ?? '',
       now,
       now,
     );
