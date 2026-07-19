@@ -107,8 +107,9 @@ describe('production customer/invoice deletion path', () => {
       abossOrganizationId,
     });
     const deleted = await app.inject({ method: 'DELETE', url: deletePath, headers });
-    expect(deleted.statusCode).toBe(200);
-    expect(deleted.json()).toEqual({ deleted: true, id: verificationCustomer.id });
+    // Orphan customer delete returns 204 with empty body.
+    expect(deleted.statusCode).toBe(204);
+    expect(deleted.body).toBe('');
 
     // ABoss BFF sends Content-Type: application/json with an empty DELETE body.
     const emptyBodyCustomer = await app.db.createCustomer({
@@ -132,9 +133,10 @@ describe('production customer/invoice deletion path', () => {
       headers: emptyBodyHeaders,
       payload: '',
     });
-    expect(emptyBodyDeleted.statusCode).toBe(200);
+    // Empty-body JSON parser in app.ts tolerates ABoss BFF DELETE; orphan returns 204.
+    expect(emptyBodyDeleted.statusCode).toBe(204);
     expect(emptyBodyDeleted.statusCode).not.toBe(500);
-    expect(emptyBodyDeleted.json()).toEqual({ deleted: true, id: emptyBodyCustomer.id });
+    expect(emptyBodyDeleted.body).toBe('');
 
     const getHeaders = abossSignedHeaders({
       secret,
@@ -152,7 +154,22 @@ describe('production customer/invoice deletion path', () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it('returns business-rule blockers (never 500) for protected customers and final invoices', async () => {
+  it('DELETE /invoices/:id returns 404 (route removed)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ai-delete-invoice-route-'));
+    tempDirs.push(directory);
+    const app = await buildApp({
+      dbPath: join(directory, 'app.db'),
+      authBypassForTesting: true,
+      nodeEnv: 'test',
+    });
+    apps.push(app);
+
+    const fakeInvoiceId = randomUUID();
+    const res = await app.inject({ method: 'DELETE', url: `/invoices/${fakeInvoiceId}` });
+    expect([404, 405]).toContain(res.statusCode);
+  });
+
+  it('returns business-rule blockers (never 500) for protected customers', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'ai-delete-blockers-'));
     tempDirs.push(directory);
     const app = await buildApp({
@@ -216,39 +233,17 @@ describe('production customer/invoice deletion path', () => {
         })
       ).json(),
     );
-    const draft = idSchema.parse(
-      (
-        await app.inject({
-          method: 'POST',
-          url: '/invoices',
-          payload: {
-            customerId: linkedCustomer.id,
-            title: 'Protected draft',
-            issueDate: '2026-07-14',
-            dueDate: '2026-07-28',
-            lineItems: [{ description: 'Line', quantity: 1, unitPrice: 50, gstApplicable: true }],
-          },
-        })
-      ).json(),
-    );
-    const finalInvoice = idSchema.parse(
-      (
-        await app.inject({
-          method: 'POST',
-          url: '/invoices',
-          payload: {
-            customerId: linkedCustomer.id,
-            title: 'Protected final',
-            issueDate: '2026-07-14',
-            dueDate: '2026-07-28',
-            lineItems: [{ description: 'Line', quantity: 1, unitPrice: 80, gstApplicable: true }],
-          },
-        })
-      ).json(),
-    );
-    expect(
-      (await app.inject({ method: 'POST', url: `/invoices/${finalInvoice.id}/finalise` })).statusCode,
-    ).toBe(200);
+    await app.inject({
+      method: 'POST',
+      url: '/invoices',
+      payload: {
+        customerId: linkedCustomer.id,
+        title: 'Protected draft',
+        issueDate: '2026-07-14',
+        dueDate: '2026-07-28',
+        lineItems: [{ description: 'Line', quantity: 1, unitPrice: 50, gstApplicable: true }],
+      },
+    });
 
     const forbidden = await app.inject({
       method: 'DELETE',
@@ -267,84 +262,22 @@ describe('production customer/invoice deletion path', () => {
     expect(blockedCustomer.statusCode).not.toBe(500);
     expect(errorSchema.parse(blockedCustomer.json()).code).toBe('CUSTOMER_HAS_INVOICES');
 
-    const blockedFinal = await app.inject({
-      method: 'DELETE',
-      url: `/invoices/${finalInvoice.id}`,
-      headers: authHeaders(writerUserId),
-    });
-    expect(blockedFinal.statusCode).toBe(409);
-    expect(blockedFinal.statusCode).not.toBe(500);
-    expect(errorSchema.parse(blockedFinal.json()).code).toBe('ONLY_DRAFT_INVOICES_CAN_BE_DELETED');
-
-    const deletedDraft = await app.inject({
-      method: 'DELETE',
-      url: `/invoices/${draft.id}`,
-      headers: authHeaders(writerUserId),
-    });
-    expect(deletedDraft.statusCode).toBe(200);
-    expect(deletedDraft.json()).toEqual({ deleted: true, id: draft.id });
-
-    // Converted-quote draft invoices are blocked, not 500.
-    const quoteCustomer = idSchema.parse(
+    // Orphan customer deletes successfully with 204.
+    const orphanCustomer = idSchema.parse(
       (
         await app.inject({
           method: 'POST',
           url: '/customers',
-          payload: { displayName: 'Quote conversion customer' },
+          payload: { displayName: 'Orphan customer' },
         })
       ).json(),
     );
-    const quote = idSchema.parse(
-      (
-        await app.inject({
-          method: 'POST',
-          url: '/quotes',
-          payload: {
-            customerId: quoteCustomer.id,
-            title: 'Convert then protect',
-            issueDate: '2026-07-14',
-            expiryDate: '2026-08-14',
-            lineItems: [{ description: 'Work', quantity: 1, unitPrice: 100, gstApplicable: true }],
-          },
-        })
-      ).json(),
-    );
-    expect(
-      (
-        await app.inject({
-          method: 'POST',
-          url: `/quotes/${quote.id}/status`,
-          payload: { status: 'Sent' },
-        })
-      ).statusCode,
-    ).toBe(200);
-    expect(
-      (
-        await app.inject({
-          method: 'POST',
-          url: `/quotes/${quote.id}/status`,
-          payload: { status: 'Accepted' },
-        })
-      ).statusCode,
-    ).toBe(200);
-    const converted = z
-      .object({ invoice: z.object({ id: z.string().uuid() }) })
-      .parse(
-        (
-          await app.inject({
-            method: 'POST',
-            url: `/quotes/${quote.id}/convert`,
-            payload: { dueDate: '2026-08-30' },
-          })
-        ).json(),
-      );
-    const blockedConvertedDraft = await app.inject({
+    const deletedOrphan = await app.inject({
       method: 'DELETE',
-      url: `/invoices/${converted.invoice.id}`,
+      url: `/customers/${orphanCustomer.id}`,
       headers: authHeaders(writerUserId),
     });
-    expect(blockedConvertedDraft.statusCode).toBe(409);
-    expect(blockedConvertedDraft.statusCode).not.toBe(500);
-    expect(errorSchema.parse(blockedConvertedDraft.json()).code).toBe('INVOICE_REFERENCED_BY_QUOTE');
+    expect(deletedOrphan.statusCode).toBe(204);
+    expect(deletedOrphan.body).toBe('');
   });
 });

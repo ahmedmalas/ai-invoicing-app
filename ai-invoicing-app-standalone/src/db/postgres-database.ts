@@ -44,10 +44,6 @@ import { assertCustomerCanBeDeletedOrThrow } from '../domain/customers/safe-dele
 import { calculateTotals } from '../domain/invoices/gst.js';
 import { formatInvoiceNumber } from '../domain/invoices/numbering.js';
 import {
-  assertInvoiceDraftDeletableOrThrow,
-  assertInvoiceNotReferencedByQuoteOrThrow,
-} from '../domain/invoices/safe-deletion.js';
-import {
   TIMELINE_TAXONOMY,
   assertValidTimelineEventOrThrow,
   type TimelineEventKey,
@@ -819,7 +815,6 @@ export interface AppDatabase {
     filter?: ListInvoicesFilter,
     options?: ListQueryOptions,
   ): DatabaseResult<InvoiceDraft[]>;
-  deleteInvoiceDraft(id: string): DatabaseResult<void>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
   getInvoiceBrandingSnapshot(invoiceId: string): DatabaseResult<BrandingProfile | null>;
   createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
@@ -1294,14 +1289,6 @@ function mapPostgresError(error: unknown): unknown {
         return new Error('CUSTOMER_HAS_CREDIT_NOTES');
       if (/jobs/i.test(detail) || /jobs/i.test(message)) return new Error('CUSTOMER_HAS_JOBS');
       return new Error('CUSTOMER_HAS_RELATED_RECORDS');
-    }
-    if (
-      table === 'invoices' ||
-      /table "invoices"/i.test(message) ||
-      /converted_invoice_id/i.test(detail) ||
-      /converted_invoice_id/i.test(message)
-    ) {
-      return new Error('INVOICE_REFERENCED_BY_QUOTE');
     }
     return new Error('RELATED_RECORD_CONSTRAINT');
   }
@@ -2769,27 +2756,6 @@ export async function createPostgresDatabase(
         )
         .all(...params)) as DbInvoiceRow[];
       return rows.map(mapInvoiceRow);
-    },
-
-    async deleteInvoiceDraft(id) {
-      return db.transaction(async (invoiceId: string) => {
-        const row = (await db
-          .prepare('SELECT status FROM invoices WHERE id = ?')
-          .get(invoiceId)) as { status: string } | undefined;
-        if (!row) throw new Error('Invoice not found');
-        assertInvoiceDraftDeletableOrThrow(row.status);
-
-        const quoteLinks = (await db
-          .prepare('SELECT count(*) AS count FROM quotes WHERE converted_invoice_id = ?')
-          .get(invoiceId)) as { count: number };
-        assertInvoiceNotReferencedByQuoteOrThrow(Number(quoteLinks.count ?? 0));
-
-        await db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
-        await db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
-        await db.prepare('DELETE FROM reminder_states WHERE invoice_id = ?').run(invoiceId);
-        await db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
-        await db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-      })(id);
     },
 
     async finaliseInvoice(id) {

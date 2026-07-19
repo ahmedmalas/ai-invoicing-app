@@ -133,6 +133,9 @@ export async function buildApp(options: BuildAppOptions) {
     options.abossAllowedOrganizationId ?? process.env.ABOSS_ALLOWED_ORGANIZATION_ID;
   const abossOnlyAuth = options.abossOnlyAuth ?? process.env.ABOSS_ONLY_AUTH === '1';
   const usedAbossNonces = new Map<string, number>();
+  let abossActorAuthCache:
+    | { auth: { userId: string; isAdmin: boolean; canWrite: boolean }; expiresAt: number }
+    | undefined;
   const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL;
   const supabaseAnonKey =
     options.supabaseAnonKey ??
@@ -492,19 +495,29 @@ export async function buildApp(options: BuildAppOptions) {
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
       throw new Error('AUTH_UNAUTHENTICATED');
     }
-    const actor = await db.getUserById(abossIntegrationActorUserId);
-    if (!actor || !actor.isActive) throw new Error('AUTH_UNAUTHENTICATED');
-    const roleRecords = [];
-    for (const roleId of actor.roleIds) {
-      const role = await db.getRoleById(roleId);
-      if (role) roleRecords.push(role);
+    // Cache the integration actor + roles briefly so parallel ABoss BFF list calls
+    // (overview/customers/quotes/invoices/payments) do not repeat ownership lookups.
+    let auth =
+      abossActorAuthCache && abossActorAuthCache.expiresAt > now
+        ? abossActorAuthCache.auth
+        : undefined;
+    if (!auth) {
+      const actor = await db.getUserById(abossIntegrationActorUserId);
+      if (!actor || !actor.isActive) throw new Error('AUTH_UNAUTHENTICATED');
+      const roleRecords = await Promise.all(
+        actor.roleIds.map(async (roleId) => await db.getRoleById(roleId)),
+      );
+      auth = {
+        userId: actor.id,
+        isAdmin: roleRecords.some((role) => role?.canManageAssignments === true),
+        canWrite: roleRecords.some(
+          (role) => role?.canManageAssignments === true || role?.canBeAssigned === true,
+        ),
+      };
+      abossActorAuthCache = { auth, expiresAt: now + 30_000 };
     }
     usedAbossNonces.set(nonce, now + 120_000);
-    request.auth = {
-      userId: actor.id,
-      isAdmin: roleRecords.some((role) => role.canManageAssignments),
-      canWrite: roleRecords.some((role) => role.canManageAssignments || role.canBeAssigned),
-    };
+    request.auth = auth;
   });
 
   app.addHook('preHandler', (request, _reply, done) => {
@@ -642,7 +655,6 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
       errorMessage.includes('CUSTOMER_HAS_JOBS') ||
       errorMessage.includes('CUSTOMER_HAS_RELATED_RECORDS') ||
-      errorMessage.includes('INVOICE_REFERENCED_BY_QUOTE') ||
       errorMessage.includes('RELATED_RECORD_CONSTRAINT') ||
       errorMessage.includes('SUPPLIER_HAS_PURCHASE_ORDERS') ||
       errorMessage.includes('SUPPLIER_HAS_BILLS') ||
@@ -689,7 +701,6 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION') ||
       errorMessage.includes('Only draft quotes can be edited') ||
       errorMessage.includes('Only draft quotes can be deleted') ||
-      errorMessage.includes('Only draft invoices can be deleted') ||
       errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||

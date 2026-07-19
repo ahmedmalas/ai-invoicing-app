@@ -4,12 +4,8 @@ import {
   assertCustomerCanBeDeletedOrThrow,
   resolveCustomerDeleteBlock,
 } from '../../src/domain/customers/safe-deletion.js';
-import {
-  assertInvoiceDraftDeletableOrThrow,
-  assertInvoiceNotReferencedByQuoteOrThrow,
-} from '../../src/domain/invoices/safe-deletion.js';
 
-describe('customer/invoice safe deletion domain rules', () => {
+describe('customer safe deletion domain rules', () => {
   it('allows orphan customers and blocks FK dependents in schema order', () => {
     expect(
       resolveCustomerDeleteBlock({
@@ -48,14 +44,5 @@ describe('customer/invoice safe deletion domain rules', () => {
         jobs: 0,
       }),
     ).toBe('CUSTOMER_HAS_QUOTES');
-  });
-
-  it('allows draft invoice deletes and blocks finalised or quote-linked drafts', () => {
-    expect(() => assertInvoiceDraftDeletableOrThrow('Draft')).not.toThrow();
-    expect(() => assertInvoiceDraftDeletableOrThrow('Finalised')).toThrow(
-      'Only draft invoices can be deleted',
-    );
-    expect(() => assertInvoiceNotReferencedByQuoteOrThrow(0)).not.toThrow();
-    expect(() => assertInvoiceNotReferencedByQuoteOrThrow(1)).toThrow('INVOICE_REFERENCED_BY_QUOTE');
   });
 });
