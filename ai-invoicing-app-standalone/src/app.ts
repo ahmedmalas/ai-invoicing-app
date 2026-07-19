@@ -21,6 +21,7 @@ import { timelineRoutes } from './routes/timeline.js';
 import { statementRoutes } from './routes/statements.js';
 import { creditNoteRoutes } from './routes/credit-notes.js';
 import { paymentRoutes } from './routes/payments.js';
+import { reconciliationRoutes } from './routes/reconciliation.js';
 import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
@@ -104,7 +105,7 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
-    bodyLimit: options.requestBodyLimit ?? 1_048_576,
+    bodyLimit: options.requestBodyLimit ?? 5_242_880,
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   let db: AppDatabase;
@@ -257,6 +258,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/workspace/quotes',
       '/workspace/invoices',
       '/workspace/payments',
+      '/workspace/reconciliation',
       '/workspace/inventory',
       '/workspace/stocktakes',
       '/workspace/purchase-orders',
@@ -897,6 +899,7 @@ export async function buildApp(options: BuildAppOptions) {
     reportRoutes,
     creditNoteRoutes,
     paymentRoutes,
+    reconciliationRoutes,
     supplierRoutes,
     supplierBillRoutes,
     supplierPaymentRoutes,
