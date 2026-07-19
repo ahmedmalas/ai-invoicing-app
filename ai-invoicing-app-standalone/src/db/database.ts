@@ -43,10 +43,6 @@ import { assertCustomerCanBeDeletedOrThrow } from '../domain/customers/safe-dele
 import { calculateTotals } from '../domain/invoices/gst.js';
 import { formatInvoiceNumber } from '../domain/invoices/numbering.js';
 import {
-  assertInvoiceDraftDeletableOrThrow,
-  assertInvoiceNotReferencedByQuoteOrThrow,
-} from '../domain/invoices/safe-deletion.js';
-import {
   TIMELINE_TAXONOMY,
   assertValidTimelineEventOrThrow,
   type TimelineEventKey,
@@ -833,7 +829,6 @@ export interface AppDatabase {
     filter?: ListInvoicesFilter,
     options?: ListQueryOptions,
   ): DatabaseResult<InvoiceDraft[]>;
-  deleteInvoiceDraft(id: string): DatabaseResult<void>;
   finaliseInvoice(id: string): DatabaseResult<InvoiceDraft>;
   getInvoiceBrandingSnapshot(invoiceId: string): DatabaseResult<BrandingProfile | null>;
   createQuote(input: CreateQuoteInput): DatabaseResult<Quote>;
@@ -2744,27 +2739,6 @@ export function createDatabase(
         )
         .all(...params) as DbInvoiceRow[];
       return rows.map(mapInvoiceRow);
-    },
-
-    deleteInvoiceDraft(id) {
-      return db.transaction((invoiceId: string) => {
-        const row = db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId) as
-          | { status: string }
-          | undefined;
-        if (!row) throw new Error('Invoice not found');
-        assertInvoiceDraftDeletableOrThrow(row.status);
-
-        const quoteLinks = db
-          .prepare('SELECT count(*) AS count FROM quotes WHERE converted_invoice_id = ?')
-          .get(invoiceId) as { count: number };
-        assertInvoiceNotReferencedByQuoteOrThrow(Number(quoteLinks.count ?? 0));
-
-        db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
-        db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
-        db.prepare('DELETE FROM reminder_states WHERE invoice_id = ?').run(invoiceId);
-        db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
-        db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-      })(id);
     },
 
     finaliseInvoice(id) {

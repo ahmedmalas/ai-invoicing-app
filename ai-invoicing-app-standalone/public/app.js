@@ -77,10 +77,6 @@ const errorMessages = {
     'This customer cannot be deleted because jobs are linked to it. Keep the customer to preserve job history.',
   CUSTOMER_HAS_RELATED_RECORDS:
     'This customer cannot be deleted because related business records still reference it.',
-  INVOICE_REFERENCED_BY_QUOTE:
-    'This invoice cannot be deleted because a converted quote still references it.',
-  'Only draft invoices can be deleted':
-    'Only draft invoices can be deleted. Finalised invoices are kept for accounting integrity.',
   AUTH_FORBIDDEN: 'You do not have permission to make this change.',
   OWNER_ALREADY_PROVISIONED: 'Owner setup is already complete. Sign in instead.',
 };
@@ -684,11 +680,7 @@ function invoicesPage() {
             invoice.id +
             '">Edit</button><button class="button small" data-finalise-invoice="' +
             invoice.id +
-            '">Issue</button><button class="button danger small" data-delete-invoice="' +
-            invoice.id +
-            '" data-name="' +
-            escapeHtml(invoice.invoiceNumber || invoice.title || 'Draft') +
-            '">Delete</button>'
+            '">Issue</button>'
           : '<button class="button secondary small" data-pdf="invoice" data-id="' +
             invoice.id +
             '">PDF</button>') +
@@ -1098,21 +1090,6 @@ async function removeCustomerViaApi(customerId, displayName) {
   await renderRoute();
 }
 
-async function removeInvoiceDraftViaApi(invoiceId, label) {
-  const confirmed = await openDestructiveConfirmDialog({
-    title: 'Delete invoice draft?',
-    message:
-      'Permanently delete draft "' +
-      (label || 'invoice') +
-      '"? Finalised invoices cannot be deleted because they are accounting records.',
-    confirmLabel: 'Delete draft',
-  });
-  if (!confirmed) return;
-  await api('/api/invoices/' + invoiceId, { method: 'DELETE' });
-  closeDrawer();
-  toast('Invoice draft deleted.');
-  await renderRoute();
-}
 
 function isInvoiceWorkspacePath(path = location.pathname) {
   return path === '/workspace/invoices/new' || /^\/workspace\/invoices\/[^/]+\/edit$/.test(path);
@@ -1588,14 +1565,10 @@ async function invoiceDetails(id) {
           id +
           '">Edit draft</button><button class="button" data-finalise-invoice="' +
           id +
-          '">Issue invoice</button><button class="button danger" data-delete-invoice="' +
-          id +
-          '" data-name="' +
-          escapeHtml(invoice.invoiceNumber || invoice.title || 'Draft') +
-          '">Delete draft</button>'
+          '">Issue invoice</button>'
         : '<button class="button secondary" data-pdf="invoice" data-id="' +
           id +
-          '">Download PDF</button><p class="muted-note">Finalised invoices cannot be deleted. They are preserved for accounting integrity.</p>') +
+          '">Download PDF</button>') +
       '<button class="button ghost" data-timeline="invoice" data-id="' +
       id +
       '">Audit timeline</button></div>',
@@ -2563,15 +2536,6 @@ document.addEventListener('click', async (event) => {
   const editInvoice = event.target.closest('[data-edit-invoice]');
   if (editInvoice) {
     openInvoiceWorkspaceRoute(editInvoice.dataset.editInvoice);
-    return;
-  }
-  const deleteInvoice = event.target.closest('[data-delete-invoice]');
-  if (deleteInvoice) {
-    deleteInvoice.disabled = true;
-    await runAction(() =>
-      removeInvoiceDraftViaApi(deleteInvoice.dataset.deleteInvoice, deleteInvoice.dataset.name),
-    );
-    deleteInvoice.disabled = false;
     return;
   }
   const viewPayment = event.target.closest('[data-view-payment]');

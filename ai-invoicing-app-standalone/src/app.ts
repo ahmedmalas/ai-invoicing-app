@@ -642,7 +642,6 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
       errorMessage.includes('CUSTOMER_HAS_JOBS') ||
       errorMessage.includes('CUSTOMER_HAS_RELATED_RECORDS') ||
-      errorMessage.includes('INVOICE_REFERENCED_BY_QUOTE') ||
       errorMessage.includes('RELATED_RECORD_CONSTRAINT') ||
       errorMessage.includes('SUPPLIER_HAS_PURCHASE_ORDERS') ||
       errorMessage.includes('SUPPLIER_HAS_BILLS') ||
@@ -689,7 +688,6 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION') ||
       errorMessage.includes('Only draft quotes can be edited') ||
       errorMessage.includes('Only draft quotes can be deleted') ||
-      errorMessage.includes('Only draft invoices can be deleted') ||
       errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||
