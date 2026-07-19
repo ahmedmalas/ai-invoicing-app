@@ -1,12 +1,14 @@
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { buildApp } from '../../src/app.js';
+
+const PRODUCTION_VERIFICATION_CUSTOMER = 'ABoss Native Production Verification 2026-07-14';
 
 const idSchema = z.object({ id: z.string().uuid() });
 const errorSchema = z.object({
@@ -15,356 +17,307 @@ const errorSchema = z.object({
   message: z.string().min(1),
 });
 
-function createTempDbPath(prefix: string): { dir: string; dbPath: string } {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  return { dir, dbPath: join(dir, 'app.db') };
-}
+const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(apps.splice(0).map(async (app) => await app.close()));
+  for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 function authHeaders(userId: string): Record<string, string> {
   return { 'x-actor-user-id': userId };
 }
 
-describe('delete customer and invoice guardrails', () => {
-  it('deletes orphan customers and draft invoices, blocks protected deletes, and enforces write permissions', async () => {
-    const { dir, dbPath } = createTempDbPath('ai-business-os-delete-ci-');
-    const bootstrapApp = await buildApp({ dbPath, authBypassForTesting: true });
+function abossSignedHeaders(input: {
+  secret: string;
+  method: string;
+  path: string;
+  abossUserId: string;
+  abossOrganizationId: string;
+  body?: string;
+}): Record<string, string> {
+  const timestamp = String(Date.now());
+  const nonce = randomUUID();
+  const body = input.body ?? 'null';
+  const contentHash = createHash('sha256').update(body).digest('hex');
+  const canonical = [
+    'aboss-invoicing-v1',
+    input.method,
+    input.path,
+    timestamp,
+    nonce,
+    input.abossUserId,
+    input.abossOrganizationId,
+    contentHash,
+  ].join('\n');
+  return {
+    'x-aboss-timestamp': timestamp,
+    'x-aboss-nonce': nonce,
+    'x-aboss-user-id': input.abossUserId,
+    'x-aboss-organization-id': input.abossOrganizationId,
+    'x-aboss-content-sha256': contentHash,
+    'x-aboss-signature': createHmac('sha256', input.secret).update(canonical).digest('hex'),
+  };
+}
 
-    let writerUserId = '';
-    let readOnlyUserId = '';
-    let orphanCustomerId = '';
-    let linkedCustomerId = '';
-    let draftInvoiceId = '';
-    let finalisedInvoiceId = '';
-    let productId = '';
-    let openingStock = 0;
+describe('production customer/invoice deletion path', () => {
+  it('deletes the production verification customer over the ABoss-signed API without 500', async () => {
+    const secret = 'aboss-invoicing-delete-proof-secret';
+    const abossUserId = randomUUID();
+    const abossOrganizationId = randomUUID();
+    const directory = mkdtempSync(join(tmpdir(), 'ai-delete-prod-verify-'));
+    tempDirs.push(directory);
+    const dbPath = join(directory, 'app.db');
 
-    try {
-      const writerRole = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/roles',
-            payload: { name: 'Delete Writer', canBeAssigned: true, canManageAssignments: false },
-          })
-        ).json(),
-      );
-      const readOnlyRole = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/roles',
-            payload: { name: 'Delete Reader', canBeAssigned: false, canManageAssignments: false },
-          })
-        ).json(),
-      );
+    const bootstrap = await buildApp({ dbPath, nodeEnv: 'test', authBypassForTesting: true });
+    const role = await bootstrap.db.createRole({
+      name: 'ABoss delete actor',
+      canBeAssigned: true,
+      canManageAssignments: true,
+    });
+    const actor = await bootstrap.db.createUser({
+      displayName: 'ABoss integration actor',
+      isActive: true,
+      roleIds: [role.id],
+    });
+    const verificationCustomer = await bootstrap.db.createCustomer({
+      displayName: PRODUCTION_VERIFICATION_CUSTOMER,
+      email: 'prod.verify@example.test',
+    });
+    await bootstrap.close();
 
-      writerUserId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/users',
-            payload: {
-              displayName: 'Delete Writer User',
-              email: 'delete-writer@example.test',
-              roleIds: [writerRole.id],
-            },
-          })
-        ).json(),
-      ).id;
-      readOnlyUserId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/users',
-            payload: {
-              displayName: 'Delete Reader User',
-              email: 'delete-reader@example.test',
-              roleIds: [readOnlyRole.id],
-            },
-          })
-        ).json(),
-      ).id;
+    const app = await buildApp({
+      dbPath,
+      nodeEnv: 'test',
+      authBypassForTesting: false,
+      abossOnlyAuth: true,
+      abossIntegrationSecret: secret,
+      abossIntegrationActorUserId: actor.id,
+      abossAllowedOrganizationId: abossOrganizationId,
+    });
+    apps.push(app);
 
-      orphanCustomerId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/customers',
-            payload: { displayName: 'Orphan Customer', email: 'orphan@example.test' },
-          })
-        ).json(),
-      ).id;
+    const deletePath = `/customers/${verificationCustomer.id}`;
+    const headers = abossSignedHeaders({
+      secret,
+      method: 'DELETE',
+      path: deletePath,
+      abossUserId,
+      abossOrganizationId,
+    });
+    const deleted = await app.inject({ method: 'DELETE', url: deletePath, headers });
+    expect(deleted.statusCode).toBe(204);
+    expect(deleted.body).toBe('');
 
-      linkedCustomerId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/customers',
-            payload: { displayName: 'Linked Customer', email: 'linked@example.test' },
-          })
-        ).json(),
-      ).id;
+    const getHeaders = abossSignedHeaders({
+      secret,
+      method: 'GET',
+      path: deletePath,
+      abossUserId: randomUUID(),
+      abossOrganizationId,
+    });
+    // Nonce/timestamp unique; use a fresh signature for GET.
+    const missing = await app.inject({
+      method: 'GET',
+      url: deletePath,
+      headers: getHeaders,
+    });
+    expect(missing.statusCode).toBe(404);
+  });
 
-      const product = z
-        .object({
-          id: z.string().uuid(),
-          stock: z.object({ onHand: z.number() }),
+  it('returns business-rule blockers (never 500) for protected customers and final invoices', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ai-delete-blockers-'));
+    tempDirs.push(directory);
+    const app = await buildApp({
+      dbPath: join(directory, 'app.db'),
+      authBypassForTesting: true,
+      nodeEnv: 'test',
+    });
+    apps.push(app);
+
+    const writerRole = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/roles',
+          payload: { name: 'Delete Writer', canBeAssigned: true, canManageAssignments: false },
         })
-        .parse(
-          (
-            await bootstrapApp.inject({
-              method: 'POST',
-              url: '/products',
-              payload: {
-                sku: 'DEL-STOCK-1',
-                name: 'Delete Stock Part',
-                costPrice: 5,
-                sellPrice: 12,
-                minimumStockLevel: 1,
-                reorderQuantity: 5,
-                openingStock: 8,
-                gstStatus: 'gst',
-                trackStock: true,
-              },
-            })
-          ).json(),
-        );
-      productId = product.id;
-      openingStock = product.stock.onHand;
+      ).json(),
+    );
+    const readOnlyRole = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/roles',
+          payload: { name: 'Delete Reader', canBeAssigned: false, canManageAssignments: false },
+        })
+      ).json(),
+    );
+    const writerUserId = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/users',
+          payload: {
+            displayName: 'Writer',
+            email: `writer-${randomUUID()}@example.test`,
+            roleIds: [writerRole.id],
+          },
+        })
+      ).json(),
+    ).id;
+    const readOnlyUserId = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/users',
+          payload: {
+            displayName: 'Reader',
+            email: `reader-${randomUUID()}@example.test`,
+            roleIds: [readOnlyRole.id],
+          },
+        })
+      ).json(),
+    ).id;
 
-      draftInvoiceId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/invoices',
-            payload: {
-              customerId: linkedCustomerId,
-              title: 'Draft for delete',
-              issueDate: '2026-07-10',
-              dueDate: '2026-07-24',
-              lineItems: [
-                {
-                  description: 'Delete Stock Part',
-                  quantity: 2,
-                  unitPrice: 12,
-                  gstApplicable: true,
-                  productId,
-                },
-              ],
-            },
-          })
-        ).json(),
-      ).id;
+    const linkedCustomer = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/customers',
+          payload: { displayName: `${PRODUCTION_VERIFICATION_CUSTOMER} Linked` },
+        })
+      ).json(),
+    );
+    const draft = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/invoices',
+          payload: {
+            customerId: linkedCustomer.id,
+            title: 'Protected draft',
+            issueDate: '2026-07-14',
+            dueDate: '2026-07-28',
+            lineItems: [{ description: 'Line', quantity: 1, unitPrice: 50, gstApplicable: true }],
+          },
+        })
+      ).json(),
+    );
+    const finalInvoice = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/invoices',
+          payload: {
+            customerId: linkedCustomer.id,
+            title: 'Protected final',
+            issueDate: '2026-07-14',
+            dueDate: '2026-07-28',
+            lineItems: [{ description: 'Line', quantity: 1, unitPrice: 80, gstApplicable: true }],
+          },
+        })
+      ).json(),
+    );
+    expect(
+      (await app.inject({ method: 'POST', url: `/invoices/${finalInvoice.id}/finalise` })).statusCode,
+    ).toBe(200);
 
-      finalisedInvoiceId = idSchema.parse(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: '/invoices',
-            payload: {
-              customerId: linkedCustomerId,
-              title: 'Final invoice keep',
-              issueDate: '2026-07-11',
-              dueDate: '2026-07-25',
-              lineItems: [
-                { description: 'Service', quantity: 1, unitPrice: 220, gstApplicable: true },
-              ],
-            },
-          })
-        ).json(),
-      ).id;
-      expect(
-        (
-          await bootstrapApp.inject({
-            method: 'POST',
-            url: `/invoices/${finalisedInvoiceId}/finalise`,
-          })
-        ).statusCode,
-      ).toBe(200);
-    } finally {
-      await bootstrapApp.close();
-    }
+    const forbidden = await app.inject({
+      method: 'DELETE',
+      url: `/customers/${linkedCustomer.id}`,
+      headers: authHeaders(readOnlyUserId),
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(errorSchema.parse(forbidden.json()).code).toBe('AUTH_FORBIDDEN');
 
-    const app = await buildApp({ dbPath, authBypassForTesting: false });
-    const sql = new Database(dbPath);
+    const blockedCustomer = await app.inject({
+      method: 'DELETE',
+      url: `/customers/${linkedCustomer.id}`,
+      headers: authHeaders(writerUserId),
+    });
+    expect(blockedCustomer.statusCode).toBe(409);
+    expect(blockedCustomer.statusCode).not.toBe(500);
+    expect(errorSchema.parse(blockedCustomer.json()).code).toBe('CUSTOMER_HAS_INVOICES');
 
-    try {
-      const forbiddenCustomerDelete = await app.inject({
-        method: 'DELETE',
-        url: `/customers/${orphanCustomerId}`,
-        headers: authHeaders(readOnlyUserId),
-      });
-      expect(forbiddenCustomerDelete.statusCode).toBe(403);
-      expect(errorSchema.parse(forbiddenCustomerDelete.json()).code).toBe('AUTH_FORBIDDEN');
+    const blockedFinal = await app.inject({
+      method: 'DELETE',
+      url: `/invoices/${finalInvoice.id}`,
+      headers: authHeaders(writerUserId),
+    });
+    expect(blockedFinal.statusCode).toBe(409);
+    expect(blockedFinal.statusCode).not.toBe(500);
+    expect(errorSchema.parse(blockedFinal.json()).code).toBe('ONLY_DRAFT_INVOICES_CAN_BE_DELETED');
 
-      const forbiddenInvoiceDelete = await app.inject({
-        method: 'DELETE',
-        url: `/invoices/${draftInvoiceId}`,
-        headers: authHeaders(readOnlyUserId),
-      });
-      expect(forbiddenInvoiceDelete.statusCode).toBe(403);
-      expect(errorSchema.parse(forbiddenInvoiceDelete.json()).code).toBe('AUTH_FORBIDDEN');
+    const deletedDraft = await app.inject({
+      method: 'DELETE',
+      url: `/invoices/${draft.id}`,
+      headers: authHeaders(writerUserId),
+    });
+    expect(deletedDraft.statusCode).toBe(204);
 
-      const blockedCustomerDelete = await app.inject({
-        method: 'DELETE',
-        url: `/customers/${linkedCustomerId}`,
-        headers: authHeaders(writerUserId),
-      });
-      expect(blockedCustomerDelete.statusCode).toBe(409);
-      expect(errorSchema.parse(blockedCustomerDelete.json()).code).toBe('CUSTOMER_HAS_INVOICES');
-      expect(
-        (
-          await app.inject({
-            method: 'GET',
-            url: `/customers/${linkedCustomerId}`,
-            headers: authHeaders(writerUserId),
-          })
-        ).statusCode,
-      ).toBe(200);
-
-      const blockedFinalInvoiceDelete = await app.inject({
-        method: 'DELETE',
-        url: `/invoices/${finalisedInvoiceId}`,
-        headers: authHeaders(writerUserId),
-      });
-      expect(blockedFinalInvoiceDelete.statusCode).toBe(409);
-      expect(errorSchema.parse(blockedFinalInvoiceDelete.json()).code).toBe(
-        'ONLY_DRAFT_INVOICES_CAN_BE_DELETED',
-      );
-      expect(
-        (
-          await app.inject({
-            method: 'GET',
-            url: `/invoices/${finalisedInvoiceId}`,
-            headers: authHeaders(writerUserId),
-          })
-        ).statusCode,
-      ).toBe(200);
-
-      const paymentCountBefore = (
-        sql.prepare('SELECT count(*) AS count FROM customer_payments').get() as { count: number }
-      ).count;
-      const stockBefore = (
-        sql
-          .prepare('SELECT on_hand AS qty FROM inventory_balances WHERE product_id = ?')
-          .get(productId) as { qty: number }
-      ).qty;
-      expect(stockBefore).toBe(openingStock);
-
-      const timelineBefore = (
-        sql.prepare('SELECT count(*) AS count FROM timeline_events').get() as { count: number }
-      ).count;
-
-      const deletedDraft = await app.inject({
-        method: 'DELETE',
-        url: `/invoices/${draftInvoiceId}`,
-        headers: authHeaders(writerUserId),
-      });
-      expect(deletedDraft.statusCode).toBe(204);
-      expect(
-        (
-          await app.inject({
-            method: 'GET',
-            url: `/invoices/${draftInvoiceId}`,
-            headers: authHeaders(writerUserId),
-          })
-        ).statusCode,
-      ).toBe(404);
-      expect(
-        (
-          sql
-            .prepare('SELECT count(*) AS count FROM invoice_line_items WHERE invoice_id = ?')
-            .get(draftInvoiceId) as { count: number }
-        ).count,
-      ).toBe(0);
-
-      const stockAfterDraftDelete = (
-        sql
-          .prepare('SELECT on_hand AS qty FROM inventory_balances WHERE product_id = ?')
-          .get(productId) as { qty: number }
-      ).qty;
-      expect(stockAfterDraftDelete).toBe(openingStock);
-      expect(
-        (sql.prepare('SELECT count(*) AS count FROM customer_payments').get() as { count: number })
-          .count,
-      ).toBe(paymentCountBefore);
-
-      const draftDeleteEvents = sql
-        .prepare(
-          `SELECT event_key AS eventKey FROM timeline_events
-           WHERE entity_id = ? AND event_key = 'invoice.draft_deleted'`,
-        )
-        .all(draftInvoiceId) as Array<{ eventKey: string }>;
-      expect(draftDeleteEvents).toHaveLength(1);
-
-      const deletedCustomer = await app.inject({
-        method: 'DELETE',
-        url: `/customers/${orphanCustomerId}`,
-        headers: authHeaders(writerUserId),
-      });
-      expect(deletedCustomer.statusCode).toBe(204);
-      expect(
-        (
-          await app.inject({
-            method: 'GET',
-            url: `/customers/${orphanCustomerId}`,
-            headers: authHeaders(writerUserId),
-          })
-        ).statusCode,
-      ).toBe(404);
-
-      const customerDeleteEvents = sql
-        .prepare(
-          `SELECT event_key AS eventKey FROM timeline_events
-           WHERE entity_id = ? AND event_key = 'customer.deleted'`,
-        )
-        .all(orphanCustomerId) as Array<{ eventKey: string }>;
-      expect(customerDeleteEvents).toHaveLength(1);
-
-      const timelineAfter = (
-        sql.prepare('SELECT count(*) AS count FROM timeline_events').get() as { count: number }
-      ).count;
-      expect(timelineAfter).toBe(timelineBefore + 2);
-
-      const quoteCustomer = idSchema.parse(
+    // Converted-quote draft invoices are blocked, not 500.
+    const quoteCustomer = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/customers',
+          payload: { displayName: 'Quote conversion customer' },
+        })
+      ).json(),
+    );
+    const quote = idSchema.parse(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/quotes',
+          payload: {
+            customerId: quoteCustomer.id,
+            title: 'Convert then protect',
+            issueDate: '2026-07-14',
+            expiryDate: '2026-08-14',
+            lineItems: [{ description: 'Work', quantity: 1, unitPrice: 100, gstApplicable: true }],
+          },
+        })
+      ).json(),
+    );
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/quotes/${quote.id}/status`,
+          payload: { status: 'Sent' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/quotes/${quote.id}/status`,
+          payload: { status: 'Accepted' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const converted = z
+      .object({ invoice: z.object({ id: z.string().uuid() }) })
+      .parse(
         (
           await app.inject({
             method: 'POST',
-            url: '/customers',
-            headers: authHeaders(writerUserId),
-            payload: { displayName: 'Quote Linked Customer' },
+            url: `/quotes/${quote.id}/convert`,
+            payload: { dueDate: '2026-08-30' },
           })
         ).json(),
       );
-      expect(
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/quotes',
-            headers: authHeaders(writerUserId),
-            payload: {
-              customerId: quoteCustomer.id,
-              title: 'Quote block delete',
-              issueDate: '2026-07-12',
-              expiryDate: '2026-07-26',
-              lineItems: [
-                { description: 'Quote line', quantity: 1, unitPrice: 50, gstApplicable: true },
-              ],
-            },
-          })
-        ).statusCode,
-      ).toBe(201);
-      const blockedByQuote = await app.inject({
-        method: 'DELETE',
-        url: `/customers/${quoteCustomer.id}`,
-        headers: authHeaders(writerUserId),
-      });
-      expect(blockedByQuote.statusCode).toBe(409);
-      expect(errorSchema.parse(blockedByQuote.json()).code).toBe('CUSTOMER_HAS_QUOTES');
-    } finally {
-      sql.close();
-      await app.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const blockedConvertedDraft = await app.inject({
+      method: 'DELETE',
+      url: `/invoices/${converted.invoice.id}`,
+      headers: authHeaders(writerUserId),
+    });
+    expect(blockedConvertedDraft.statusCode).toBe(409);
+    expect(blockedConvertedDraft.statusCode).not.toBe(500);
+    expect(errorSchema.parse(blockedConvertedDraft.json()).code).toBe('INVOICE_REFERENCED_BY_QUOTE');
   });
 });

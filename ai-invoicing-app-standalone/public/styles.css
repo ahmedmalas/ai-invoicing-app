@@ -678,6 +678,13 @@ td.primary-cell {
 .button.danger:hover {
   background: #f3d5cf;
 }
+.muted-note {
+  margin: 8px 0 0;
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .drawer {
   width: min(620px, 100%);
   height: 100%;

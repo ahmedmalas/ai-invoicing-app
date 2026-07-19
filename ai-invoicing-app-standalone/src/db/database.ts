@@ -39,8 +39,13 @@ import type {
   User,
   UUID,
 } from '../types/entities.js';
+import { assertCustomerCanBeDeletedOrThrow } from '../domain/customers/safe-deletion.js';
 import { calculateTotals } from '../domain/invoices/gst.js';
 import { formatInvoiceNumber } from '../domain/invoices/numbering.js';
+import {
+  assertInvoiceDraftDeletableOrThrow,
+  assertInvoiceNotReferencedByQuoteOrThrow,
+} from '../domain/invoices/safe-deletion.js';
 import {
   TIMELINE_TAXONOMY,
   assertValidTimelineEventOrThrow,
@@ -1473,7 +1478,6 @@ export function createDatabase(
       'document.updated',
       'invoice.draft_created',
       'invoice.draft_updated',
-      'invoice.draft_deleted',
       'invoice.finalised',
       'credit_note.created',
       'payment.created',
@@ -1491,7 +1495,6 @@ export function createDatabase(
       'supplier_bill.finalised',
       'customer.created',
       'customer.updated',
-      'customer.deleted',
       'business_profile.updated',
       'preferences.updated',
       'job.created',
@@ -2360,50 +2363,29 @@ export function createDatabase(
 
     deleteCustomer(id) {
       return db.transaction((customerId: string) => {
-        const existing = db
-          .prepare('SELECT id, display_name FROM customers WHERE id = ?')
-          .get(customerId) as { id: string; display_name: string } | undefined;
+        const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(customerId) as
+          | { id: string }
+          | undefined;
         if (!existing) {
           throw new Error('Customer not found');
         }
 
-        const invoiceCount = db
-          .prepare('SELECT count(*) AS count FROM invoices WHERE customer_id = ?')
-          .get(customerId) as { count: number };
-        if (invoiceCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_INVOICES');
-        }
+        const countFor = (table: string): number => {
+          const row = db
+            .prepare(`SELECT count(*) AS count FROM ${table} WHERE customer_id = ?`)
+            .get(customerId) as { count: number };
+          return Number(row.count ?? 0);
+        };
 
-        const quoteCount = db
-          .prepare('SELECT count(*) AS count FROM quotes WHERE customer_id = ?')
-          .get(customerId) as { count: number };
-        if (quoteCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_QUOTES');
-        }
-
-        const paymentCount = db
-          .prepare('SELECT count(*) AS count FROM customer_payments WHERE customer_id = ?')
-          .get(customerId) as { count: number };
-        if (paymentCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_PAYMENTS');
-        }
-
-        const creditNoteCount = db
-          .prepare('SELECT count(*) AS count FROM credit_notes WHERE customer_id = ?')
-          .get(customerId) as { count: number };
-        if (creditNoteCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_CREDIT_NOTES');
-        }
-
-        const jobCount = db
-          .prepare('SELECT count(*) AS count FROM jobs WHERE customer_id = ?')
-          .get(customerId) as { count: number };
-        if (jobCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_JOBS');
-        }
+        assertCustomerCanBeDeletedOrThrow({
+          invoices: countFor('invoices'),
+          quotes: countFor('quotes'),
+          customer_payments: countFor('customer_payments'),
+          credit_notes: countFor('credit_notes'),
+          jobs: countFor('jobs'),
+        });
 
         db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
-        timeline('customer.deleted', customerId, { displayName: existing.display_name });
       })(id);
     },
 
@@ -2766,21 +2748,22 @@ export function createDatabase(
 
     deleteInvoiceDraft(id) {
       return db.transaction((invoiceId: string) => {
-        const row = db
-          .prepare('SELECT status, title, invoice_number FROM invoices WHERE id = ?')
-          .get(invoiceId) as
-          | { status: string; title: string; invoice_number: string | null }
+        const row = db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId) as
+          | { status: string }
           | undefined;
         if (!row) throw new Error('Invoice not found');
-        if (row.status !== 'Draft') throw new Error('Only draft invoices can be deleted');
+        assertInvoiceDraftDeletableOrThrow(row.status);
+
+        const quoteLinks = db
+          .prepare('SELECT count(*) AS count FROM quotes WHERE converted_invoice_id = ?')
+          .get(invoiceId) as { count: number };
+        assertInvoiceNotReferencedByQuoteOrThrow(Number(quoteLinks.count ?? 0));
+
         db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
         db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
+        db.prepare('DELETE FROM reminder_states WHERE invoice_id = ?').run(invoiceId);
         db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
         db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-        timeline('invoice.draft_deleted', invoiceId, {
-          title: row.title,
-          invoiceNumber: row.invoice_number,
-        });
       })(id);
     },
 

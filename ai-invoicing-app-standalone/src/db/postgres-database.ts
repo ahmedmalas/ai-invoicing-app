@@ -40,8 +40,13 @@ import type {
   User,
   UUID,
 } from '../types/entities.js';
+import { assertCustomerCanBeDeletedOrThrow } from '../domain/customers/safe-deletion.js';
 import { calculateTotals } from '../domain/invoices/gst.js';
 import { formatInvoiceNumber } from '../domain/invoices/numbering.js';
+import {
+  assertInvoiceDraftDeletableOrThrow,
+  assertInvoiceNotReferencedByQuoteOrThrow,
+} from '../domain/invoices/safe-deletion.js';
 import {
   TIMELINE_TAXONOMY,
   assertValidTimelineEventOrThrow,
@@ -1266,9 +1271,40 @@ function pgSql(sql: string): string {
 }
 function mapPostgresError(error: unknown): unknown {
   if (!error || typeof error !== 'object') return error;
-  const candidate = error as { code?: string; message?: string; constraint?: string };
+  const candidate = error as {
+    code?: string;
+    message?: string;
+    constraint?: string;
+    table?: string;
+    detail?: string;
+  };
   if (candidate.code === 'P0001' && candidate.message) return new Error(candidate.message);
   const constraint = candidate.constraint ?? '';
+  const table = candidate.table ?? '';
+  const detail = candidate.detail ?? '';
+  const message = candidate.message ?? '';
+  if (candidate.code === '23503') {
+    if (table === 'customers' || /table "customers"/i.test(message) || /customers/i.test(detail)) {
+      if (/invoices/i.test(detail) || /invoices/i.test(message))
+        return new Error('CUSTOMER_HAS_INVOICES');
+      if (/quotes/i.test(detail) || /quotes/i.test(message)) return new Error('CUSTOMER_HAS_QUOTES');
+      if (/customer_payments/i.test(detail) || /customer_payments/i.test(message))
+        return new Error('CUSTOMER_HAS_PAYMENTS');
+      if (/credit_notes/i.test(detail) || /credit_notes/i.test(message))
+        return new Error('CUSTOMER_HAS_CREDIT_NOTES');
+      if (/jobs/i.test(detail) || /jobs/i.test(message)) return new Error('CUSTOMER_HAS_JOBS');
+      return new Error('CUSTOMER_HAS_RELATED_RECORDS');
+    }
+    if (
+      table === 'invoices' ||
+      /table "invoices"/i.test(message) ||
+      /converted_invoice_id/i.test(detail) ||
+      /converted_invoice_id/i.test(message)
+    ) {
+      return new Error('INVOICE_REFERENCED_BY_QUOTE');
+    }
+    return new Error('RELATED_RECORD_CONSTRAINT');
+  }
   if (candidate.code === '23505') {
     if (constraint.includes('purchase_orders_supplier_reference'))
       return new Error('PURCHASE_ORDER_REFERENCE_EXISTS');
@@ -2330,49 +2366,28 @@ export async function createPostgresDatabase(
     async deleteCustomer(id) {
       return db.transaction(async (customerId: string) => {
         const existing = (await db
-          .prepare('SELECT id, display_name FROM customers WHERE id = ?')
-          .get(customerId)) as { id: string; display_name: string } | undefined;
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(customerId)) as { id: string } | undefined;
         if (!existing) {
           throw new Error('Customer not found');
         }
 
-        const invoiceCount = (await db
-          .prepare('SELECT count(*) AS count FROM invoices WHERE customer_id = ?')
-          .get(customerId)) as { count: number };
-        if (invoiceCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_INVOICES');
-        }
+        const countFor = async (table: string): Promise<number> => {
+          const row = (await db
+            .prepare(`SELECT count(*) AS count FROM ${table} WHERE customer_id = ?`)
+            .get(customerId)) as { count: number };
+          return Number(row.count ?? 0);
+        };
 
-        const quoteCount = (await db
-          .prepare('SELECT count(*) AS count FROM quotes WHERE customer_id = ?')
-          .get(customerId)) as { count: number };
-        if (quoteCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_QUOTES');
-        }
-
-        const paymentCount = (await db
-          .prepare('SELECT count(*) AS count FROM customer_payments WHERE customer_id = ?')
-          .get(customerId)) as { count: number };
-        if (paymentCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_PAYMENTS');
-        }
-
-        const creditNoteCount = (await db
-          .prepare('SELECT count(*) AS count FROM credit_notes WHERE customer_id = ?')
-          .get(customerId)) as { count: number };
-        if (creditNoteCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_CREDIT_NOTES');
-        }
-
-        const jobCount = (await db
-          .prepare('SELECT count(*) AS count FROM jobs WHERE customer_id = ?')
-          .get(customerId)) as { count: number };
-        if (jobCount.count > 0) {
-          throw new Error('CUSTOMER_HAS_JOBS');
-        }
+        assertCustomerCanBeDeletedOrThrow({
+          invoices: await countFor('invoices'),
+          quotes: await countFor('quotes'),
+          customer_payments: await countFor('customer_payments'),
+          credit_notes: await countFor('credit_notes'),
+          jobs: await countFor('jobs'),
+        });
 
         await db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
-        await timeline('customer.deleted', customerId, { displayName: existing.display_name });
       })(id);
     },
 
@@ -2759,20 +2774,21 @@ export async function createPostgresDatabase(
     async deleteInvoiceDraft(id) {
       return db.transaction(async (invoiceId: string) => {
         const row = (await db
-          .prepare('SELECT status, title, invoice_number FROM invoices WHERE id = ?')
-          .get(invoiceId)) as
-          | { status: string; title: string; invoice_number: string | null }
-          | undefined;
+          .prepare('SELECT status FROM invoices WHERE id = ?')
+          .get(invoiceId)) as { status: string } | undefined;
         if (!row) throw new Error('Invoice not found');
-        if (row.status !== 'Draft') throw new Error('Only draft invoices can be deleted');
+        assertInvoiceDraftDeletableOrThrow(row.status);
+
+        const quoteLinks = (await db
+          .prepare('SELECT count(*) AS count FROM quotes WHERE converted_invoice_id = ?')
+          .get(invoiceId)) as { count: number };
+        assertInvoiceNotReferencedByQuoteOrThrow(Number(quoteLinks.count ?? 0));
+
         await db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
         await db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
+        await db.prepare('DELETE FROM reminder_states WHERE invoice_id = ?').run(invoiceId);
         await db.prepare('DELETE FROM documents WHERE id = ?').run(invoiceId);
         await db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
-        await timeline('invoice.draft_deleted', invoiceId, {
-          title: row.title,
-          invoiceNumber: row.invoice_number,
-        });
       })(id);
     },
 

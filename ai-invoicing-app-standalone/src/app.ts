@@ -620,6 +620,9 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('CUSTOMER_HAS_PAYMENTS') ||
       errorMessage.includes('CUSTOMER_HAS_CREDIT_NOTES') ||
       errorMessage.includes('CUSTOMER_HAS_JOBS') ||
+      errorMessage.includes('CUSTOMER_HAS_RELATED_RECORDS') ||
+      errorMessage.includes('INVOICE_REFERENCED_BY_QUOTE') ||
+      errorMessage.includes('RELATED_RECORD_CONSTRAINT') ||
       errorMessage.includes('SUPPLIER_HAS_PURCHASE_ORDERS') ||
       errorMessage.includes('SUPPLIER_HAS_BILLS') ||
       errorMessage.includes('SUPPLIER_HAS_PAYMENTS') ||

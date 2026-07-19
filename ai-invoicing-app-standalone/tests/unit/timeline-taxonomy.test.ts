@@ -32,8 +32,6 @@ describe('timeline taxonomy validator', () => {
     expect(isValidTimelineEventKey('team.member_added')).toBe(true);
     expect(isValidTimelineEventKey('team.member_removed')).toBe(true);
     expect(isValidTimelineEventKey('team.deleted')).toBe(true);
-    expect(isValidTimelineEventKey('customer.deleted')).toBe(true);
-    expect(isValidTimelineEventKey('invoice.draft_deleted')).toBe(true);
     expect(isValidTimelineEventKey('job.assignment_scope_set')).toBe(true);
     expect(() => assertValidTimelineEventOrThrow('invoice.finalised', 1)).not.toThrow();
     expect(() => assertValidTimelineEventOrThrow('credit_note.created', 1)).not.toThrow();

@@ -75,6 +75,10 @@ const errorMessages = {
     'This customer cannot be deleted because credit notes are linked to it. Keep the customer to preserve credit history.',
   CUSTOMER_HAS_JOBS:
     'This customer cannot be deleted because jobs are linked to it. Keep the customer to preserve job history.',
+  CUSTOMER_HAS_RELATED_RECORDS:
+    'This customer cannot be deleted because related business records still reference it.',
+  INVOICE_REFERENCED_BY_QUOTE:
+    'This invoice cannot be deleted because a converted quote still references it.',
   'Only draft invoices can be deleted':
     'Only draft invoices can be deleted. Finalised invoices are kept for accounting integrity.',
   AUTH_FORBIDDEN: 'You do not have permission to make this change.',
@@ -1051,7 +1055,7 @@ function requestCloseDrawer() {
   return true;
 }
 
-function confirmDestructive({ title, message, confirmLabel = 'Delete' }) {
+function openDestructiveConfirmDialog({ title, message, confirmLabel = 'Delete' }) {
   return new Promise((resolve) => {
     document.querySelector('.confirm-backdrop')?.remove();
     document.body.insertAdjacentHTML(
@@ -1078,13 +1082,13 @@ function confirmDestructive({ title, message, confirmLabel = 'Delete' }) {
   });
 }
 
-async function deleteCustomerRecord(customerId, displayName) {
-  const confirmed = await confirmDestructive({
+async function removeCustomerViaApi(customerId, displayName) {
+  const confirmed = await openDestructiveConfirmDialog({
     title: 'Delete customer?',
     message:
-      'Delete "' +
+      'Permanently delete "' +
       (displayName || 'this customer') +
-      '" permanently? This cannot be undone. Customers with invoices, quotes, payments, credit notes, or jobs cannot be deleted.',
+      '"? This is only allowed when no invoices, quotes, payments, credit notes, or jobs reference the customer.',
     confirmLabel: 'Delete customer',
   });
   if (!confirmed) return;
@@ -1094,13 +1098,13 @@ async function deleteCustomerRecord(customerId, displayName) {
   await renderRoute();
 }
 
-async function deleteInvoiceRecord(invoiceId, label) {
-  const confirmed = await confirmDestructive({
+async function removeInvoiceDraftViaApi(invoiceId, label) {
+  const confirmed = await openDestructiveConfirmDialog({
     title: 'Delete invoice draft?',
     message:
-      'Delete "' +
-      (label || 'this draft invoice') +
-      '" permanently? Finalised invoices cannot be deleted because they are part of accounting history.',
+      'Permanently delete draft "' +
+      (label || 'invoice') +
+      '"? Finalised invoices cannot be deleted because they are accounting records.',
     confirmLabel: 'Delete draft',
   });
   if (!confirmed) return;
@@ -1591,7 +1595,7 @@ async function invoiceDetails(id) {
           '">Delete draft</button>'
         : '<button class="button secondary" data-pdf="invoice" data-id="' +
           id +
-          '">Download PDF</button>') +
+          '">Download PDF</button><p class="muted-note">Finalised invoices cannot be deleted. They are preserved for accounting integrity.</p>') +
       '<button class="button ghost" data-timeline="invoice" data-id="' +
       id +
       '">Audit timeline</button></div>',
@@ -2527,7 +2531,7 @@ document.addEventListener('click', async (event) => {
   if (deleteCustomer) {
     deleteCustomer.disabled = true;
     await runAction(() =>
-      deleteCustomerRecord(deleteCustomer.dataset.deleteCustomer, deleteCustomer.dataset.name),
+      removeCustomerViaApi(deleteCustomer.dataset.deleteCustomer, deleteCustomer.dataset.name),
     );
     deleteCustomer.disabled = false;
     return;
@@ -2565,7 +2569,7 @@ document.addEventListener('click', async (event) => {
   if (deleteInvoice) {
     deleteInvoice.disabled = true;
     await runAction(() =>
-      deleteInvoiceRecord(deleteInvoice.dataset.deleteInvoice, deleteInvoice.dataset.name),
+      removeInvoiceDraftViaApi(deleteInvoice.dataset.deleteInvoice, deleteInvoice.dataset.name),
     );
     deleteInvoice.disabled = false;
     return;
