@@ -24,6 +24,8 @@ const SESSION_KEY = 'aboss-invoicing-session';
 let session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
 let currentUser = null;
 let cache = {};
+let workspaceCacheAt = 0;
+const WORKSPACE_CACHE_TTL_MS = 30_000;
 let recoveryAccessToken = null;
 let signOutInProgress = false;
 let drawerPointerDownTarget = null;
@@ -341,7 +343,15 @@ function filterBar(placeholder, statuses = []) {
   );
 }
 
-async function loadWorkspace() {
+async function loadWorkspace({ force = false } = {}) {
+  if (
+    !force &&
+    workspaceCacheAt &&
+    Date.now() - workspaceCacheAt < WORKSPACE_CACHE_TTL_MS &&
+    Array.isArray(cache.customers)
+  ) {
+    return cache;
+  }
   const [customers, quotes, invoices, payments, report, businessProfile] = await Promise.all([
     api('/api/customers?limit=500'),
     api('/api/quotes?limit=500'),
@@ -360,7 +370,12 @@ async function loadWorkspace() {
     report,
     businessProfile,
   };
+  workspaceCacheAt = Date.now();
   return cache;
+}
+
+function invalidateWorkspaceCache() {
+  workspaceCacheAt = 0;
 }
 
 function receivable(invoiceId) {
@@ -1087,7 +1102,8 @@ async function removeCustomerViaApi(customerId, displayName) {
   await api('/api/customers/' + customerId, { method: 'DELETE' });
   closeDrawer();
   toast('Customer deleted.');
-  await renderRoute();
+  invalidateWorkspaceCache();
+  await renderRoute({ forceReload: true });
 }
 
 
@@ -1222,7 +1238,8 @@ async function requestCloseInvoiceWorkspace() {
   const closed = await closeInvoiceWorkspace({ force: false, animate: true });
   if (!closed) return false;
   history.pushState({}, '', '/workspace/invoices');
-  await renderRoute();
+  invalidateWorkspaceCache();
+  await renderRoute({ forceReload: true });
   return true;
 }
 
@@ -2253,14 +2270,22 @@ async function stocktakesPage() {
   });
 }
 
-async function renderRoute() {
+async function renderRoute({ forceReload = false } = {}) {
   if (!currentUser) return;
   const path = location.pathname === '/' ? '/dashboard' : location.pathname;
   const invoiceRoute = parseInvoiceWorkspacePath(path);
-  root.innerHTML =
-    '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
+  const warm =
+    !forceReload &&
+    workspaceCacheAt &&
+    Date.now() - workspaceCacheAt < WORKSPACE_CACHE_TTL_MS &&
+    Array.isArray(cache.customers) &&
+    Boolean(document.querySelector('.app-shell'));
+  if (!warm) {
+    root.innerHTML =
+      '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
+  }
   try {
-    await loadWorkspace();
+    await loadWorkspace({ force: forceReload });
     if (invoiceRoute) {
       invoicesPage();
       if (invoiceRoute.mode === 'create') await mountInvoiceWorkspace(null);
@@ -2563,7 +2588,8 @@ document.addEventListener('click', async (event) => {
     await runAction(async () => {
       await updateQuoteStatus(quoteStatus.dataset.id, quoteStatus.dataset.quoteStatus);
       toast('Quote status updated to ' + quoteStatus.dataset.quoteStatus + '.');
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
     });
     quoteStatus.disabled = false;
     return;
@@ -2575,7 +2601,8 @@ document.addEventListener('click', async (event) => {
       await api('/api/quotes/' + convert.dataset.convertQuote + '/convert', { method: 'POST' });
       toast('Accepted quote converted to a final invoice.');
       closeDrawer();
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
     });
     convert.disabled = false;
     return;
@@ -2589,7 +2616,8 @@ document.addEventListener('click', async (event) => {
       });
       toast('Invoice issued and locked.');
       closeDrawer();
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
     });
     finalise.disabled = false;
     return;
@@ -2625,7 +2653,8 @@ document.addEventListener('click', async (event) => {
     return;
   }
   if (event.target.closest('[data-clear-report]')) {
-    await renderRoute();
+    invalidateWorkspaceCache();
+    await renderRoute({ forceReload: true });
     return;
   }
   if (event.target.closest('[data-signout]')) {
@@ -2696,7 +2725,8 @@ document.addEventListener('submit', async (event) => {
         saveSession(result.session);
         currentUser = provisionalUser(data);
         history.replaceState({}, '', '/dashboard');
-        await renderRoute();
+        invalidateWorkspaceCache();
+        await renderRoute({ forceReload: true });
       } else {
         history.replaceState({}, '', '/sign-in');
         authPage('verification', result.message, true);
@@ -2736,7 +2766,8 @@ document.addEventListener('submit', async (event) => {
       saveSession(await api('/api/auth/sign-in', { method: 'POST', body: JSON.stringify(data) }));
       currentUser = provisionalUser(data);
       history.replaceState({}, '', '/dashboard');
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'customer-form') {
@@ -2763,7 +2794,8 @@ document.addEventListener('submit', async (event) => {
       else await api('/api/customers', { method: 'POST', body: JSON.stringify(body) });
       closeDrawer();
       toast(form.dataset.recordId ? 'Customer updated.' : 'Customer created.');
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'invoice-workspace-form') {
@@ -2776,7 +2808,8 @@ document.addEventListener('submit', async (event) => {
       toast(wasNew ? 'Invoice draft created.' : 'Invoice saved.');
       await closeInvoiceWorkspace({ force: true, animate: true });
       history.pushState({}, '', '/workspace/invoices');
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'sales-form') {
@@ -2806,7 +2839,8 @@ document.addEventListener('submit', async (event) => {
       }
       closeDrawer();
       toast(recordId ? 'Changes saved.' : 'Quote draft created.');
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'payment-form') {
@@ -2833,7 +2867,8 @@ document.addEventListener('submit', async (event) => {
           ? 'Partial payment recorded.'
           : 'Final payment recorded. Invoice is paid.',
       );
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'profile-form') {
@@ -2860,7 +2895,8 @@ document.addEventListener('submit', async (event) => {
           ? 'Business profile saved. PDF downloads are ready.'
           : 'Business profile saved.',
       );
-      await renderRoute();
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
       return;
     }
     if (form.id === 'logo-studio-form') {
