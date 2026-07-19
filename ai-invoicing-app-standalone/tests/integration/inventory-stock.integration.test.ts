@@ -512,6 +512,27 @@ describe('inventory stock integration', () => {
     });
     expect(duplicateSku.statusCode).toBe(409);
 
+    const beforeReject = z
+      .object({ stock: z.object({ onHand: z.number(), available: z.number() }) })
+      .parse((await app.inject({ method: 'GET', url: `/products/${product.id}` })).json());
+    const rejectRes = await app.inject({
+      method: 'POST',
+      url: '/inventory/adjust',
+      payload: {
+        productId: product.id,
+        quantityDelta: -10_000,
+        movementType: 'manual_adjustment',
+      },
+    });
+    expect(rejectRes.statusCode).toBe(409);
+    expect(z.object({ message: z.string() }).parse(rejectRes.json()).message).toBe(
+      'INSUFFICIENT_STOCK',
+    );
+    const afterReject = z
+      .object({ stock: z.object({ onHand: z.number(), available: z.number() }) })
+      .parse((await app.inject({ method: 'GET', url: `/products/${product.id}` })).json());
+    expect(afterReject.stock).toEqual(beforeReject.stock);
+
     await app.close();
   });
 });

@@ -147,33 +147,68 @@ function ensureBalanceRow(db: SqliteDb, productId: string): void {
   ).run(productId, nowIso());
 }
 
+function balanceColumn(
+  bucket: StockBucket,
+): 'on_hand' | 'reserved' | 'incoming' | 'damaged' | 'returned' {
+  if (bucket === 'on_hand' || bucket === 'available') return 'on_hand';
+  if (bucket === 'reserved') return 'reserved';
+  if (bucket === 'incoming') return 'incoming';
+  if (bucket === 'damaged') return 'damaged';
+  return 'returned';
+}
+
 function applyBucketDelta(
   db: SqliteDb,
   productId: string,
   bucket: StockBucket,
   delta: number,
+  options: { allowNegative?: boolean } = {},
 ): ProductStockSummary {
   ensureBalanceRow(db, productId);
-  const column =
-    bucket === 'on_hand' || bucket === 'available'
-      ? 'on_hand'
-      : bucket === 'reserved'
-        ? 'reserved'
-        : bucket === 'incoming'
-          ? 'incoming'
-          : bucket === 'damaged'
-            ? 'damaged'
-            : 'returned';
-  db.prepare(
-    `UPDATE inventory_balances
-     SET ${column} = ${column} + ?, updated_at = ?
-     WHERE product_id = ?`,
-  ).run(delta, nowIso(), productId);
-  const stock = getBalance(db, productId);
-  if (stock.onHand < -0.0001 || stock.reserved < -0.0001) {
+  const column = balanceColumn(bucket);
+  const now = nowIso();
+
+  if (options.allowNegative) {
+    db.prepare(
+      `UPDATE inventory_balances
+       SET ${column} = ${column} + ?, updated_at = ?
+       WHERE product_id = ?`,
+    ).run(delta, now, productId);
+    return getBalance(db, productId);
+  }
+
+  // Atomic guard: never write an invalid on_hand/reserved balance.
+  const guardSql =
+    column === 'on_hand'
+      ? 'AND (on_hand + ?) >= -0.0001 AND reserved >= -0.0001'
+      : column === 'reserved'
+        ? 'AND on_hand >= -0.0001 AND (reserved + ?) >= -0.0001'
+        : 'AND on_hand >= -0.0001 AND reserved >= -0.0001';
+  const params =
+    column === 'on_hand' || column === 'reserved'
+      ? [delta, now, productId, delta]
+      : [delta, now, productId];
+  const updated = db
+    .prepare(
+      `UPDATE inventory_balances
+       SET ${column} = ${column} + ?, updated_at = ?
+       WHERE product_id = ?
+         ${guardSql}
+       RETURNING on_hand, reserved, incoming, damaged, returned`,
+    )
+    .get(...params) as
+    | {
+        on_hand: number;
+        reserved: number;
+        incoming: number;
+        damaged: number;
+        returned: number;
+      }
+    | undefined;
+  if (!updated) {
     throw new Error('INSUFFICIENT_STOCK');
   }
-  return stock;
+  return mapStock(updated);
 }
 
 export function ensureInventorySchemaSqlite(db: SqliteDb): void {
@@ -364,25 +399,9 @@ export function createInventoryStore(
     }
 
     const bucket = input.bucket ?? 'on_hand';
-    try {
-      applyBucketDelta(db, input.productId, bucket, input.quantityDelta);
-    } catch (error) {
-      if (!input.allowNegative) throw error;
-      ensureBalanceRow(db, input.productId);
-      const column =
-        bucket === 'on_hand' || bucket === 'available'
-          ? 'on_hand'
-          : bucket === 'reserved'
-            ? 'reserved'
-            : bucket === 'incoming'
-              ? 'incoming'
-              : bucket === 'damaged'
-                ? 'damaged'
-                : 'returned';
-      db.prepare(
-        `UPDATE inventory_balances SET ${column} = ${column} + ?, updated_at = ? WHERE product_id = ?`,
-      ).run(input.quantityDelta, nowIso(), input.productId);
-    }
+    applyBucketDelta(db, input.productId, bucket, input.quantityDelta, {
+      allowNegative: input.allowNegative === true,
+    });
 
     const id = randomUUID();
     const createdAt = nowIso();
@@ -1033,9 +1052,9 @@ export function createInventoryStore(
             movementType: 'reservation_release',
             quantityDelta: -line.quantityReceived,
             bucket: 'incoming',
-            referenceType: 'purchase_order_incoming',
+            referenceType: 'purchase_order_incoming_clear',
             referenceId: purchaseOrderId,
-            referenceLineId: poLine.id,
+            referenceLineId: `${receiptId}:${poLine.id}`,
             notes: 'Incoming cleared on receipt',
             allowNegative: true,
           });

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -284,5 +286,183 @@ describePostgres('PostgreSQL inventory parity', () => {
         await pool.end();
       }
     }
-  });
+  }, 30_000);
+
+  it('enforces atomic insufficient-stock rejection, allowNegative single-apply, idempotency, and concurrency', async () => {
+    const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');
+    const db = await createPostgresDatabase(connectionString!, { maxConnections: 6 });
+    const ownerId = '20000000-0000-4000-8000-0000000000aa';
+    let schemaName: string | undefined;
+    try {
+      const workspace = await db.provisionWorkspaceOwner({
+        authUserId: ownerId,
+        displayName: 'Atomic Stock Owner',
+        email: 'atomic-stock@example.test',
+        workspaceName: 'Atomic Stock Workspace',
+      });
+      schemaName = workspace.schemaName;
+      enterWorkspaceContext({
+        authUserId: ownerId,
+        workspaceId: workspace.workspaceId,
+        schemaName: workspace.schemaName,
+      });
+
+      const product = await db.createProduct({
+        sku: 'ATOMIC-1',
+        name: 'Atomic Widget',
+        costPrice: 5,
+        sellPrice: 12,
+        openingStock: 5,
+        trackStock: true,
+        minimumStockLevel: 0,
+      });
+      expect(product.stock?.onHand).toBe(5);
+
+      const beforeReject = await db.getProductById(product.id);
+      const movementsBeforeReject = await db.listStockMovements({
+        productId: product.id,
+        limit: 100,
+      });
+      await expect(
+        db.adjustStock({
+          productId: product.id,
+          quantityDelta: -20,
+          notes: 'Should reject',
+          referenceType: 'manual',
+          referenceId: randomUUID(),
+        }),
+      ).rejects.toThrow('INSUFFICIENT_STOCK');
+      const afterReject = await db.getProductById(product.id);
+      expect(afterReject?.stock).toEqual(beforeReject?.stock);
+      const movementsAfterReject = await db.listStockMovements({
+        productId: product.id,
+        limit: 100,
+      });
+      expect(movementsAfterReject.map((row) => row.id)).toEqual(
+        movementsBeforeReject.map((row) => row.id),
+      );
+
+      const supplier = await db.createSupplier({
+        displayName: 'Atomic Supplier',
+        email: 'atomic-supplier@example.test',
+      });
+      const purchaseOrder = await db.createPurchaseOrderDraft({
+        supplierId: supplier.id,
+        issueDate: '2026-07-10',
+        currency: 'AUD',
+        lineItems: [
+          {
+            description: 'Atomic Widget',
+            quantity: 10,
+            unitPrice: 5,
+            gstApplicable: true,
+            productId: product.id,
+          },
+        ],
+      });
+      const po = await db.getPurchaseOrderById(purchaseOrder.id);
+      const lineId = po!.lineItems[0]!.id!;
+      await db.approvePurchaseOrder(purchaseOrder.id);
+      expect((await db.getProductById(product.id))?.stock?.incoming).toBe(10);
+
+      // Force incoming below the next clear amount so allowNegative is exercised.
+      const pool = new Pool({ connectionString, max: 1, allowExitOnIdle: true });
+      try {
+        await pool.query(`SET search_path TO "${schemaName}", public`);
+        await pool.query(
+          'UPDATE inventory_balances SET incoming = 3, updated_at = $1 WHERE product_id = $2',
+          [new Date().toISOString(), product.id],
+        );
+      } finally {
+        await pool.end();
+      }
+      expect((await db.getProductById(product.id))?.stock?.incoming).toBe(3);
+
+      await db.receivePurchaseOrder(purchaseOrder.id, {
+        lineItems: [
+          { purchaseOrderLineItemId: lineId, quantityReceived: 5, productId: product.id },
+        ],
+      });
+      // Single apply only: 3 - 5 = -2 (old bug would apply twice → -7).
+      expect((await db.getProductById(product.id))?.stock?.incoming).toBe(-2);
+
+      const releaseMovements = (
+        await db.listStockMovements({ productId: product.id, limit: 100 })
+      ).filter((row) => row.movementType === 'reservation_release');
+      expect(releaseMovements).toHaveLength(1);
+      expect(releaseMovements[0]?.quantityDelta).toBe(-5);
+
+      const idempotentRef = randomUUID();
+      const first = await db.adjustStock({
+        productId: product.id,
+        quantityDelta: 1,
+        referenceType: 'manual',
+        referenceId: idempotentRef,
+      });
+      const onHandAfterFirst = (await db.getProductById(product.id))?.stock?.onHand;
+      const second = await db.adjustStock({
+        productId: product.id,
+        quantityDelta: 1,
+        referenceType: 'manual',
+        referenceId: idempotentRef,
+      });
+      expect(second.id).toBe(first.id);
+      expect((await db.getProductById(product.id))?.stock?.onHand).toBe(onHandAfterFirst);
+
+      const concurrentProduct = await db.createProduct({
+        sku: 'ATOMIC-CONC',
+        name: 'Concurrent Widget',
+        openingStock: 5,
+        trackStock: true,
+      });
+      const concurrentResults = await Promise.allSettled([
+        db.adjustStock({
+          productId: concurrentProduct.id,
+          quantityDelta: -3,
+          referenceType: 'manual',
+          referenceId: randomUUID(),
+        }),
+        db.adjustStock({
+          productId: concurrentProduct.id,
+          quantityDelta: -3,
+          referenceType: 'manual',
+          referenceId: randomUUID(),
+        }),
+      ]);
+      const fulfilled = concurrentResults.filter((result) => result.status === 'fulfilled');
+      const rejected = concurrentResults.filter((result) => result.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(
+        rejected[0]?.status === 'rejected' &&
+          rejected[0].reason instanceof Error &&
+          rejected[0].reason.message,
+      ).toBe('INSUFFICIENT_STOCK');
+      expect((await db.getProductById(concurrentProduct.id))?.stock?.onHand).toBe(2);
+
+      const immutablePool = new Pool({ connectionString, max: 1, allowExitOnIdle: true });
+      try {
+        await immutablePool.query(`SET search_path TO "${schemaName}", public`);
+        await expect(
+          immutablePool.query('UPDATE stock_movements SET notes = $1 WHERE id = $2', [
+            'tamper',
+            first.id,
+          ]),
+        ).rejects.toThrow(/IMMUTABLE_STOCK_MOVEMENT/);
+      } finally {
+        await immutablePool.end();
+      }
+    } finally {
+      await db.close();
+      const pool = new Pool({ connectionString, max: 1, allowExitOnIdle: true });
+      try {
+        if (schemaName) await pool.query(`DROP SCHEMA "${schemaName}" CASCADE`);
+        await pool.query('DELETE FROM public.auth_workspaces WHERE display_name = $1', [
+          'Atomic Stock Workspace',
+        ]);
+      } finally {
+        await pool.end();
+      }
+    }
+  }, 30_000);
 });

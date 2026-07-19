@@ -158,35 +158,83 @@ async function ensureBalanceRow(db: PostgresInventoryDb, productId: string): Pro
     .run(productId, nowIso());
 }
 
+function balanceColumn(
+  bucket: StockBucket,
+): 'on_hand' | 'reserved' | 'incoming' | 'damaged' | 'returned' {
+  if (bucket === 'on_hand' || bucket === 'available') return 'on_hand';
+  if (bucket === 'reserved') return 'reserved';
+  if (bucket === 'incoming') return 'incoming';
+  if (bucket === 'damaged') return 'damaged';
+  return 'returned';
+}
+
+async function lockBalanceRow(db: PostgresInventoryDb, productId: string): Promise<void> {
+  await ensureBalanceRow(db, productId);
+  await db
+    .prepare('SELECT product_id FROM inventory_balances WHERE product_id = ? FOR UPDATE')
+    .get(productId);
+}
+
 async function applyBucketDelta(
   db: PostgresInventoryDb,
   productId: string,
   bucket: StockBucket,
   delta: number,
+  options: { allowNegative?: boolean; alreadyLocked?: boolean } = {},
 ): Promise<ProductStockSummary> {
-  await ensureBalanceRow(db, productId);
-  const column =
-    bucket === 'on_hand' || bucket === 'available'
-      ? 'on_hand'
-      : bucket === 'reserved'
-        ? 'reserved'
-        : bucket === 'incoming'
-          ? 'incoming'
-          : bucket === 'damaged'
-            ? 'damaged'
-            : 'returned';
-  await db
+  if (!options.alreadyLocked) {
+    await lockBalanceRow(db, productId);
+  } else {
+    await ensureBalanceRow(db, productId);
+  }
+
+  const column = balanceColumn(bucket);
+  const now = nowIso();
+
+  if (options.allowNegative) {
+    await db
+      .prepare(
+        `UPDATE inventory_balances
+         SET ${column} = ${column} + ?, updated_at = ?
+         WHERE product_id = ?`,
+      )
+      .run(delta, now, productId);
+    return getBalance(db, productId);
+  }
+
+  // Atomic guard: never write an invalid on_hand/reserved balance.
+  // Conditional UPDATE leaves the row unchanged when stock would go negative.
+  const guardSql =
+    column === 'on_hand'
+      ? 'AND (on_hand + ?) >= -0.0001 AND reserved >= -0.0001'
+      : column === 'reserved'
+        ? 'AND on_hand >= -0.0001 AND (reserved + ?) >= -0.0001'
+        : 'AND on_hand >= -0.0001 AND reserved >= -0.0001';
+  const params =
+    column === 'on_hand' || column === 'reserved'
+      ? [delta, now, productId, delta]
+      : [delta, now, productId];
+  const updated = (await db
     .prepare(
       `UPDATE inventory_balances
-     SET ${column} = ${column} + ?, updated_at = ?
-     WHERE product_id = ?`,
+       SET ${column} = ${column} + ?, updated_at = ?
+       WHERE product_id = ?
+         ${guardSql}
+       RETURNING on_hand, reserved, incoming, damaged, returned`,
     )
-    .run(delta, nowIso(), productId);
-  const stock = await getBalance(db, productId);
-  if (stock.onHand < -0.0001 || stock.reserved < -0.0001) {
+    .get(...params)) as
+    | {
+        on_hand: number;
+        reserved: number;
+        incoming: number;
+        damaged: number;
+        returned: number;
+      }
+    | undefined;
+  if (!updated) {
     throw new Error('INSUFFICIENT_STOCK');
   }
-  return stock;
+  return mapStock(updated);
 }
 
 export function createPostgresInventoryStore(
@@ -275,6 +323,9 @@ export function createPostgresInventoryStore(
       throw new Error('PRODUCT_DOES_NOT_TRACK_STOCK');
     }
 
+    // Serialize per-product balance mutations, then re-check idempotency under the lock.
+    await lockBalanceRow(db, input.productId);
+
     if (input.referenceType && input.referenceId && input.referenceLineId) {
       const existing = (await db
         .prepare(
@@ -311,27 +362,10 @@ export function createPostgresInventoryStore(
     }
 
     const bucket = input.bucket ?? 'on_hand';
-    try {
-      await applyBucketDelta(db, input.productId, bucket, input.quantityDelta);
-    } catch (error) {
-      if (!input.allowNegative) throw error;
-      await ensureBalanceRow(db, input.productId);
-      const column =
-        bucket === 'on_hand' || bucket === 'available'
-          ? 'on_hand'
-          : bucket === 'reserved'
-            ? 'reserved'
-            : bucket === 'incoming'
-              ? 'incoming'
-              : bucket === 'damaged'
-                ? 'damaged'
-                : 'returned';
-      await db
-        .prepare(
-          `UPDATE inventory_balances SET ${column} = ${column} + ?, updated_at = ? WHERE product_id = ?`,
-        )
-        .run(input.quantityDelta, nowIso(), input.productId);
-    }
+    await applyBucketDelta(db, input.productId, bucket, input.quantityDelta, {
+      allowNegative: input.allowNegative === true,
+      alreadyLocked: true,
+    });
 
     const id = randomUUID();
     const createdAt = nowIso();
@@ -1019,9 +1053,9 @@ export function createPostgresInventoryStore(
             movementType: 'reservation_release',
             quantityDelta: -line.quantityReceived,
             bucket: 'incoming',
-            referenceType: 'purchase_order_incoming',
+            referenceType: 'purchase_order_incoming_clear',
             referenceId: purchaseOrderId,
-            referenceLineId: poLine.id,
+            referenceLineId: `${receiptId}:${poLine.id}`,
             notes: 'Incoming cleared on receipt',
             allowNegative: true,
           });
