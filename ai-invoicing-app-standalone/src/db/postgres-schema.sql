@@ -960,6 +960,31 @@ CREATE TABLE IF NOT EXISTS stocktake_sequences (
   next_sequence INTEGER NOT NULL
 );
 
+-- Inventory column upgrades for existing workspaces (schema v45)
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS contact_person TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payment_terms TEXT;
+ALTER TABLE invoice_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION raise_immutable_stock_movement() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'IMMUTABLE_STOCK_MOVEMENT';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_stock_movements_immutable_update ON stock_movements;
+CREATE TRIGGER trg_stock_movements_immutable_update
+BEFORE UPDATE ON stock_movements
+FOR EACH ROW EXECUTE FUNCTION raise_immutable_stock_movement();
+
+DROP TRIGGER IF EXISTS trg_stock_movements_immutable_delete ON stock_movements;
+CREATE TRIGGER trg_stock_movements_immutable_delete
+BEFORE DELETE ON stock_movements
+FOR EACH ROW EXECUTE FUNCTION raise_immutable_stock_movement();
+
 -- unless an explicit policy is introduced later.
 ALTER TABLE app_database_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_profile ENABLE ROW LEVEL SECURITY;

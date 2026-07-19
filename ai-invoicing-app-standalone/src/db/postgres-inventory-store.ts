@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
 
 import { buildDefaultQrPayload } from '../domain/inventory/barcode.js';
 import {
@@ -21,14 +20,20 @@ import type {
 } from '../domain/inventory/types.js';
 import type { TimelineEventKey } from '../domain/timeline/taxonomy.js';
 
-type SqliteDb = Database.Database;
-
-export interface InventoryTimelineWriter {
-  (eventKey: TimelineEventKey, entityId: string, payload: unknown): void;
+export interface PostgresInventoryDb {
+  prepare(sql: string): {
+    get: (...values: unknown[]) => Promise<unknown>;
+    all: (...values: unknown[]) => Promise<unknown[]>;
+    run: (...values: unknown[]) => Promise<void>;
+  };
 }
 
-export interface InventoryNumberAllocator {
-  (table: 'goods_receipt_sequences' | 'stocktake_sequences', prefix: string): string;
+export interface InventoryTimelineWriterAsync {
+  (eventKey: TimelineEventKey, entityId: string, payload: unknown): Promise<void>;
+}
+
+export interface InventoryNumberAllocatorAsync {
+  (table: 'goods_receipt_sequences' | 'stocktake_sequences', prefix: string): Promise<string>;
 }
 
 function nowIso(): string {
@@ -121,13 +126,16 @@ function mapProduct(row: Record<string, unknown>, stock?: ProductStockSummary): 
   return product;
 }
 
-function getBalance(db: SqliteDb, productId: string): ProductStockSummary {
-  const row = db
+async function getBalance(
+  db: PostgresInventoryDb,
+  productId: string,
+): Promise<ProductStockSummary> {
+  const row = (await db
     .prepare(
       `SELECT on_hand, reserved, incoming, damaged, returned
        FROM inventory_balances WHERE product_id = ?`,
     )
-    .get(productId) as
+    .get(productId)) as
     | {
         on_hand: number;
         reserved: number;
@@ -139,21 +147,24 @@ function getBalance(db: SqliteDb, productId: string): ProductStockSummary {
   return mapStock(row ?? null);
 }
 
-function ensureBalanceRow(db: SqliteDb, productId: string): void {
-  db.prepare(
-    `INSERT OR IGNORE INTO inventory_balances
+async function ensureBalanceRow(db: PostgresInventoryDb, productId: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO inventory_balances
       (product_id, on_hand, reserved, incoming, damaged, returned, updated_at)
-     VALUES (?, 0, 0, 0, 0, 0, ?)`,
-  ).run(productId, nowIso());
+     VALUES (?, 0, 0, 0, 0, 0, ?)
+     ON CONFLICT (product_id) DO NOTHING`,
+    )
+    .run(productId, nowIso());
 }
 
-function applyBucketDelta(
-  db: SqliteDb,
+async function applyBucketDelta(
+  db: PostgresInventoryDb,
   productId: string,
   bucket: StockBucket,
   delta: number,
-): ProductStockSummary {
-  ensureBalanceRow(db, productId);
+): Promise<ProductStockSummary> {
+  await ensureBalanceRow(db, productId);
   const column =
     bucket === 'on_hand' || bucket === 'available'
       ? 'on_hand'
@@ -164,107 +175,40 @@ function applyBucketDelta(
           : bucket === 'damaged'
             ? 'damaged'
             : 'returned';
-  db.prepare(
-    `UPDATE inventory_balances
+  await db
+    .prepare(
+      `UPDATE inventory_balances
      SET ${column} = ${column} + ?, updated_at = ?
      WHERE product_id = ?`,
-  ).run(delta, nowIso(), productId);
-  const stock = getBalance(db, productId);
+    )
+    .run(delta, nowIso(), productId);
+  const stock = await getBalance(db, productId);
   if (stock.onHand < -0.0001 || stock.reserved < -0.0001) {
     throw new Error('INSUFFICIENT_STOCK');
   }
   return stock;
 }
 
-export function ensureInventorySchemaSqlite(db: SqliteDb): void {
-  const supplierCols = db
-    .prepare("SELECT name FROM pragma_table_info('suppliers')")
-    .all() as Array<{ name: string }>;
-  const supplierSet = new Set(supplierCols.map((c) => c.name));
-  for (const [column, ddl] of [
-    ['contact_person', 'ALTER TABLE suppliers ADD COLUMN contact_person TEXT'],
-    ['website', 'ALTER TABLE suppliers ADD COLUMN website TEXT'],
-    ['payment_terms', 'ALTER TABLE suppliers ADD COLUMN payment_terms TEXT'],
-  ] as const) {
-    if (!supplierSet.has(column)) db.exec(ddl);
-  }
-
-  for (const table of [
-    'purchase_order_line_items',
-    'invoice_line_items',
-    'quote_line_items',
-  ] as const) {
-    const cols = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as Array<{
-      name: string;
-    }>;
-    const set = new Set(cols.map((c) => c.name));
-    if (!set.has('product_id')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN product_id TEXT`);
-    }
-  }
-
-  const poLineCols = db
-    .prepare("SELECT name FROM pragma_table_info('purchase_order_line_items')")
-    .all() as Array<{ name: string }>;
-  const poLineSet = new Set(poLineCols.map((c) => c.name));
-  if (!poLineSet.has('quantity_received')) {
-    db.exec(
-      'ALTER TABLE purchase_order_line_items ADD COLUMN quantity_received REAL NOT NULL DEFAULT 0',
-    );
-  }
-
-  // Allow goods-receipt updates to quantity_received / product_id on non-draft POs.
-  db.exec('DROP TRIGGER IF EXISTS trg_purchase_order_line_items_non_draft_update');
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_update
-    BEFORE UPDATE ON purchase_order_line_items
-    WHEN (
-      EXISTS (
-        SELECT 1 FROM purchase_orders p
-        WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft'
-      )
-      OR EXISTS (
-        SELECT 1 FROM purchase_orders p
-        WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft'
-      )
-    )
-    AND (
-      NEW.id <> OLD.id
-      OR NEW.purchase_order_id <> OLD.purchase_order_id
-      OR NEW.description <> OLD.description
-      OR NEW.quantity <> OLD.quantity
-      OR NEW.unit_price <> OLD.unit_price
-      OR NEW.gst_applicable <> OLD.gst_applicable
-      OR NEW.line_subtotal <> OLD.line_subtotal
-      OR NEW.line_gst <> OLD.line_gst
-      OR NEW.line_total <> OLD.line_total
-    )
-    BEGIN
-      SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS');
-    END;
-  `);
-}
-
-export function createInventoryStore(
-  db: SqliteDb,
+export function createPostgresInventoryStore(
+  db: PostgresInventoryDb,
   deps: {
-    timeline: InventoryTimelineWriter;
-    allocateNumber: InventoryNumberAllocator;
+    timeline: InventoryTimelineWriterAsync;
+    allocateNumber: InventoryNumberAllocatorAsync;
   },
 ) {
-  function refreshAlertsForProduct(productId: string): void {
-    const productRow = db.prepare('SELECT * FROM products WHERE id = ?').get(productId) as
+  async function refreshAlertsForProduct(productId: string): Promise<void> {
+    const productRow = (await db.prepare('SELECT * FROM products WHERE id = ?').get(productId)) as
       Record<string, unknown> | undefined;
     if (!productRow) return;
-    const stock = getBalance(db, productId);
-    const lastMovement = db
+    const stock = await getBalance(db, productId);
+    const lastMovement = (await db
       .prepare(
         `SELECT created_at FROM stock_movements
          WHERE product_id = ?
          ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
-      .get(productId) as { created_at: string } | undefined;
-    const sold = db
+      .get(productId)) as { created_at: string } | undefined;
+    const sold = (await db
       .prepare(
         `SELECT COALESCE(SUM(CASE WHEN quantity_delta < 0 THEN -quantity_delta ELSE 0 END), 0) AS units
          FROM stock_movements
@@ -272,7 +216,7 @@ export function createInventoryStore(
            AND movement_type IN ('invoice_issue', 'job_consume')
            AND created_at >= ?`,
       )
-      .get(productId, new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()) as {
+      .get(productId, new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())) as {
       units: number;
     };
     const findings = evaluateStockIntelligence({
@@ -281,10 +225,12 @@ export function createInventoryStore(
       lastMovementAt: lastMovement?.created_at ?? null,
       unitsSoldLast90Days: Number(sold.units ?? 0),
     });
-    db.prepare(
-      `UPDATE inventory_alerts SET is_dismissed = 1, updated_at = ?
+    await db
+      .prepare(
+        `UPDATE inventory_alerts SET is_dismissed = 1, updated_at = ?
        WHERE product_id = ? AND is_dismissed = 0`,
-    ).run(nowIso(), productId);
+      )
+      .run(nowIso(), productId);
     const insert = db.prepare(
       `INSERT INTO inventory_alerts
         (id, product_id, kind, message, suggested_reorder_quantity, is_dismissed, created_at, updated_at)
@@ -292,7 +238,7 @@ export function createInventoryStore(
     );
     const now = nowIso();
     for (const finding of findings) {
-      insert.run(
+      await insert.run(
         randomUUID(),
         productId,
         finding.kind,
@@ -301,14 +247,14 @@ export function createInventoryStore(
         now,
         now,
       );
-      deps.timeline('inventory.alert_raised', productId, {
+      await deps.timeline('inventory.alert_raised', productId, {
         kind: finding.kind,
         message: finding.message,
       });
     }
   }
 
-  function postMovement(input: {
+  async function postMovement(input: {
     productId: string;
     movementType: StockMovementType;
     quantityDelta: number;
@@ -320,16 +266,17 @@ export function createInventoryStore(
     notes?: string | null;
     createdBy?: string | null;
     allowNegative?: boolean;
-  }): StockMovement {
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(input.productId) as
-      Record<string, unknown> | undefined;
+  }): Promise<StockMovement> {
+    const product = (await db
+      .prepare('SELECT * FROM products WHERE id = ?')
+      .get(input.productId)) as Record<string, unknown> | undefined;
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
     if (!asBool(product.track_stock as number)) {
       throw new Error('PRODUCT_DOES_NOT_TRACK_STOCK');
     }
 
     if (input.referenceType && input.referenceId && input.referenceLineId) {
-      const existing = db
+      const existing = (await db
         .prepare(
           `SELECT id FROM stock_movements
            WHERE product_id = ? AND movement_type = ?
@@ -341,11 +288,11 @@ export function createInventoryStore(
           input.referenceType,
           input.referenceId,
           input.referenceLineId,
-        ) as { id: string } | undefined;
+        )) as { id: string } | undefined;
       if (existing) {
-        const row = db
+        const row = (await db
           .prepare('SELECT * FROM stock_movements WHERE id = ?')
-          .get(existing.id) as Record<string, unknown>;
+          .get(existing.id)) as Record<string, unknown>;
         return {
           id: String(row.id),
           productId: String(row.product_id),
@@ -365,10 +312,10 @@ export function createInventoryStore(
 
     const bucket = input.bucket ?? 'on_hand';
     try {
-      applyBucketDelta(db, input.productId, bucket, input.quantityDelta);
+      await applyBucketDelta(db, input.productId, bucket, input.quantityDelta);
     } catch (error) {
       if (!input.allowNegative) throw error;
-      ensureBalanceRow(db, input.productId);
+      await ensureBalanceRow(db, input.productId);
       const column =
         bucket === 'on_hand' || bucket === 'available'
           ? 'on_hand'
@@ -379,41 +326,45 @@ export function createInventoryStore(
               : bucket === 'damaged'
                 ? 'damaged'
                 : 'returned';
-      db.prepare(
-        `UPDATE inventory_balances SET ${column} = ${column} + ?, updated_at = ? WHERE product_id = ?`,
-      ).run(input.quantityDelta, nowIso(), input.productId);
+      await db
+        .prepare(
+          `UPDATE inventory_balances SET ${column} = ${column} + ?, updated_at = ? WHERE product_id = ?`,
+        )
+        .run(input.quantityDelta, nowIso(), input.productId);
     }
 
     const id = randomUUID();
     const createdAt = nowIso();
-    db.prepare(
-      `INSERT INTO stock_movements (
+    await db
+      .prepare(
+        `INSERT INTO stock_movements (
         id, product_id, movement_type, quantity_delta, unit_cost, bucket,
         reference_type, reference_id, reference_line_id, notes, created_at, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      input.productId,
-      input.movementType,
-      input.quantityDelta,
-      input.unitCost ?? null,
-      bucket,
-      input.referenceType ?? null,
-      input.referenceId ?? null,
-      input.referenceLineId ?? null,
-      input.notes ?? null,
-      createdAt,
-      input.createdBy ?? null,
-    );
+      )
+      .run(
+        id,
+        input.productId,
+        input.movementType,
+        input.quantityDelta,
+        input.unitCost ?? null,
+        bucket,
+        input.referenceType ?? null,
+        input.referenceId ?? null,
+        input.referenceLineId ?? null,
+        input.notes ?? null,
+        createdAt,
+        input.createdBy ?? null,
+      );
 
-    deps.timeline('inventory.stock_moved', input.productId, {
+    await deps.timeline('inventory.stock_moved', input.productId, {
       movementId: id,
       movementType: input.movementType,
       quantityDelta: input.quantityDelta,
       referenceType: input.referenceType ?? null,
       referenceId: input.referenceId ?? null,
     });
-    refreshAlertsForProduct(input.productId);
+    await refreshAlertsForProduct(input.productId);
     return {
       id,
       productId: input.productId,
@@ -430,13 +381,13 @@ export function createInventoryStore(
     };
   }
 
-  function listBundleComponents(bundleProductId: string): ProductBundleComponent[] {
-    const rows = db
+  async function listBundleComponents(bundleProductId: string): Promise<ProductBundleComponent[]> {
+    const rows = (await db
       .prepare(
         `SELECT id, bundle_product_id, component_product_id, quantity
          FROM product_bundle_components WHERE bundle_product_id = ?`,
       )
-      .all(bundleProductId) as Array<{
+      .all(bundleProductId)) as Array<{
       id: string;
       bundle_product_id: string;
       component_product_id: string;
@@ -450,7 +401,7 @@ export function createInventoryStore(
     }));
   }
 
-  function consumeProductOrBundle(input: {
+  async function consumeProductOrBundle(input: {
     productId: string;
     quantity: number;
     movementType: StockMovementType;
@@ -458,17 +409,18 @@ export function createInventoryStore(
     referenceId: string;
     referenceLineId: string;
     notes?: string | null;
-  }): StockMovement[] {
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(input.productId) as
-      Record<string, unknown> | undefined;
+  }): Promise<StockMovement[]> {
+    const product = (await db
+      .prepare('SELECT * FROM products WHERE id = ?')
+      .get(input.productId)) as Record<string, unknown> | undefined;
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
     const movements: StockMovement[] = [];
     if (asBool(product.is_bundle as number)) {
-      const components = listBundleComponents(input.productId);
+      const components = await listBundleComponents(input.productId);
       if (components.length === 0) throw new Error('BUNDLE_HAS_NO_COMPONENTS');
       for (const component of components) {
         movements.push(
-          postMovement({
+          await postMovement({
             productId: component.componentProductId,
             movementType: input.movementType,
             quantityDelta: -(component.quantity * input.quantity),
@@ -483,7 +435,7 @@ export function createInventoryStore(
       return movements;
     }
     movements.push(
-      postMovement({
+      await postMovement({
         productId: input.productId,
         movementType: input.movementType,
         quantityDelta: -input.quantity,
@@ -498,50 +450,52 @@ export function createInventoryStore(
   }
 
   return {
-    createProduct(input: Record<string, unknown>): Product {
+    async createProduct(input: Record<string, unknown>): Promise<Product> {
       const id = randomUUID();
       const now = nowIso();
       const sku = asText(input.sku);
       const qrPayload = asOptionalText(input.qrPayload) ?? buildDefaultQrPayload({ id, sku });
       try {
-        db.prepare(
-          `INSERT INTO products (
+        await db
+          .prepare(
+            `INSERT INTO products (
             id, sku, barcode, qr_payload, name, description, category, brand, supplier_id,
             unit_of_measure, cost_price, sell_price, gst_status, track_stock,
             minimum_stock_level, reorder_quantity, storage_location, weight,
             length_mm, width_mm, height_mm, image_url, notes, is_active, is_bundle, bundle_kind,
             created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          sku,
-          asOptionalText(input.barcode),
-          qrPayload,
-          asText(input.name),
-          asOptionalText(input.description),
-          asOptionalText(input.category),
-          asOptionalText(input.brand),
-          asOptionalText(input.supplierId),
-          asText(input.unitOfMeasure, 'ea') || 'ea',
-          Number(input.costPrice ?? 0),
-          Number(input.sellPrice ?? 0),
-          asText(input.gstStatus, 'gst') || 'gst',
-          input.trackStock === false ? 0 : 1,
-          Number(input.minimumStockLevel ?? 0),
-          Number(input.reorderQuantity ?? 0),
-          asOptionalText(input.storageLocation),
-          asOptionalNumber(input.weight),
-          asOptionalNumber(input.lengthMm),
-          asOptionalNumber(input.widthMm),
-          asOptionalNumber(input.heightMm),
-          asOptionalText(input.imageUrl),
-          asOptionalText(input.notes),
-          input.isActive === false ? 0 : 1,
-          input.isBundle === true ? 1 : 0,
-          asOptionalText(input.bundleKind),
-          now,
-          now,
-        );
+          )
+          .run(
+            id,
+            sku,
+            asOptionalText(input.barcode),
+            qrPayload,
+            asText(input.name),
+            asOptionalText(input.description),
+            asOptionalText(input.category),
+            asOptionalText(input.brand),
+            asOptionalText(input.supplierId),
+            asText(input.unitOfMeasure, 'ea') || 'ea',
+            Number(input.costPrice ?? 0),
+            Number(input.sellPrice ?? 0),
+            asText(input.gstStatus, 'gst') || 'gst',
+            input.trackStock === false ? 0 : 1,
+            Number(input.minimumStockLevel ?? 0),
+            Number(input.reorderQuantity ?? 0),
+            asOptionalText(input.storageLocation),
+            asOptionalNumber(input.weight),
+            asOptionalNumber(input.lengthMm),
+            asOptionalNumber(input.widthMm),
+            asOptionalNumber(input.heightMm),
+            asOptionalText(input.imageUrl),
+            asOptionalText(input.notes),
+            input.isActive === false ? 0 : 1,
+            input.isBundle === true ? 1 : 0,
+            asOptionalText(input.bundleKind),
+            now,
+            now,
+          );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (
@@ -556,10 +510,10 @@ export function createInventoryStore(
         throw error;
       }
 
-      ensureBalanceRow(db, id);
+      await ensureBalanceRow(db, id);
       const opening = Number(input.openingStock ?? 0);
       if (opening > 0 && input.trackStock !== false) {
-        postMovement({
+        await postMovement({
           productId: id,
           movementType: 'manual_adjustment',
           quantityDelta: opening,
@@ -583,16 +537,23 @@ export function createInventoryStore(
          VALUES (?, ?, ?, ?)`,
       );
       for (const component of components) {
-        insertComponent.run(randomUUID(), id, component.componentProductId, component.quantity);
+        await insertComponent.run(
+          randomUUID(),
+          id,
+          component.componentProductId,
+          component.quantity,
+        );
       }
 
-      deps.timeline('inventory.product_created', id, { sku, name: input.name });
-      refreshAlertsForProduct(id);
-      return this.getProductById(id)!;
+      await deps.timeline('inventory.product_created', id, { sku, name: input.name });
+      await refreshAlertsForProduct(id);
+      const created = await this.getProductById(id);
+      if (!created) throw new Error('PRODUCT_NOT_FOUND');
+      return created;
     },
 
-    updateProduct(id: string, input: Record<string, unknown>): Product {
-      const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as
+    async updateProduct(id: string, input: Record<string, unknown>): Promise<Product> {
+      const existing = (await db.prepare('SELECT * FROM products WHERE id = ?').get(id)) as
         Record<string, unknown> | undefined;
       if (!existing) throw new Error('PRODUCT_NOT_FOUND');
       const now = nowIso();
@@ -698,43 +659,45 @@ export function createInventoryStore(
       };
 
       try {
-        db.prepare(
-          `UPDATE products SET
+        await db
+          .prepare(
+            `UPDATE products SET
             sku = ?, barcode = ?, qr_payload = ?, name = ?, description = ?, category = ?, brand = ?,
             supplier_id = ?, unit_of_measure = ?, cost_price = ?, sell_price = ?, gst_status = ?,
             track_stock = ?, minimum_stock_level = ?, reorder_quantity = ?, storage_location = ?,
             weight = ?, length_mm = ?, width_mm = ?, height_mm = ?, image_url = ?, notes = ?,
             is_active = ?, is_bundle = ?, bundle_kind = ?, updated_at = ?
            WHERE id = ?`,
-        ).run(
-          next.sku,
-          next.barcode,
-          next.qrPayload,
-          next.name,
-          next.description,
-          next.category,
-          next.brand,
-          next.supplierId,
-          next.unitOfMeasure,
-          next.costPrice,
-          next.sellPrice,
-          next.gstStatus,
-          next.trackStock ? 1 : 0,
-          next.minimumStockLevel,
-          next.reorderQuantity,
-          next.storageLocation,
-          next.weight,
-          next.lengthMm,
-          next.widthMm,
-          next.heightMm,
-          next.imageUrl,
-          next.notes,
-          next.isActive ? 1 : 0,
-          next.isBundle ? 1 : 0,
-          next.bundleKind,
-          now,
-          id,
-        );
+          )
+          .run(
+            next.sku,
+            next.barcode,
+            next.qrPayload,
+            next.name,
+            next.description,
+            next.category,
+            next.brand,
+            next.supplierId,
+            next.unitOfMeasure,
+            next.costPrice,
+            next.sellPrice,
+            next.gstStatus,
+            next.trackStock ? 1 : 0,
+            next.minimumStockLevel,
+            next.reorderQuantity,
+            next.storageLocation,
+            next.weight,
+            next.lengthMm,
+            next.widthMm,
+            next.heightMm,
+            next.imageUrl,
+            next.notes,
+            next.isActive ? 1 : 0,
+            next.isBundle ? 1 : 0,
+            next.bundleKind,
+            now,
+            id,
+          );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes('products.sku')) throw new Error('PRODUCT_SKU_EXISTS');
@@ -743,7 +706,9 @@ export function createInventoryStore(
       }
 
       if (input.bundleComponents) {
-        db.prepare('DELETE FROM product_bundle_components WHERE bundle_product_id = ?').run(id);
+        await db
+          .prepare('DELETE FROM product_bundle_components WHERE bundle_product_id = ?')
+          .run(id);
         const insertComponent = db.prepare(
           `INSERT INTO product_bundle_components (id, bundle_product_id, component_product_id, quantity)
            VALUES (?, ?, ?, ?)`,
@@ -752,27 +717,34 @@ export function createInventoryStore(
           componentProductId: string;
           quantity: number;
         }>) {
-          insertComponent.run(randomUUID(), id, component.componentProductId, component.quantity);
+          await insertComponent.run(
+            randomUUID(),
+            id,
+            component.componentProductId,
+            component.quantity,
+          );
         }
       }
 
-      deps.timeline('inventory.product_updated', id, { sku: next.sku });
-      refreshAlertsForProduct(id);
-      return this.getProductById(id)!;
+      await deps.timeline('inventory.product_updated', id, { sku: next.sku });
+      await refreshAlertsForProduct(id);
+      const updated = await this.getProductById(id);
+      if (!updated) throw new Error('PRODUCT_NOT_FOUND');
+      return updated;
     },
 
-    archiveProduct(id: string): Product {
-      return this.updateProduct(id, { isActive: false });
+    async archiveProduct(id: string): Promise<Product> {
+      return await this.updateProduct(id, { isActive: false });
     },
 
-    getProductById(id: string): Product | null {
-      const row = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as
+    async getProductById(id: string): Promise<Product | null> {
+      const row = (await db.prepare('SELECT * FROM products WHERE id = ?').get(id)) as
         Record<string, unknown> | undefined;
       if (!row) return null;
-      return mapProduct(row, getBalance(db, id));
+      return mapProduct(row, await getBalance(db, id));
     },
 
-    listProducts(
+    async listProducts(
       filter: {
         q?: string;
         sku?: string;
@@ -784,12 +756,12 @@ export function createInventoryStore(
         limit?: number;
         offset?: number;
       } = {},
-    ): Product[] {
+    ): Promise<Product[]> {
       const clauses: string[] = [];
       const params: unknown[] = [];
       if (filter.q) {
         clauses.push(
-          "(p.name LIKE ? OR p.sku LIKE ? OR IFNULL(p.barcode, '') LIKE ? OR IFNULL(p.description, '') LIKE ?)",
+          "(p.name LIKE ? OR p.sku LIKE ? OR COALESCE(p.barcode, '') LIKE ? OR COALESCE(p.description, '') LIKE ?)",
         );
         const like = `%${filter.q}%`;
         params.push(like, like, like, like);
@@ -816,13 +788,13 @@ export function createInventoryStore(
       }
       if (filter.lowStock) {
         clauses.push(
-          `(IFNULL(b.on_hand, 0) - IFNULL(b.reserved, 0)) <= p.minimum_stock_level AND p.track_stock = 1`,
+          `(COALESCE(b.on_hand, 0) - COALESCE(b.reserved, 0)) <= p.minimum_stock_level AND p.track_stock = 1`,
         );
       }
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
       const limit = filter.limit ?? 200;
       const offset = filter.offset ?? 0;
-      const rows = db
+      const rows = (await db
         .prepare(
           `SELECT p.* FROM products p
            LEFT JOIN inventory_balances b ON b.product_id = p.id
@@ -830,23 +802,27 @@ export function createInventoryStore(
            ORDER BY p.name ASC, p.sku ASC
            LIMIT ? OFFSET ?`,
         )
-        .all(...params, limit, offset) as Array<Record<string, unknown>>;
-      return rows.map((row) => mapProduct(row, getBalance(db, String(row.id))));
+        .all(...params, limit, offset)) as Array<Record<string, unknown>>;
+      const products: Product[] = [];
+      for (const row of rows) {
+        products.push(mapProduct(row, await getBalance(db, String(row.id))));
+      }
+      return products;
     },
 
-    lookupProductByCode(code: string): Product | null {
-      const row = db
+    async lookupProductByCode(code: string): Promise<Product | null> {
+      const row = (await db
         .prepare(
           `SELECT * FROM products
            WHERE barcode = ? OR sku = ? OR qr_payload = ?
            LIMIT 1`,
         )
-        .get(code, code, code) as Record<string, unknown> | undefined;
+        .get(code, code, code)) as Record<string, unknown> | undefined;
       if (!row) return null;
-      return mapProduct(row, getBalance(db, String(row.id)));
+      return mapProduct(row, await getBalance(db, String(row.id)));
     },
 
-    adjustStock(input: {
+    async adjustStock(input: {
       productId: string;
       quantityDelta: number;
       movementType?: StockMovementType;
@@ -855,8 +831,8 @@ export function createInventoryStore(
       notes?: string | null;
       referenceType?: string | null;
       referenceId?: string | null;
-    }): StockMovement {
-      return postMovement({
+    }): Promise<StockMovement> {
+      return await postMovement({
         productId: input.productId,
         quantityDelta: input.quantityDelta,
         movementType: input.movementType ?? 'manual_adjustment',
@@ -869,18 +845,18 @@ export function createInventoryStore(
       });
     },
 
-    transferStock(input: {
+    async transferStock(input: {
       productId: string;
       quantity: number;
       fromBucket: StockBucket;
       toBucket: StockBucket;
       notes?: string | null;
-    }): { out: StockMovement; in: StockMovement } {
+    }): Promise<{ out: StockMovement; in: StockMovement }> {
       if (input.fromBucket === input.toBucket) {
         throw new Error('TRANSFER_BUCKETS_MUST_DIFFER');
       }
       const referenceId = randomUUID();
-      const out = postMovement({
+      const out = await postMovement({
         productId: input.productId,
         quantityDelta: -input.quantity,
         movementType: 'transfer',
@@ -890,7 +866,7 @@ export function createInventoryStore(
         referenceId,
         referenceLineId: 'out',
       });
-      const inbound = postMovement({
+      const inbound = await postMovement({
         productId: input.productId,
         quantityDelta: input.quantity,
         movementType: 'transfer',
@@ -903,13 +879,13 @@ export function createInventoryStore(
       return { out, in: inbound };
     },
 
-    listStockMovements(
+    async listStockMovements(
       filter: {
         productId?: string;
         limit?: number;
         offset?: number;
       } = {},
-    ): StockMovement[] {
+    ): Promise<StockMovement[]> {
       const clauses: string[] = [];
       const params: unknown[] = [];
       if (filter.productId) {
@@ -917,13 +893,13 @@ export function createInventoryStore(
         params.push(filter.productId);
       }
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-      const rows = db
+      const rows = (await db
         .prepare(
           `SELECT * FROM stock_movements ${where}
            ORDER BY created_at DESC, id DESC
            LIMIT ? OFFSET ?`,
         )
-        .all(...params, filter.limit ?? 200, filter.offset ?? 0) as Array<Record<string, unknown>>;
+        .all(...params, filter.limit ?? 200, filter.offset ?? 0)) as Array<Record<string, unknown>>;
       return rows.map((row) => ({
         id: String(row.id),
         productId: String(row.product_id),
@@ -940,7 +916,7 @@ export function createInventoryStore(
       }));
     },
 
-    receivePurchaseOrder(
+    async receivePurchaseOrder(
       purchaseOrderId: string,
       input: {
         lineItems: Array<{
@@ -950,27 +926,36 @@ export function createInventoryStore(
         }>;
         notes?: string | null | undefined;
       },
-    ): {
+    ): Promise<{
       receiptId: string;
       receiptNumber: string;
       movements: StockMovement[];
       receiptStatus: PurchaseOrderReceiptStatus;
-    } {
-      const order = db
+    }> {
+      const order = (await db
         .prepare('SELECT id, status FROM purchase_orders WHERE id = ?')
-        .get(purchaseOrderId) as { id: string; status: string } | undefined;
+        .get(purchaseOrderId)) as { id: string; status: string } | undefined;
       if (!order) throw new Error('PURCHASE_ORDER_NOT_FOUND');
       if (!['Approved', 'Sent', 'PartiallyReceived', 'Received'].includes(order.status)) {
         throw new Error('PURCHASE_ORDER_NOT_RECEIVABLE');
       }
 
       const receiptId = randomUUID();
-      const receiptNumber = deps.allocateNumber('goods_receipt_sequences', 'GRN');
+      const receiptNumber = await deps.allocateNumber('goods_receipt_sequences', 'GRN');
       const receivedAt = nowIso();
-      db.prepare(
-        `INSERT INTO goods_receipts (id, purchase_order_id, receipt_number, notes, received_at, created_at)
+      await db
+        .prepare(
+          `INSERT INTO goods_receipts (id, purchase_order_id, receipt_number, notes, received_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(receiptId, purchaseOrderId, receiptNumber, input.notes ?? null, receivedAt, receivedAt);
+        )
+        .run(
+          receiptId,
+          purchaseOrderId,
+          receiptNumber,
+          input.notes ?? null,
+          receivedAt,
+          receivedAt,
+        );
 
       const movements: StockMovement[] = [];
       const insertLine = db.prepare(
@@ -980,12 +965,12 @@ export function createInventoryStore(
       );
 
       for (const line of input.lineItems) {
-        const poLine = db
+        const poLine = (await db
           .prepare(
             `SELECT id, description, quantity, quantity_received, product_id, unit_price
              FROM purchase_order_line_items WHERE id = ? AND purchase_order_id = ?`,
           )
-          .get(line.purchaseOrderLineItemId, purchaseOrderId) as
+          .get(line.purchaseOrderLineItemId, purchaseOrderId)) as
           | {
               id: string;
               description: string;
@@ -1001,21 +986,22 @@ export function createInventoryStore(
           throw new Error('RECEIVE_EXCEEDS_OUTSTANDING');
         }
         const productId = line.productId ?? poLine.product_id;
-        db.prepare(
-          `UPDATE purchase_order_line_items
+        await db
+          .prepare(
+            `UPDATE purchase_order_line_items
            SET quantity_received = quantity_received + ?
            WHERE id = ?`,
-        ).run(line.quantityReceived, poLine.id);
+          )
+          .run(line.quantityReceived, poLine.id);
         if (productId) {
-          db.prepare('UPDATE purchase_order_line_items SET product_id = ? WHERE id = ?').run(
-            productId,
-            poLine.id,
-          );
+          await db
+            .prepare('UPDATE purchase_order_line_items SET product_id = ? WHERE id = ?')
+            .run(productId, poLine.id);
         }
-        insertLine.run(randomUUID(), receiptId, poLine.id, productId, line.quantityReceived);
+        await insertLine.run(randomUUID(), receiptId, poLine.id, productId, line.quantityReceived);
         if (productId) {
           movements.push(
-            postMovement({
+            await postMovement({
               productId,
               movementType: 'purchase_receipt',
               quantityDelta: line.quantityReceived,
@@ -1028,7 +1014,7 @@ export function createInventoryStore(
             }),
           );
           // Clear any incoming reservation for this PO line.
-          postMovement({
+          await postMovement({
             productId,
             movementType: 'reservation_release',
             quantityDelta: -line.quantityReceived,
@@ -1042,8 +1028,8 @@ export function createInventoryStore(
         }
       }
 
-      const receiptStatus = this.getPurchaseOrderReceiptStatus(purchaseOrderId);
-      deps.timeline('purchase_order.goods_received', purchaseOrderId, {
+      const receiptStatus = await this.getPurchaseOrderReceiptStatus(purchaseOrderId);
+      await deps.timeline('purchase_order.goods_received', purchaseOrderId, {
         receiptId,
         receiptNumber,
         receiptStatus,
@@ -1052,19 +1038,21 @@ export function createInventoryStore(
       return { receiptId, receiptNumber, movements, receiptStatus };
     },
 
-    getPurchaseOrderReceiptStatus(purchaseOrderId: string): PurchaseOrderReceiptStatus {
-      const order = db
+    async getPurchaseOrderReceiptStatus(
+      purchaseOrderId: string,
+    ): Promise<PurchaseOrderReceiptStatus> {
+      const order = (await db
         .prepare('SELECT status FROM purchase_orders WHERE id = ?')
-        .get(purchaseOrderId) as { status: string } | undefined;
+        .get(purchaseOrderId)) as { status: string } | undefined;
       if (!order) throw new Error('PURCHASE_ORDER_NOT_FOUND');
       if (order.status === 'Cancelled') return 'cancelled';
       if (order.status === 'Draft') return 'unordered';
-      const lines = db
+      const lines = (await db
         .prepare(
           `SELECT quantity, quantity_received FROM purchase_order_line_items
            WHERE purchase_order_id = ?`,
         )
-        .all(purchaseOrderId) as Array<{ quantity: number; quantity_received: number }>;
+        .all(purchaseOrderId)) as Array<{ quantity: number; quantity_received: number }>;
       if (lines.length === 0) return 'ordered';
       const totalOrdered = lines.reduce((sum, line) => sum + line.quantity, 0);
       const totalReceived = lines.reduce((sum, line) => sum + (line.quantity_received ?? 0), 0);
@@ -1073,13 +1061,13 @@ export function createInventoryStore(
       return 'partial';
     },
 
-    markPurchaseOrderIncoming(purchaseOrderId: string): void {
-      const lines = db
+    async markPurchaseOrderIncoming(purchaseOrderId: string): Promise<void> {
+      const lines = (await db
         .prepare(
           `SELECT id, product_id, quantity, quantity_received
            FROM purchase_order_line_items WHERE purchase_order_id = ?`,
         )
-        .all(purchaseOrderId) as Array<{
+        .all(purchaseOrderId)) as Array<{
         id: string;
         product_id: string | null;
         quantity: number;
@@ -1089,7 +1077,7 @@ export function createInventoryStore(
         if (!line.product_id) continue;
         const outstanding = line.quantity - (line.quantity_received ?? 0);
         if (outstanding <= 0) continue;
-        postMovement({
+        await postMovement({
           productId: line.product_id,
           movementType: 'reservation',
           quantityDelta: outstanding,
@@ -1103,13 +1091,13 @@ export function createInventoryStore(
       }
     },
 
-    applyInvoiceStockOut(invoiceId: string): StockMovement[] {
-      const lines = db
+    async applyInvoiceStockOut(invoiceId: string): Promise<StockMovement[]> {
+      const lines = (await db
         .prepare(
           `SELECT id, product_id, quantity, description
            FROM invoice_line_items WHERE invoice_id = ?`,
         )
-        .all(invoiceId) as Array<{
+        .all(invoiceId)) as Array<{
         id: string;
         product_id: string | null;
         quantity: number;
@@ -1119,7 +1107,7 @@ export function createInventoryStore(
       for (const line of lines) {
         if (!line.product_id) continue;
         movements.push(
-          ...consumeProductOrBundle({
+          ...(await consumeProductOrBundle({
             productId: line.product_id,
             quantity: line.quantity,
             movementType: 'invoice_issue',
@@ -1127,25 +1115,29 @@ export function createInventoryStore(
             referenceId: invoiceId,
             referenceLineId: line.id,
             notes: line.description,
-          }),
+          })),
         );
       }
       return movements;
     },
 
-    setJobMaterials(
+    async setJobMaterials(
       jobId: string,
       materials: Array<{ productId: string; quantity: number; notes?: string | null | undefined }>,
-    ): Array<{
-      id: string;
-      jobId: string;
-      productId: string;
-      quantity: number;
-      notes: string | null;
-    }> {
-      const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(jobId);
+    ): Promise<
+      Array<{
+        id: string;
+        jobId: string;
+        productId: string;
+        quantity: number;
+        notes: string | null;
+      }>
+    > {
+      const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').get(jobId);
       if (!job) throw new Error('JOB_NOT_FOUND');
-      db.prepare('DELETE FROM job_materials WHERE job_id = ? AND consumed_at IS NULL').run(jobId);
+      await db
+        .prepare('DELETE FROM job_materials WHERE job_id = ? AND consumed_at IS NULL')
+        .run(jobId);
       const insert = db.prepare(
         `INSERT INTO job_materials (id, job_id, product_id, quantity, notes, consumed_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
@@ -1154,7 +1146,7 @@ export function createInventoryStore(
       const result = [];
       for (const material of materials) {
         const id = randomUUID();
-        insert.run(
+        await insert.run(
           id,
           jobId,
           material.productId,
@@ -1174,13 +1166,13 @@ export function createInventoryStore(
       return result;
     },
 
-    consumeJobMaterials(jobId: string): StockMovement[] {
-      const materials = db
+    async consumeJobMaterials(jobId: string): Promise<StockMovement[]> {
+      const materials = (await db
         .prepare(
           `SELECT id, product_id, quantity, notes FROM job_materials
            WHERE job_id = ? AND consumed_at IS NULL`,
         )
-        .all(jobId) as Array<{
+        .all(jobId)) as Array<{
         id: string;
         product_id: string;
         quantity: number;
@@ -1190,7 +1182,7 @@ export function createInventoryStore(
       const now = nowIso();
       for (const material of materials) {
         movements.push(
-          ...consumeProductOrBundle({
+          ...(await consumeProductOrBundle({
             productId: material.product_id,
             quantity: material.quantity,
             movementType: 'job_consume',
@@ -1198,37 +1190,37 @@ export function createInventoryStore(
             referenceId: jobId,
             referenceLineId: material.id,
             notes: material.notes,
-          }),
+          })),
         );
-        db.prepare('UPDATE job_materials SET consumed_at = ?, updated_at = ? WHERE id = ?').run(
-          now,
-          now,
-          material.id,
-        );
+        await db
+          .prepare('UPDATE job_materials SET consumed_at = ?, updated_at = ? WHERE id = ?')
+          .run(now, now, material.id);
       }
       return movements;
     },
 
-    createStocktake(input: {
+    async createStocktake(input: {
       type: 'full' | 'partial' | 'cycle';
       notes?: string | null;
       productIds?: string[];
-    }): Stocktake {
+    }): Promise<Stocktake> {
       const id = randomUUID();
       const now = nowIso();
-      const stocktakeNumber = deps.allocateNumber('stocktake_sequences', 'STK');
-      db.prepare(
-        `INSERT INTO stocktakes
+      const stocktakeNumber = await deps.allocateNumber('stocktake_sequences', 'STK');
+      await db
+        .prepare(
+          `INSERT INTO stocktakes
           (id, stocktake_number, type, status, notes, started_at, submitted_at, approved_at, approved_by, created_at, updated_at)
          VALUES (?, ?, ?, 'In Progress', ?, ?, NULL, NULL, NULL, ?, ?)`,
-      ).run(id, stocktakeNumber, input.type, input.notes ?? null, now, now, now);
+        )
+        .run(id, stocktakeNumber, input.type, input.notes ?? null, now, now, now);
 
       let productIds = input.productIds ?? [];
       if (input.type === 'full' || productIds.length === 0) {
         productIds = (
-          db
+          (await db
             .prepare('SELECT id FROM products WHERE is_active = 1 AND track_stock = 1')
-            .all() as Array<{ id: string }>
+            .all()) as Array<{ id: string }>
         ).map((row) => row.id);
       }
       const insert = db.prepare(
@@ -1237,22 +1229,24 @@ export function createInventoryStore(
          VALUES (?, ?, ?, ?, NULL, NULL)`,
       );
       for (const productId of productIds) {
-        const stock = getBalance(db, productId);
-        insert.run(randomUUID(), id, productId, stock.onHand);
+        const stock = await getBalance(db, productId);
+        await insert.run(randomUUID(), id, productId, stock.onHand);
       }
-      deps.timeline('inventory.stocktake_created', id, { stocktakeNumber, type: input.type });
-      return this.getStocktakeById(id)!;
+      await deps.timeline('inventory.stocktake_created', id, { stocktakeNumber, type: input.type });
+      const createdStocktake = await this.getStocktakeById(id);
+      if (!createdStocktake) throw new Error('STOCKTAKE_NOT_FOUND');
+      return createdStocktake;
     },
 
-    updateStocktakeCounts(
+    async updateStocktakeCounts(
       id: string,
       lines: Array<{
         productId: string;
         countedQuantity: number;
         notes?: string | null | undefined;
       }>,
-    ): Stocktake {
-      const stocktake = db.prepare('SELECT status FROM stocktakes WHERE id = ?').get(id) as
+    ): Promise<Stocktake> {
+      const stocktake = (await db.prepare('SELECT status FROM stocktakes WHERE id = ?').get(id)) as
         { status: string } | undefined;
       if (!stocktake) throw new Error('STOCKTAKE_NOT_FOUND');
       if (!['Draft', 'In Progress'].includes(stocktake.status)) {
@@ -1266,14 +1260,15 @@ export function createInventoryStore(
            notes = excluded.notes`,
       );
       for (const line of lines) {
-        const existing = db
+        const existing = (await db
           .prepare(
             `SELECT id, expected_quantity FROM stocktake_lines
              WHERE stocktake_id = ? AND product_id = ?`,
           )
-          .get(id, line.productId) as { id: string; expected_quantity: number } | undefined;
-        const expected = existing?.expected_quantity ?? getBalance(db, line.productId).onHand;
-        upsert.run(
+          .get(id, line.productId)) as { id: string; expected_quantity: number } | undefined;
+        const expected =
+          existing?.expected_quantity ?? (await getBalance(db, line.productId)).onHand;
+        await upsert.run(
           existing?.id ?? randomUUID(),
           id,
           line.productId,
@@ -1282,31 +1277,36 @@ export function createInventoryStore(
           line.notes ?? null,
         );
       }
-      db.prepare(`UPDATE stocktakes SET status = 'In Progress', updated_at = ? WHERE id = ?`).run(
-        nowIso(),
-        id,
-      );
-      return this.getStocktakeById(id)!;
+      await db
+        .prepare(`UPDATE stocktakes SET status = 'In Progress', updated_at = ? WHERE id = ?`)
+        .run(nowIso(), id);
+      const counted = await this.getStocktakeById(id);
+      if (!counted) throw new Error('STOCKTAKE_NOT_FOUND');
+      return counted;
     },
 
-    submitStocktake(id: string): Stocktake {
-      const stocktake = this.getStocktakeById(id);
+    async submitStocktake(id: string): Promise<Stocktake> {
+      const stocktake = await this.getStocktakeById(id);
       if (!stocktake) throw new Error('STOCKTAKE_NOT_FOUND');
       if (!['Draft', 'In Progress'].includes(stocktake.status)) {
         throw new Error('STOCKTAKE_NOT_SUBMITTABLE');
       }
       const now = nowIso();
-      db.prepare(
-        `UPDATE stocktakes SET status = 'Submitted', submitted_at = ?, updated_at = ? WHERE id = ?`,
-      ).run(now, now, id);
-      deps.timeline('inventory.stocktake_submitted', id, {
+      await db
+        .prepare(
+          `UPDATE stocktakes SET status = 'Submitted', submitted_at = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(now, now, id);
+      await deps.timeline('inventory.stocktake_submitted', id, {
         stocktakeNumber: stocktake.stocktakeNumber,
       });
-      return this.getStocktakeById(id)!;
+      const submitted = await this.getStocktakeById(id);
+      if (!submitted) throw new Error('STOCKTAKE_NOT_FOUND');
+      return submitted;
     },
 
-    approveStocktake(id: string, approvedBy?: string | null): Stocktake {
-      const stocktake = this.getStocktakeById(id);
+    async approveStocktake(id: string, approvedBy?: string | null): Promise<Stocktake> {
+      const stocktake = await this.getStocktakeById(id);
       if (!stocktake) throw new Error('STOCKTAKE_NOT_FOUND');
       if (stocktake.status !== 'Submitted') throw new Error('STOCKTAKE_NOT_APPROVABLE');
       const lines = stocktake.lines ?? [];
@@ -1314,7 +1314,7 @@ export function createInventoryStore(
         if (line.countedQuantity == null) continue;
         const delta = line.countedQuantity - line.expectedQuantity;
         if (Math.abs(delta) < 0.0001) continue;
-        postMovement({
+        await postMovement({
           productId: line.productId,
           movementType: 'stocktake_adjustment',
           quantityDelta: delta,
@@ -1327,24 +1327,28 @@ export function createInventoryStore(
         });
       }
       const now = nowIso();
-      db.prepare(
-        `UPDATE stocktakes
+      await db
+        .prepare(
+          `UPDATE stocktakes
          SET status = 'Approved', approved_at = ?, approved_by = ?, updated_at = ?
          WHERE id = ?`,
-      ).run(now, approvedBy ?? null, now, id);
-      deps.timeline('inventory.stocktake_approved', id, {
+        )
+        .run(now, approvedBy ?? null, now, id);
+      await deps.timeline('inventory.stocktake_approved', id, {
         stocktakeNumber: stocktake.stocktakeNumber,
       });
-      return this.getStocktakeById(id)!;
+      const approved = await this.getStocktakeById(id);
+      if (!approved) throw new Error('STOCKTAKE_NOT_FOUND');
+      return approved;
     },
 
-    getStocktakeById(id: string): Stocktake | null {
-      const row = db.prepare('SELECT * FROM stocktakes WHERE id = ?').get(id) as
+    async getStocktakeById(id: string): Promise<Stocktake | null> {
+      const row = (await db.prepare('SELECT * FROM stocktakes WHERE id = ?').get(id)) as
         Record<string, unknown> | undefined;
       if (!row) return null;
-      const lines = db
+      const lines = (await db
         .prepare('SELECT * FROM stocktake_lines WHERE stocktake_id = ?')
-        .all(id) as Array<Record<string, unknown>>;
+        .all(id)) as Array<Record<string, unknown>>;
       return {
         id: String(row.id),
         stocktakeNumber: String(row.stocktake_number),
@@ -1372,15 +1376,20 @@ export function createInventoryStore(
       };
     },
 
-    listStocktakes(limit = 100, offset = 0): Stocktake[] {
-      const rows = db
+    async listStocktakes(limit = 100, offset = 0): Promise<Stocktake[]> {
+      const rows = (await db
         .prepare(`SELECT * FROM stocktakes ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
-        .all(limit, offset) as Array<Record<string, unknown>>;
-      return rows.map((row) => this.getStocktakeById(String(row.id))!);
+        .all(limit, offset)) as Array<Record<string, unknown>>;
+      const stocktakes: Stocktake[] = [];
+      for (const row of rows) {
+        const stocktake = await this.getStocktakeById(String(row.id));
+        if (stocktake) stocktakes.push(stocktake);
+      }
+      return stocktakes;
     },
 
-    listInventoryAlerts(includeDismissed = false): InventoryAlert[] {
-      const rows = db
+    async listInventoryAlerts(includeDismissed = false): Promise<InventoryAlert[]> {
+      const rows = (await db
         .prepare(
           `SELECT a.*, p.name AS product_name, p.sku
            FROM inventory_alerts a
@@ -1389,7 +1398,7 @@ export function createInventoryStore(
            ORDER BY a.created_at DESC, a.id DESC
            LIMIT 200`,
         )
-        .all() as Array<Record<string, unknown>>;
+        .all()) as Array<Record<string, unknown>>;
       return rows.map((row) => ({
         id: String(row.id),
         productId: String(row.product_id),
@@ -1405,21 +1414,22 @@ export function createInventoryStore(
       }));
     },
 
-    dismissInventoryAlert(id: string): void {
-      const result = db
+    async dismissInventoryAlert(id: string): Promise<void> {
+      const existing = await db.prepare('SELECT id FROM inventory_alerts WHERE id = ?').get(id);
+      if (!existing) throw new Error('INVENTORY_ALERT_NOT_FOUND');
+      await db
         .prepare(`UPDATE inventory_alerts SET is_dismissed = 1, updated_at = ? WHERE id = ?`)
         .run(nowIso(), id);
-      if (result.changes === 0) throw new Error('INVENTORY_ALERT_NOT_FOUND');
     },
 
-    refreshAllInventoryAlerts(): InventoryAlert[] {
-      const products = db.prepare('SELECT id FROM products').all() as Array<{ id: string }>;
-      for (const product of products) refreshAlertsForProduct(product.id);
-      return this.listInventoryAlerts(false);
+    async refreshAllInventoryAlerts(): Promise<InventoryAlert[]> {
+      const products = (await db.prepare('SELECT id FROM products').all()) as Array<{ id: string }>;
+      for (const product of products) await refreshAlertsForProduct(product.id);
+      return await this.listInventoryAlerts(false);
     },
 
-    getInventoryReports(): InventoryReportBundle {
-      const products = this.listProducts({ isActive: true, limit: 1000 });
+    async getInventoryReports(): Promise<InventoryReportBundle> {
+      const products = await this.listProducts({ isActive: true, limit: 1000 });
       const stockValuation = products.map((product) => ({
         productId: product.id,
         sku: product.sku,
@@ -1437,16 +1447,16 @@ export function createInventoryStore(
         reserved: product.stock?.reserved ?? 0,
         incoming: product.stock?.incoming ?? 0,
       }));
-      const stockMovements = this.listStockMovements({ limit: 500 });
+      const stockMovements = await this.listStockMovements({ limit: 500 });
       const purchaseHistory = (
-        db
+        (await db
           .prepare(
             `SELECT id, purchase_order_number, supplier_id, issue_date, status, total
              FROM purchase_orders
              ORDER BY issue_date DESC, created_at DESC
              LIMIT 200`,
           )
-          .all() as Array<Record<string, unknown>>
+          .all()) as Array<Record<string, unknown>>
       ).map((row) => ({
         purchaseOrderId: String(row.id),
         purchaseOrderNumber: String(row.purchase_order_number),
@@ -1456,7 +1466,7 @@ export function createInventoryStore(
         total: Number(row.total),
       }));
       const supplierPerformance = (
-        db
+        (await db
           .prepare(
             `SELECT s.id, s.display_name,
                     COUNT(p.id) AS order_count,
@@ -1467,7 +1477,7 @@ export function createInventoryStore(
              GROUP BY s.id
              ORDER BY total_spend DESC`,
           )
-          .all() as Array<Record<string, unknown>>
+          .all()) as Array<Record<string, unknown>>
       ).map((row) => ({
         supplierId: String(row.id),
         displayName: String(row.display_name),
@@ -1476,7 +1486,7 @@ export function createInventoryStore(
         outstandingOrders: Number(row.outstanding_orders),
       }));
       const productProfitability = (
-        db
+        (await db
           .prepare(
             `SELECT p.id, p.sku, p.name, p.cost_price, p.sell_price,
                     COALESCE(SUM(CASE WHEN m.movement_type = 'invoice_issue' AND m.quantity_delta < 0 THEN -m.quantity_delta ELSE 0 END), 0) AS units_sold
@@ -1485,7 +1495,7 @@ export function createInventoryStore(
              GROUP BY p.id
              ORDER BY units_sold DESC`,
           )
-          .all() as Array<Record<string, unknown>>
+          .all()) as Array<Record<string, unknown>>
       ).map((row) => {
         const costPrice = Number(row.cost_price);
         const sellPrice = Number(row.sell_price);
@@ -1504,12 +1514,12 @@ export function createInventoryStore(
       const deadStock = [];
       const fastMoving = [];
       for (const product of products) {
-        const last = db
+        const last = (await db
           .prepare(
             `SELECT created_at FROM stock_movements WHERE product_id = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(product.id) as { created_at: string } | undefined;
+          .get(product.id)) as { created_at: string } | undefined;
         const days = last
           ? Math.floor((Date.now() - new Date(last.created_at).getTime()) / (24 * 60 * 60 * 1000))
           : null;
@@ -1522,13 +1532,13 @@ export function createInventoryStore(
             daysSinceMovement: days,
           });
         }
-        const unitsMoved = db
+        const unitsMoved = (await db
           .prepare(
             `SELECT COALESCE(SUM(ABS(quantity_delta)), 0) AS units
              FROM stock_movements
              WHERE product_id = ? AND created_at >= ?`,
           )
-          .get(product.id, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) as {
+          .get(product.id, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())) as {
           units: number;
         };
         if (Number(unitsMoved.units) > 0) {
@@ -1576,4 +1586,4 @@ export function createInventoryStore(
   };
 }
 
-export type InventoryStore = ReturnType<typeof createInventoryStore>;
+export type PostgresInventoryStore = ReturnType<typeof createPostgresInventoryStore>;
