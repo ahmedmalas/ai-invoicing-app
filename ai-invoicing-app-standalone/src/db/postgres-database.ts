@@ -49,12 +49,18 @@ import {
 } from '../domain/timeline/taxonomy.js';
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
+import type {
+  Product,
+  StockMovement,
+  Stocktake,
+  InventoryAlert,
+  InventoryReportBundle,
+  PurchaseOrderReceiptStatus,
+} from '../domain/inventory/types.js';
+import { createPostgresInventoryStore } from './postgres-inventory-store.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
-import {
-  assertWorkspaceSchemaName,
-  getWorkspaceContext,
-} from '../auth/workspace-context.js';
+import { assertWorkspaceSchemaName, getWorkspaceContext } from '../auth/workspace-context.js';
 
 interface DbInvoiceLineItem {
   description: string;
@@ -136,6 +142,9 @@ interface DbSupplierRow {
   address: string | null;
   tax_id: string | null;
   notes: string | null;
+  contact_person?: string | null;
+  website?: string | null;
+  payment_terms?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -271,6 +280,9 @@ export interface CreateSupplierInput {
   address?: string | undefined;
   taxId?: string | undefined;
   notes?: string | undefined;
+  contactPerson?: string | undefined;
+  website?: string | undefined;
+  paymentTerms?: string | undefined;
 }
 
 export interface UpsertBusinessProfileInput {
@@ -671,7 +683,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 44;
+export const DATABASE_SCHEMA_VERSION = 45;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -710,6 +722,18 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'supplier_payment_sequences',
   'purchase_order_sequences',
   'job_sequences',
+  'products',
+  'inventory_balances',
+  'stock_movements',
+  'product_bundle_components',
+  'goods_receipts',
+  'goods_receipt_line_items',
+  'stocktakes',
+  'stocktake_lines',
+  'inventory_alerts',
+  'job_materials',
+  'goods_receipt_sequences',
+  'stocktake_sequences',
   'idempotency_requests',
   'timeline_events',
 ] as const;
@@ -912,6 +936,55 @@ export interface AppDatabase {
     options?: TimelineQueryOptions,
   ): DatabaseResult<Array<Record<string, unknown>>>;
   search(query: string, options?: SearchQueryOptions): DatabaseResult<SearchResults>;
+  createProduct(input: Record<string, unknown>): DatabaseResult<Product>;
+  updateProduct(id: string, input: Record<string, unknown>): DatabaseResult<Product>;
+  archiveProduct(id: string): DatabaseResult<Product>;
+  getProductById(id: string): DatabaseResult<Product | null>;
+  listProducts(filter?: Record<string, unknown>): DatabaseResult<Product[]>;
+  lookupProductByCode(code: string): DatabaseResult<Product | null>;
+  adjustStock(input: Record<string, unknown>): DatabaseResult<StockMovement>;
+  transferStock(
+    input: Record<string, unknown>,
+  ): DatabaseResult<{ out: StockMovement; in: StockMovement }>;
+  listStockMovements(filter?: Record<string, unknown>): DatabaseResult<StockMovement[]>;
+  receivePurchaseOrder(
+    purchaseOrderId: string,
+    input: {
+      lineItems: Array<{
+        purchaseOrderLineItemId: string;
+        quantityReceived: number;
+        productId?: string | undefined;
+      }>;
+      notes?: string | null | undefined;
+    },
+  ): DatabaseResult<{
+    receiptId: string;
+    receiptNumber: string;
+    movements: StockMovement[];
+    receiptStatus: PurchaseOrderReceiptStatus;
+  }>;
+  getPurchaseOrderReceiptStatus(
+    purchaseOrderId: string,
+  ): DatabaseResult<PurchaseOrderReceiptStatus>;
+  setJobMaterials(
+    jobId: string,
+    materials: Array<{ productId: string; quantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<
+    Array<{ id: string; jobId: string; productId: string; quantity: number; notes: string | null }>
+  >;
+  createStocktake(input: Record<string, unknown>): DatabaseResult<Stocktake>;
+  updateStocktakeCounts(
+    id: string,
+    lines: Array<{ productId: string; countedQuantity: number; notes?: string | null | undefined }>,
+  ): DatabaseResult<Stocktake>;
+  submitStocktake(id: string): DatabaseResult<Stocktake>;
+  approveStocktake(id: string, approvedBy?: string | null): DatabaseResult<Stocktake>;
+  getStocktakeById(id: string): DatabaseResult<Stocktake | null>;
+  listStocktakes(limit?: number, offset?: number): DatabaseResult<Stocktake[]>;
+  listInventoryAlerts(includeDismissed?: boolean): DatabaseResult<InventoryAlert[]>;
+  dismissInventoryAlert(id: string): DatabaseResult<void>;
+  refreshAllInventoryAlerts(): DatabaseResult<InventoryAlert[]>;
+  getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
@@ -943,6 +1016,9 @@ function mapSupplierRow(row: DbSupplierRow): Supplier {
     address: row.address,
     taxId: row.tax_id,
     notes: row.notes,
+    contactPerson: row.contact_person ?? null,
+    website: row.website ?? null,
+    paymentTerms: row.payment_terms ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1201,6 +1277,10 @@ function mapPostgresError(error: unknown): unknown {
     if (constraint === 'uq_job_document_link_pair') return new Error('JOB_DOCUMENT_LINK_EXISTS');
     if (constraint.includes('supplier_bills_supplier_reference'))
       return new Error('SUPPLIER_BILL_REFERENCE_EXISTS');
+    if (constraint === 'products_sku_key' || constraint.includes('products_sku'))
+      return new Error('PRODUCT_SKU_EXISTS');
+    if (constraint.includes('uq_products_barcode') || constraint.includes('products_barcode'))
+      return new Error('PRODUCT_BARCODE_EXISTS');
     if (constraint.includes('number')) return new Error('DOCUMENT_NUMBER_SEQUENCE_CONFLICT');
   }
   return error;
@@ -1227,9 +1307,7 @@ export async function createPostgresDatabase(
       const client = await pool.connect();
       try {
         await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
-        const schemaName = assertWorkspaceSchemaName(
-          getWorkspaceContext()?.schemaName ?? 'public',
-        );
+        const schemaName = assertWorkspaceSchemaName(getWorkspaceContext()?.schemaName ?? 'public');
         await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
         const result = await storage.run(client, work);
         await client.query('COMMIT');
@@ -1406,7 +1484,9 @@ export async function createPostgresDatabase(
     | 'payment_sequences'
     | 'purchase_order_sequences'
     | 'supplier_bill_sequences'
-    | 'supplier_payment_sequences';
+    | 'supplier_payment_sequences'
+    | 'goods_receipt_sequences'
+    | 'stocktake_sequences';
 
   const getNextDocumentSequence = db.transaction(
     async (
@@ -1456,6 +1536,11 @@ export async function createPostgresDatabase(
     const nextSequence = await getNextDocumentSequence(table, fallbackPrefix);
     return formatInvoiceNumber(nextSequence.prefix, nextSequence.year, nextSequence.sequence);
   }
+
+  const inventoryStore = createPostgresInventoryStore(db, {
+    timeline,
+    allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
+  });
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -1794,6 +1879,18 @@ export async function createPostgresDatabase(
     parsed.entities.quotes ??= [];
     parsed.entities.quote_line_items ??= [];
     parsed.entities.quote_sequences ??= [];
+    parsed.entities.products ??= [];
+    parsed.entities.inventory_balances ??= [];
+    parsed.entities.stock_movements ??= [];
+    parsed.entities.product_bundle_components ??= [];
+    parsed.entities.goods_receipts ??= [];
+    parsed.entities.goods_receipt_line_items ??= [];
+    parsed.entities.stocktakes ??= [];
+    parsed.entities.stocktake_lines ??= [];
+    parsed.entities.inventory_alerts ??= [];
+    parsed.entities.job_materials ??= [];
+    parsed.entities.goods_receipt_sequences ??= [];
+    parsed.entities.stocktake_sequences ??= [];
 
     const entities = {} as Record<PlatformSnapshotTable, PlatformSnapshotRow[]>;
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
@@ -1950,6 +2047,24 @@ export async function createPostgresDatabase(
 
     await insertSnapshotRows('jobs', snapshot.entities.jobs);
     await insertSnapshotRows('job_document_links', snapshot.entities.job_document_links);
+    await insertSnapshotRows('products', snapshot.entities.products);
+    await insertSnapshotRows('inventory_balances', snapshot.entities.inventory_balances);
+    await insertSnapshotRows('stock_movements', snapshot.entities.stock_movements);
+    await insertSnapshotRows(
+      'product_bundle_components',
+      snapshot.entities.product_bundle_components,
+    );
+    await insertSnapshotRows('goods_receipts', snapshot.entities.goods_receipts);
+    await insertSnapshotRows(
+      'goods_receipt_line_items',
+      snapshot.entities.goods_receipt_line_items,
+    );
+    await insertSnapshotRows('stocktakes', snapshot.entities.stocktakes);
+    await insertSnapshotRows('stocktake_lines', snapshot.entities.stocktake_lines);
+    await insertSnapshotRows('inventory_alerts', snapshot.entities.inventory_alerts);
+    await insertSnapshotRows('job_materials', snapshot.entities.job_materials);
+    await insertSnapshotRows('goods_receipt_sequences', snapshot.entities.goods_receipt_sequences);
+    await insertSnapshotRows('stocktake_sequences', snapshot.entities.stocktake_sequences);
     await insertSnapshotRows('credit_notes', snapshot.entities.credit_notes);
     await insertSnapshotRows('customer_payments', snapshot.entities.customer_payments);
     await insertSnapshotRows('payment_allocations', snapshot.entities.payment_allocations);
@@ -2268,7 +2383,9 @@ export async function createPostgresDatabase(
       const limit = options?.limit ?? Number.MAX_SAFE_INTEGER;
       const offset = options?.offset ?? 0;
       const rows = (await db
-        .prepare('SELECT * FROM customers ORDER BY display_name ASC, created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .prepare(
+          'SELECT * FROM customers ORDER BY display_name ASC, created_at DESC, id DESC LIMIT ? OFFSET ?',
+        )
         .all(limit, offset)) as Array<Record<string, unknown>>;
       return rows.map(mapCustomerRow);
     },
@@ -2281,8 +2398,10 @@ export async function createPostgresDatabase(
             const now = nowIso();
             await db
               .prepare(
-                `INSERT INTO suppliers (id, display_name, email, phone, address, tax_id, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO suppliers (
+              id, display_name, email, phone, address, tax_id, notes,
+              contact_person, website, payment_terms, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               )
               .run(
                 id,
@@ -2292,6 +2411,9 @@ export async function createPostgresDatabase(
                 txInput.address ?? null,
                 txInput.taxId ?? null,
                 txInput.notes ?? null,
+                txInput.contactPerson ?? null,
+                txInput.website ?? null,
+                txInput.paymentTerms ?? null,
                 now,
                 now,
               );
@@ -2461,11 +2583,13 @@ export async function createPostgresDatabase(
             assertNoInjectedFailure('create_invoice_after_insert');
 
             const insertLine = db.prepare(
-              `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             );
             const { calculatedItems } = calculateTotals(txInput.lineItems);
-            for (const item of calculatedItems) {
+            for (let index = 0; index < calculatedItems.length; index += 1) {
+              const item = calculatedItems[index]!;
+              const source = txInput.lineItems[index];
               await insertLine.run(
                 randomUUID(),
                 id,
@@ -2476,6 +2600,9 @@ export async function createPostgresDatabase(
                 item.lineSubtotal,
                 item.lineGst,
                 item.lineTotal,
+                source && 'productId' in source
+                  ? ((source as { productId?: string | null }).productId ?? null)
+                  : null,
               );
             }
 
@@ -2534,11 +2661,13 @@ export async function createPostgresDatabase(
 
         await db.prepare('DELETE FROM invoice_line_items WHERE invoice_id = ?').run(invoiceId);
         const insertLine = db.prepare(
-          `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO invoice_line_items (id, invoice_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const { calculatedItems } = calculateTotals(txInput.lineItems);
-        for (const item of calculatedItems) {
+        for (let index = 0; index < calculatedItems.length; index += 1) {
+          const item = calculatedItems[index]!;
+          const source = txInput.lineItems[index];
           await insertLine.run(
             randomUUID(),
             invoiceId,
@@ -2549,6 +2678,9 @@ export async function createPostgresDatabase(
             item.lineSubtotal,
             item.lineGst,
             item.lineTotal,
+            source && 'productId' in source
+              ? ((source as { productId?: string | null }).productId ?? null)
+              : null,
           );
         }
 
@@ -2578,15 +2710,16 @@ export async function createPostgresDatabase(
       }
       const lineItemsRows = (await db
         .prepare(
-          'SELECT description, quantity, unit_price, gst_applicable FROM invoice_line_items WHERE invoice_id = ?',
+          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ?',
         )
-        .all(id)) as DbInvoiceLineItem[];
+        .all(id)) as Array<DbInvoiceLineItem & { product_id?: string | null }>;
 
       const lineItems: LineItemInput[] = lineItemsRows.map((item) => ({
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unit_price,
         gstApplicable: item.gst_applicable === 1,
+        productId: item.product_id ?? null,
       }));
 
       return {
@@ -2613,15 +2746,18 @@ export async function createPostgresDatabase(
       params.push(options?.limit ?? Number.MAX_SAFE_INTEGER, options?.offset ?? 0);
       const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
       const rows = (await db
-        .prepare(`SELECT * FROM invoices${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`)
+        .prepare(
+          `SELECT * FROM invoices${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+        )
         .all(...params)) as DbInvoiceRow[];
       return rows.map(mapInvoiceRow);
     },
 
     async deleteInvoiceDraft(id) {
       return db.transaction(async (invoiceId: string) => {
-        const row = (await db.prepare('SELECT status FROM invoices WHERE id = ?').get(invoiceId)) as
-          { status: string } | undefined;
+        const row = (await db
+          .prepare('SELECT status FROM invoices WHERE id = ?')
+          .get(invoiceId)) as { status: string } | undefined;
         if (!row) throw new Error('Invoice not found');
         if (row.status !== 'Draft') throw new Error('Only draft invoices can be deleted');
         await db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(invoiceId);
@@ -2695,6 +2831,8 @@ export async function createPostgresDatabase(
           total: finalised.totals.total,
         });
 
+        await inventoryStore.applyInvoiceStockOut(invoiceId);
+
         return finalised;
       })(id);
     },
@@ -2721,24 +2859,57 @@ export async function createPostgresDatabase(
 
     async createQuote(input) {
       return db.transaction(async (txInput: CreateQuoteInput) => {
-        const customer = await db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+        const customer = await db
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(txInput.customerId);
         if (!customer) throw new Error('Customer not found');
         const id = randomUUID();
         const now = nowIso();
         const quoteNumber = await allocateDocumentNumber('quote_sequences', 'QUO');
         const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
-        await db.prepare(
-          `INSERT INTO quotes (id, customer_id, title, issue_date, expiry_date, notes, terms, quote_number, status, converted_invoice_id, subtotal, gst_total, total, created_at, updated_at)
+        await db
+          .prepare(
+            `INSERT INTO quotes (id, customer_id, title, issue_date, expiry_date, notes, terms, quote_number, status, converted_invoice_id, subtotal, gst_total, total, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Draft', NULL, ?, ?, ?, ?, ?)`,
-        ).run(id, txInput.customerId, txInput.title, txInput.issueDate, txInput.expiryDate, txInput.notes ?? null, txInput.terms ?? null, quoteNumber, totals.subtotal, totals.gstTotal, totals.total, now, now);
+          )
+          .run(
+            id,
+            txInput.customerId,
+            txInput.title,
+            txInput.issueDate,
+            txInput.expiryDate,
+            txInput.notes ?? null,
+            txInput.terms ?? null,
+            quoteNumber,
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            now,
+            now,
+          );
         const insertLine = db.prepare(
           `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const item of calculatedItems) {
-          await insertLine.run(randomUUID(), id, item.description, item.quantity, item.unitPrice, item.gstApplicable ? 1 : 0, item.lineSubtotal, item.lineGst, item.lineTotal);
+          await insertLine.run(
+            randomUUID(),
+            id,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
         }
-        await upsertDocument(id, `${quoteNumber} ${txInput.title}`, 'quote', `${quoteNumber} ${txInput.title} ${txInput.notes ?? ''}`);
+        await upsertDocument(
+          id,
+          `${quoteNumber} ${txInput.title}`,
+          'quote',
+          `${quoteNumber} ${txInput.title} ${txInput.notes ?? ''}`,
+        );
         const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(id)) as DbQuoteRow;
         return mapQuoteRow(row);
       })(input);
@@ -2746,36 +2917,81 @@ export async function createPostgresDatabase(
 
     async updateQuote(id, input) {
       return db.transaction(async (quoteId: string, txInput: UpdateQuoteInput) => {
-        const existing = (await db.prepare('SELECT status, quote_number FROM quotes WHERE id = ?').get(quoteId)) as { status: QuoteStatus; quote_number: string } | undefined;
+        const existing = (await db
+          .prepare('SELECT status, quote_number FROM quotes WHERE id = ?')
+          .get(quoteId)) as { status: QuoteStatus; quote_number: string } | undefined;
         if (!existing) throw new Error('Quote not found');
         if (existing.status !== 'Draft') throw new Error('Only draft quotes can be edited');
-        const customer = await db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+        const customer = await db
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(txInput.customerId);
         if (!customer) throw new Error('Customer not found');
         const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
-        await db.prepare(
-          `UPDATE quotes SET customer_id = ?, title = ?, issue_date = ?, expiry_date = ?, notes = ?, terms = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ? WHERE id = ?`,
-        ).run(txInput.customerId, txInput.title, txInput.issueDate, txInput.expiryDate, txInput.notes ?? null, txInput.terms ?? null, totals.subtotal, totals.gstTotal, totals.total, nowIso(), quoteId);
+        await db
+          .prepare(
+            `UPDATE quotes SET customer_id = ?, title = ?, issue_date = ?, expiry_date = ?, notes = ?, terms = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ? WHERE id = ?`,
+          )
+          .run(
+            txInput.customerId,
+            txInput.title,
+            txInput.issueDate,
+            txInput.expiryDate,
+            txInput.notes ?? null,
+            txInput.terms ?? null,
+            totals.subtotal,
+            totals.gstTotal,
+            totals.total,
+            nowIso(),
+            quoteId,
+          );
         await db.prepare('DELETE FROM quote_line_items WHERE quote_id = ?').run(quoteId);
         const insertLine = db.prepare(
           `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const item of calculatedItems) {
-          await insertLine.run(randomUUID(), quoteId, item.description, item.quantity, item.unitPrice, item.gstApplicable ? 1 : 0, item.lineSubtotal, item.lineGst, item.lineTotal);
+          await insertLine.run(
+            randomUUID(),
+            quoteId,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
         }
-        await upsertDocument(quoteId, `${existing.quote_number} ${txInput.title}`, 'quote', `${existing.quote_number} ${txInput.title} ${txInput.notes ?? ''}`);
-        const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as DbQuoteRow;
+        await upsertDocument(
+          quoteId,
+          `${existing.quote_number} ${txInput.title}`,
+          'quote',
+          `${existing.quote_number} ${txInput.title} ${txInput.notes ?? ''}`,
+        );
+        const row = (await db
+          .prepare('SELECT * FROM quotes WHERE id = ?')
+          .get(quoteId)) as DbQuoteRow;
         return mapQuoteRow(row);
       })(id, input);
     },
 
     async getQuoteById(id) {
-      const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(id)) as DbQuoteRow | undefined;
+      const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(id)) as
+        DbQuoteRow | undefined;
       if (!row) return null;
-      const lineRows = (await db.prepare('SELECT description, quantity, unit_price, gst_applicable FROM quote_line_items WHERE quote_id = ? ORDER BY id ASC').all(id)) as DbInvoiceLineItem[];
+      const lineRows = (await db
+        .prepare(
+          'SELECT description, quantity, unit_price, gst_applicable FROM quote_line_items WHERE quote_id = ? ORDER BY id ASC',
+        )
+        .all(id)) as DbInvoiceLineItem[];
       return {
         ...mapQuoteRow(row),
-        lineItems: lineRows.map((item) => ({ description: item.description, quantity: item.quantity, unitPrice: item.unit_price, gstApplicable: item.gst_applicable === 1 })),
+        lineItems: lineRows.map((item) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          gstApplicable: item.gst_applicable === 1,
+        })),
       };
     },
 
@@ -2792,13 +3008,18 @@ export async function createPostgresDatabase(
       }
       params.push(options?.limit ?? Number.MAX_SAFE_INTEGER, options?.offset ?? 0);
       const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
-      const rows = (await db.prepare(`SELECT * FROM quotes${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`).all(...params)) as DbQuoteRow[];
+      const rows = (await db
+        .prepare(
+          `SELECT * FROM quotes${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...params)) as DbQuoteRow[];
       return rows.map(mapQuoteRow);
     },
 
     async transitionQuoteStatus(id, status) {
       return db.transaction(async (quoteId: string, nextStatus: QuoteStatus) => {
-        const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as DbQuoteRow | undefined;
+        const row = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as
+          DbQuoteRow | undefined;
         if (!row) throw new Error('Quote not found');
         if (row.status === nextStatus) return mapQuoteRow(row);
         const allowed: Record<QuoteStatus, QuoteStatus[]> = {
@@ -2809,16 +3030,22 @@ export async function createPostgresDatabase(
           Expired: [],
           Converted: [],
         };
-        if (!allowed[row.status].includes(nextStatus)) throw new Error('INVALID_QUOTE_STATUS_TRANSITION');
-        await db.prepare('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?').run(nextStatus, nowIso(), quoteId);
-        const updated = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as DbQuoteRow;
+        if (!allowed[row.status].includes(nextStatus))
+          throw new Error('INVALID_QUOTE_STATUS_TRANSITION');
+        await db
+          .prepare('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?')
+          .run(nextStatus, nowIso(), quoteId);
+        const updated = (await db
+          .prepare('SELECT * FROM quotes WHERE id = ?')
+          .get(quoteId)) as DbQuoteRow;
         return mapQuoteRow(updated);
       })(id, status);
     },
 
     async deleteQuoteDraft(id) {
       return db.transaction(async (quoteId: string) => {
-        const row = (await db.prepare('SELECT status FROM quotes WHERE id = ?').get(quoteId)) as { status: QuoteStatus } | undefined;
+        const row = (await db.prepare('SELECT status FROM quotes WHERE id = ?').get(quoteId)) as
+          { status: QuoteStatus } | undefined;
         if (!row) throw new Error('Quote not found');
         if (row.status !== 'Draft') throw new Error('Only draft quotes can be deleted');
         await db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(quoteId);
@@ -2832,10 +3059,25 @@ export async function createPostgresDatabase(
       return db.transaction(async (quoteId: string) => {
         const quote = await this.getQuoteById(quoteId);
         if (!quote) throw new Error('Quote not found');
-        if (quote.status !== 'Accepted') throw new Error('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION');
-        const invoice = await this.createInvoiceDraft({ customerId: quote.customerId, title: quote.title, issueDate: nowIso().slice(0, 10), dueDate, notes: quote.notes ?? undefined, paymentTerms: paymentTerms ?? quote.terms ?? undefined, lineItems: quote.lineItems });
-        await db.prepare("UPDATE quotes SET status = 'Converted', converted_invoice_id = ?, updated_at = ? WHERE id = ?").run(invoice.id, nowIso(), quoteId);
-        const updated = (await db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId)) as DbQuoteRow;
+        if (quote.status !== 'Accepted')
+          throw new Error('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION');
+        const invoice = await this.createInvoiceDraft({
+          customerId: quote.customerId,
+          title: quote.title,
+          issueDate: nowIso().slice(0, 10),
+          dueDate,
+          notes: quote.notes ?? undefined,
+          paymentTerms: paymentTerms ?? quote.terms ?? undefined,
+          lineItems: quote.lineItems,
+        });
+        await db
+          .prepare(
+            "UPDATE quotes SET status = 'Converted', converted_invoice_id = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(invoice.id, nowIso(), quoteId);
+        const updated = (await db
+          .prepare('SELECT * FROM quotes WHERE id = ?')
+          .get(quoteId)) as DbQuoteRow;
         return { quote: mapQuoteRow(updated), invoice };
       })(id);
     },
@@ -4015,10 +4257,12 @@ export async function createPostgresDatabase(
 
               const insertLine = db.prepare(
                 `INSERT INTO purchase_order_line_items (
-              id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id, quantity_received
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
               );
-              for (const item of calculatedItems) {
+              for (let index = 0; index < calculatedItems.length; index += 1) {
+                const item = calculatedItems[index]!;
+                const source = txInput.lineItems[index] as { productId?: string | null };
                 await insertLine.run(
                   randomUUID(),
                   id,
@@ -4029,6 +4273,7 @@ export async function createPostgresDatabase(
                   item.lineSubtotal,
                   item.lineGst,
                   item.lineTotal,
+                  source?.productId ?? null,
                 );
               }
 
@@ -4135,10 +4380,12 @@ export async function createPostgresDatabase(
             .run(purchaseOrderId);
           const insertLine = db.prepare(
             `INSERT INTO purchase_order_line_items (
-            id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            id, purchase_order_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total, product_id, quantity_received
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           );
-          for (const item of calculatedItems) {
+          for (let index = 0; index < calculatedItems.length; index += 1) {
+            const item = calculatedItems[index]!;
+            const source = txInput.lineItems[index] as { productId?: string | null };
             await insertLine.run(
               randomUUID(),
               purchaseOrderId,
@@ -4149,6 +4396,7 @@ export async function createPostgresDatabase(
               item.lineSubtotal,
               item.lineGst,
               item.lineTotal,
+              source?.productId ?? null,
             );
           }
 
@@ -4174,17 +4422,21 @@ export async function createPostgresDatabase(
       }
       const lineItemsRows = (await db
         .prepare(
-          `SELECT id, description, quantity, unit_price, gst_applicable
+          `SELECT id, description, quantity, unit_price, gst_applicable, product_id, quantity_received
            FROM purchase_order_line_items
            WHERE purchase_order_id = ?`,
         )
-        .all(id)) as DbPurchaseOrderLineItemRow[];
+        .all(id)) as Array<
+        DbPurchaseOrderLineItemRow & { product_id?: string | null; quantity_received?: number }
+      >;
       const lineItems: PurchaseOrderLineItemInput[] = lineItemsRows.map((item) => ({
         id: item.id,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unit_price,
         gstApplicable: item.gst_applicable === 1,
+        productId: item.product_id ?? null,
+        quantityReceived: item.quantity_received ?? 0,
       }));
       const purchaseOrder = {
         ...mapPurchaseOrderRow(row),
@@ -4209,6 +4461,7 @@ export async function createPostgresDatabase(
         await timeline('purchase_order.approved', purchaseOrderId, {
           purchaseOrderNumber: order.purchaseOrderNumber,
         });
+        await inventoryStore.markPurchaseOrderIncoming(purchaseOrderId);
         return await withPurchaseOrderBillingSummary(
           mapPurchaseOrderRow(
             (await db
@@ -5257,6 +5510,7 @@ export async function createPostgresDatabase(
       }
       if (input.status === 'Completed') {
         await timeline('job.completed', id, { jobNumber });
+        await inventoryStore.consumeJobMaterials(id);
       }
 
       const row = (await db.prepare('SELECT * FROM jobs WHERE id = ?').get(id)) as DbJobRow;
@@ -5374,6 +5628,7 @@ export async function createPostgresDatabase(
         await timeline('job.completed', id, {
           jobNumber: existing.job_number,
         });
+        await inventoryStore.consumeJobMaterials(id);
       }
 
       const row = (await db.prepare('SELECT * FROM jobs WHERE id = ?').get(id)) as DbJobRow;
@@ -6289,6 +6544,73 @@ export async function createPostgresDatabase(
       };
     },
 
+    async createProduct(input) {
+      return inventoryStore.createProduct(input);
+    },
+    async updateProduct(id, input) {
+      return inventoryStore.updateProduct(id, input);
+    },
+    async archiveProduct(id) {
+      return inventoryStore.archiveProduct(id);
+    },
+    async getProductById(id) {
+      return inventoryStore.getProductById(id);
+    },
+    async listProducts(filter) {
+      return inventoryStore.listProducts(filter ?? {});
+    },
+    async lookupProductByCode(code) {
+      return inventoryStore.lookupProductByCode(code);
+    },
+    async adjustStock(input) {
+      return inventoryStore.adjustStock(input as never);
+    },
+    async transferStock(input) {
+      return inventoryStore.transferStock(input as never);
+    },
+    async listStockMovements(filter) {
+      return inventoryStore.listStockMovements(filter ?? {});
+    },
+    async receivePurchaseOrder(purchaseOrderId, input) {
+      return inventoryStore.receivePurchaseOrder(purchaseOrderId, input);
+    },
+    async getPurchaseOrderReceiptStatus(purchaseOrderId) {
+      return inventoryStore.getPurchaseOrderReceiptStatus(purchaseOrderId);
+    },
+    async setJobMaterials(jobId, materials) {
+      return inventoryStore.setJobMaterials(jobId, materials);
+    },
+    async createStocktake(input) {
+      return inventoryStore.createStocktake(input as never);
+    },
+    async updateStocktakeCounts(id, lines) {
+      return inventoryStore.updateStocktakeCounts(id, lines);
+    },
+    async submitStocktake(id) {
+      return inventoryStore.submitStocktake(id);
+    },
+    async approveStocktake(id, approvedBy) {
+      return inventoryStore.approveStocktake(id, approvedBy);
+    },
+    async getStocktakeById(id) {
+      return inventoryStore.getStocktakeById(id);
+    },
+    async listStocktakes(limit, offset) {
+      return inventoryStore.listStocktakes(limit, offset);
+    },
+    async listInventoryAlerts(includeDismissed) {
+      return inventoryStore.listInventoryAlerts(includeDismissed);
+    },
+    async dismissInventoryAlert(id) {
+      return inventoryStore.dismissInventoryAlert(id);
+    },
+    async refreshAllInventoryAlerts() {
+      return inventoryStore.refreshAllInventoryAlerts();
+    },
+    async getInventoryReports() {
+      return inventoryStore.getInventoryReports();
+    },
+
     async exportPlatformSnapshot() {
       const customerRows = (await db
         .prepare('SELECT * FROM customers ORDER BY id ASC')
@@ -6402,10 +6724,7 @@ export async function createPostgresDatabase(
 export function normalizePostgresConnectionString(connectionString: string): string {
   try {
     const url = new URL(connectionString);
-    if (
-      url.searchParams.get('sslmode') === 'require' &&
-      !url.searchParams.has('uselibpqcompat')
-    ) {
+    if (url.searchParams.get('sslmode') === 'require' && !url.searchParams.has('uselibpqcompat')) {
       url.searchParams.set('uselibpqcompat', 'true');
       return url.toString();
     }

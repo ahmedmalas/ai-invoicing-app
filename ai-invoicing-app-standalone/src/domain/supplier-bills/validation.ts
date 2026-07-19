@@ -14,6 +14,9 @@ export const supplierSchema = z.object({
   address: z.string().min(1).optional(),
   taxId: z.string().min(1).optional(),
   notes: z.string().min(1).optional(),
+  contactPerson: z.string().min(1).optional(),
+  website: z.string().url().optional(),
+  paymentTerms: z.string().min(1).optional(),
 });
 
 export const supplierBillLineItemSchema = z.object({

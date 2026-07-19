@@ -19,8 +19,10 @@ export default defineConfig({
         'src/index.ts',
         'src/config/env.ts',
         'src/db/postgres-database.ts',
+        'src/db/postgres-inventory-store.ts',
         'src/types/**',
         'src/domain/documents/interfaces.ts',
+        'tests/benchmarks/**',
       ],
       thresholds: {
         lines: 85,

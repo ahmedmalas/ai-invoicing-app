@@ -4,7 +4,7 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', 'public/**', '*.cjs', '*.mjs'],
+    ignores: ['dist/**', 'coverage/**', 'public/**', 'scripts/**', '*.cjs', '*.mjs'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
@@ -18,10 +18,7 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/require-await': 'off',
-      '@typescript-eslint/consistent-type-imports': [
-        'error',
-        { fixStyle: 'inline-type-imports' },
-      ],
+      '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
     },
   },
   eslintConfigPrettier,

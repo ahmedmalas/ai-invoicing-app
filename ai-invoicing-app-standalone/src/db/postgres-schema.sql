@@ -584,8 +584,21 @@ BEGIN
       IF EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft')
       THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS'; END IF;
     WHEN 'trg_purchase_order_line_items_non_draft_update' THEN
-      IF EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft')
-         OR EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft')
+      IF (
+           EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft')
+           OR EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft')
+         )
+         AND (
+           NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.purchase_order_id IS DISTINCT FROM OLD.purchase_order_id
+           OR NEW.description IS DISTINCT FROM OLD.description
+           OR NEW.quantity IS DISTINCT FROM OLD.quantity
+           OR NEW.unit_price IS DISTINCT FROM OLD.unit_price
+           OR NEW.gst_applicable IS DISTINCT FROM OLD.gst_applicable
+           OR NEW.line_subtotal IS DISTINCT FROM OLD.line_subtotal
+           OR NEW.line_gst IS DISTINCT FROM OLD.line_gst
+           OR NEW.line_total IS DISTINCT FROM OLD.line_total
+         )
       THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS'; END IF;
     WHEN 'trg_purchase_order_line_items_non_draft_delete' THEN
       IF EXISTS (SELECT 1 FROM purchase_orders p WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft')
@@ -776,6 +789,216 @@ CREATE TRIGGER trg_supplier_payment_allocations_immutable_delete BEFORE DELETE O
 
 -- Supabase exposes the public schema through PostgREST. The application uses a
 -- direct owner connection, so public tables must deny anon/authenticated access
+
+-- Inventory / stock control (schema v45)
+CREATE TABLE IF NOT EXISTS products (
+  id TEXT PRIMARY KEY,
+  sku TEXT NOT NULL UNIQUE,
+  barcode TEXT,
+  qr_payload TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  brand TEXT,
+  supplier_id TEXT REFERENCES suppliers(id),
+  unit_of_measure TEXT NOT NULL DEFAULT 'ea',
+  cost_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  sell_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  gst_status TEXT NOT NULL DEFAULT 'gst',
+  track_stock INTEGER NOT NULL DEFAULT 1,
+  minimum_stock_level DOUBLE PRECISION NOT NULL DEFAULT 0,
+  reorder_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+  storage_location TEXT,
+  weight DOUBLE PRECISION,
+  length_mm DOUBLE PRECISION,
+  width_mm DOUBLE PRECISION,
+  height_mm DOUBLE PRECISION,
+  image_url TEXT,
+  notes TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_bundle INTEGER NOT NULL DEFAULT 0,
+  bundle_kind TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_products_barcode_not_null
+ON products(barcode)
+WHERE barcode IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);
+
+CREATE TABLE IF NOT EXISTS inventory_balances (
+  product_id TEXT PRIMARY KEY REFERENCES products(id),
+  on_hand DOUBLE PRECISION NOT NULL DEFAULT 0,
+  reserved DOUBLE PRECISION NOT NULL DEFAULT 0,
+  incoming DOUBLE PRECISION NOT NULL DEFAULT 0,
+  damaged DOUBLE PRECISION NOT NULL DEFAULT 0,
+  returned DOUBLE PRECISION NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id),
+  movement_type TEXT NOT NULL,
+  quantity_delta DOUBLE PRECISION NOT NULL,
+  unit_cost DOUBLE PRECISION,
+  bucket TEXT NOT NULL DEFAULT 'on_hand',
+  reference_type TEXT,
+  reference_id TEXT,
+  reference_line_id TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_movements_product_created
+ON stock_movements(product_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_reference
+ON stock_movements(reference_type, reference_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_idempotent
+ON stock_movements(product_id, movement_type, reference_type, reference_id, reference_line_id)
+WHERE reference_type IS NOT NULL AND reference_id IS NOT NULL AND reference_line_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS product_bundle_components (
+  id TEXT PRIMARY KEY,
+  bundle_product_id TEXT NOT NULL REFERENCES products(id),
+  component_product_id TEXT NOT NULL REFERENCES products(id),
+  quantity DOUBLE PRECISION NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bundle_component
+ON product_bundle_components(bundle_product_id, component_product_id);
+
+CREATE TABLE IF NOT EXISTS goods_receipts (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT NOT NULL REFERENCES purchase_orders(id),
+  receipt_number TEXT NOT NULL UNIQUE,
+  notes TEXT,
+  received_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS goods_receipt_line_items (
+  id TEXT PRIMARY KEY,
+  goods_receipt_id TEXT NOT NULL REFERENCES goods_receipts(id),
+  purchase_order_line_item_id TEXT NOT NULL REFERENCES purchase_order_line_items(id),
+  product_id TEXT REFERENCES products(id),
+  quantity_received DOUBLE PRECISION NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stocktakes (
+  id TEXT PRIMARY KEY,
+  stocktake_number TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  notes TEXT,
+  started_at TEXT,
+  submitted_at TEXT,
+  approved_at TEXT,
+  approved_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stocktake_lines (
+  id TEXT PRIMARY KEY,
+  stocktake_id TEXT NOT NULL REFERENCES stocktakes(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  expected_quantity DOUBLE PRECISION NOT NULL,
+  counted_quantity DOUBLE PRECISION,
+  notes TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stocktake_product
+ON stocktake_lines(stocktake_id, product_id);
+
+CREATE TABLE IF NOT EXISTS inventory_alerts (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id),
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  suggested_reorder_quantity DOUBLE PRECISION,
+  is_dismissed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_alerts_open
+ON inventory_alerts(is_dismissed, kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_inventory_alerts_product
+ON inventory_alerts(product_id, is_dismissed, created_at);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_type_created
+ON stock_movements(movement_type, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipts_purchase_order
+ON goods_receipts(purchase_order_id, received_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_receipt
+ON goods_receipt_line_items(goods_receipt_id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_po_line
+ON goods_receipt_line_items(purchase_order_line_item_id);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_status_created
+ON stocktakes(status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stocktake_lines_product
+ON stocktake_lines(product_id);
+
+CREATE TABLE IF NOT EXISTS job_materials (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES jobs(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  quantity DOUBLE PRECISION NOT NULL,
+  notes TEXT,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_material_product
+ON job_materials(job_id, product_id);
+
+CREATE TABLE IF NOT EXISTS goods_receipt_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stocktake_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+-- Inventory column upgrades for existing workspaces (schema v45)
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS contact_person TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payment_terms TEXT;
+ALTER TABLE invoice_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION raise_immutable_stock_movement() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'IMMUTABLE_STOCK_MOVEMENT';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_stock_movements_immutable_update ON stock_movements;
+CREATE TRIGGER trg_stock_movements_immutable_update
+BEFORE UPDATE ON stock_movements
+FOR EACH ROW EXECUTE FUNCTION raise_immutable_stock_movement();
+
+DROP TRIGGER IF EXISTS trg_stock_movements_immutable_delete ON stock_movements;
+CREATE TRIGGER trg_stock_movements_immutable_delete
+BEFORE DELETE ON stock_movements
+FOR EACH ROW EXECUTE FUNCTION raise_immutable_stock_movement();
+
 -- unless an explicit policy is introduced later.
 ALTER TABLE app_database_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_profile ENABLE ROW LEVEL SECURITY;
@@ -815,3 +1038,16 @@ ALTER TABLE job_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE idempotency_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timeline_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reminder_states ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_balances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_bundle_components ENABLE ROW LEVEL SECURITY;
+ALTER TABLE goods_receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE goods_receipt_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stocktakes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stocktake_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_materials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE goods_receipt_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stocktake_sequences ENABLE ROW LEVEL SECURITY;

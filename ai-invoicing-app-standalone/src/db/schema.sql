@@ -760,13 +760,26 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_purchase_order_line_items_non_draft_update
 BEFORE UPDATE ON purchase_order_line_items
-WHEN EXISTS (
-  SELECT 1 FROM purchase_orders p
-  WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft'
+WHEN (
+  EXISTS (
+    SELECT 1 FROM purchase_orders p
+    WHERE p.id = OLD.purchase_order_id AND p.status <> 'Draft'
+  )
+  OR EXISTS (
+    SELECT 1 FROM purchase_orders p
+    WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft'
+  )
 )
-OR EXISTS (
-  SELECT 1 FROM purchase_orders p
-  WHERE p.id = NEW.purchase_order_id AND p.status <> 'Draft'
+AND (
+  NEW.id <> OLD.id
+  OR NEW.purchase_order_id <> OLD.purchase_order_id
+  OR NEW.description <> OLD.description
+  OR NEW.quantity <> OLD.quantity
+  OR NEW.unit_price <> OLD.unit_price
+  OR NEW.gst_applicable <> OLD.gst_applicable
+  OR NEW.line_subtotal <> OLD.line_subtotal
+  OR NEW.line_gst <> OLD.line_gst
+  OR NEW.line_total <> OLD.line_total
 )
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS');
@@ -979,3 +992,213 @@ BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_SUPPLIER_PAYMENT_ALLOCATION');
 END;
 
+
+-- Inventory / stock control (schema v45)
+CREATE TABLE IF NOT EXISTS products (
+  id TEXT PRIMARY KEY,
+  sku TEXT NOT NULL UNIQUE,
+  barcode TEXT,
+  qr_payload TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  brand TEXT,
+  supplier_id TEXT,
+  unit_of_measure TEXT NOT NULL DEFAULT 'ea',
+  cost_price REAL NOT NULL DEFAULT 0,
+  sell_price REAL NOT NULL DEFAULT 0,
+  gst_status TEXT NOT NULL DEFAULT 'gst',
+  track_stock INTEGER NOT NULL DEFAULT 1,
+  minimum_stock_level REAL NOT NULL DEFAULT 0,
+  reorder_quantity REAL NOT NULL DEFAULT 0,
+  storage_location TEXT,
+  weight REAL,
+  length_mm REAL,
+  width_mm REAL,
+  height_mm REAL,
+  image_url TEXT,
+  notes TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_bundle INTEGER NOT NULL DEFAULT 0,
+  bundle_kind TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_products_barcode_not_null
+ON products(barcode)
+WHERE barcode IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);
+
+CREATE TABLE IF NOT EXISTS inventory_balances (
+  product_id TEXT PRIMARY KEY,
+  on_hand REAL NOT NULL DEFAULT 0,
+  reserved REAL NOT NULL DEFAULT 0,
+  incoming REAL NOT NULL DEFAULT 0,
+  damaged REAL NOT NULL DEFAULT 0,
+  returned REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL,
+  movement_type TEXT NOT NULL,
+  quantity_delta REAL NOT NULL,
+  unit_cost REAL,
+  bucket TEXT NOT NULL DEFAULT 'on_hand',
+  reference_type TEXT,
+  reference_id TEXT,
+  reference_line_id TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_movements_product_created
+ON stock_movements(product_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_reference
+ON stock_movements(reference_type, reference_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_idempotent
+ON stock_movements(product_id, movement_type, reference_type, reference_id, reference_line_id)
+WHERE reference_type IS NOT NULL AND reference_id IS NOT NULL AND reference_line_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS product_bundle_components (
+  id TEXT PRIMARY KEY,
+  bundle_product_id TEXT NOT NULL,
+  component_product_id TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  FOREIGN KEY (bundle_product_id) REFERENCES products(id),
+  FOREIGN KEY (component_product_id) REFERENCES products(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bundle_component
+ON product_bundle_components(bundle_product_id, component_product_id);
+
+CREATE TABLE IF NOT EXISTS goods_receipts (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT NOT NULL,
+  receipt_number TEXT NOT NULL UNIQUE,
+  notes TEXT,
+  received_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS goods_receipt_line_items (
+  id TEXT PRIMARY KEY,
+  goods_receipt_id TEXT NOT NULL,
+  purchase_order_line_item_id TEXT NOT NULL,
+  product_id TEXT,
+  quantity_received REAL NOT NULL,
+  FOREIGN KEY (goods_receipt_id) REFERENCES goods_receipts(id),
+  FOREIGN KEY (purchase_order_line_item_id) REFERENCES purchase_order_line_items(id),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE TABLE IF NOT EXISTS stocktakes (
+  id TEXT PRIMARY KEY,
+  stocktake_number TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  notes TEXT,
+  started_at TEXT,
+  submitted_at TEXT,
+  approved_at TEXT,
+  approved_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stocktake_lines (
+  id TEXT PRIMARY KEY,
+  stocktake_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  expected_quantity REAL NOT NULL,
+  counted_quantity REAL,
+  notes TEXT,
+  FOREIGN KEY (stocktake_id) REFERENCES stocktakes(id),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stocktake_product
+ON stocktake_lines(stocktake_id, product_id);
+
+CREATE TABLE IF NOT EXISTS inventory_alerts (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  suggested_reorder_quantity REAL,
+  is_dismissed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_alerts_open
+ON inventory_alerts(is_dismissed, kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_inventory_alerts_product
+ON inventory_alerts(product_id, is_dismissed, created_at);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_type_created
+ON stock_movements(movement_type, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipts_purchase_order
+ON goods_receipts(purchase_order_id, received_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_receipt
+ON goods_receipt_line_items(goods_receipt_id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_po_line
+ON goods_receipt_line_items(purchase_order_line_item_id);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_status_created
+ON stocktakes(status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stocktake_lines_product
+ON stocktake_lines(product_id);
+
+CREATE TABLE IF NOT EXISTS job_materials (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  notes TEXT,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_material_product
+ON job_materials(job_id, product_id);
+
+CREATE TABLE IF NOT EXISTS goods_receipt_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stocktake_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_stock_movements_immutable_update
+BEFORE UPDATE ON stock_movements
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_STOCK_MOVEMENT');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_stock_movements_immutable_delete
+BEFORE DELETE ON stock_movements
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_STOCK_MOVEMENT');
+END;

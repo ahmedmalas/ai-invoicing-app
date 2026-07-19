@@ -42,7 +42,13 @@ function platformConfig() {
     process.env.LOGO_CREATOR_SERVICE_ROLE_KEY || process.env.ALEYA_LOGO_SERVICE_ROLE_KEY || '';
   const platformSecret = process.env.ALEYA_PLATFORM_SECRET || '';
   const functionsBase = url ? `${url.replace(/\/$/, '')}/functions/v1/logo-platform` : '';
-  return { url, serviceKey, platformSecret, functionsBase, enabled: Boolean(url && (serviceKey || platformSecret)) };
+  return {
+    url,
+    serviceKey,
+    platformSecret,
+    functionsBase,
+    enabled: Boolean(url && (serviceKey || platformSecret)),
+  };
 }
 
 export function isLogoPlatformConfigured(): boolean {
@@ -69,13 +75,16 @@ export async function fetchActiveBrandKit(businessId: string): Promise<SharedBra
   }
 
   if (cfg.platformSecret && cfg.functionsBase) {
-    const res = await fetch(`${cfg.functionsBase}/active-brand-kit?businessId=${encodeURIComponent(businessId)}`, {
-      headers: {
-        apikey: process.env.LOGO_CREATOR_ANON_KEY || cfg.platformSecret,
-        'x-aleya-platform-secret': cfg.platformSecret,
-        'x-aleya-business-id': businessId,
+    const res = await fetch(
+      `${cfg.functionsBase}/active-brand-kit?businessId=${encodeURIComponent(businessId)}`,
+      {
+        headers: {
+          apikey: process.env.LOGO_CREATOR_ANON_KEY || cfg.platformSecret,
+          'x-aleya-platform-secret': cfg.platformSecret,
+          'x-aleya-business-id': businessId,
+        },
       },
-    });
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as { brandKit?: SharedBrandKit | null };
     return body.brandKit ?? null;
@@ -130,7 +139,13 @@ export async function syncActiveBrandKit(input: SyncBrandKitInput): Promise<Shar
       `${cfg.url}/rest/v1/brand_kits?aleya_business_id=eq.${encodeURIComponent(input.businessId)}&select=owner_id,workspace_id,project_id&limit=1`,
       { headers },
     );
-    const prior = priorRes.ok ? ((await priorRes.json()) as Array<{ owner_id: string; workspace_id: string; project_id: string }>) : [];
+    const prior = priorRes.ok
+      ? ((await priorRes.json()) as Array<{
+          owner_id: string;
+          workspace_id: string;
+          project_id: string;
+        }>)
+      : [];
     if (!prior[0]) {
       // Without an existing owner we cannot insert auth-scoped rows via REST alone.
       return null;
@@ -187,6 +202,14 @@ export async function syncActiveBrandKit(input: SyncBrandKitInput): Promise<Shar
   return null;
 }
 
+function conceptText(value: unknown, fallback: string): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return fallback;
+}
+
 export function brandKitToLogoReference(kit: {
   id?: string;
   business_name: string;
@@ -201,18 +224,18 @@ export function brandKitToLogoReference(kit: {
   const concept = (kit.editable_metadata?.concept || {}) as Record<string, unknown>;
   const payload = {
     brandKitId: kit.id || null,
-    id: String(concept.id || kit.id || cryptoRandom()),
+    id: conceptText(concept.id, kit.id || cryptoRandom()),
     businessName: kit.business_name,
     tagline: kit.tagline ?? null,
-    industry: String(concept.industry || 'General'),
-    style: String(concept.style || 'modern'),
+    industry: conceptText(concept.industry, 'General'),
+    style: conceptText(concept.style, 'modern'),
     primaryColor: kit.primary_colors?.[0] || '#173f35',
     secondaryColor: kit.secondary_colors?.[0] || '#c4f36b',
-    iconIdea: kit.icon_concept || String(concept.iconIdea || 'mark'),
-    layout: kit.layout || String(concept.layout || 'lockup'),
-    markShape: String(concept.markShape || 'circle'),
-    monogram: String(concept.monogram || kit.business_name.slice(0, 2).toUpperCase()),
-    seed: String(concept.seed || 'shared'),
+    iconIdea: kit.icon_concept || conceptText(concept.iconIdea, 'mark'),
+    layout: kit.layout || conceptText(concept.layout, 'lockup'),
+    markShape: conceptText(concept.markShape, 'circle'),
+    monogram: conceptText(concept.monogram, kit.business_name.slice(0, 2).toUpperCase()),
+    seed: conceptText(concept.seed, 'shared'),
     svg: kit.svg_markup || '',
   };
   return `aleya-logo:v1:${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;

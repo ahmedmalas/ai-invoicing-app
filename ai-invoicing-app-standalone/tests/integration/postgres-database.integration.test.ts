@@ -5,25 +5,17 @@ import { join } from 'node:path';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { PLATFORM_SNAPSHOT_TABLES, createDatabase } from '../../src/db/database.js';
+import { createDatabase } from '../../src/db/database.js';
 import { migrateToPostgres } from '../../src/migration/postgres-migration.js';
 import { enterWorkspaceContext } from '../../src/auth/workspace-context.js';
+import { resetPostgresTestDatabase } from '../helpers/postgres-reset.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const describePostgres = connectionString ? describe : describe.skip;
 
 describePostgres('PostgreSQL AppDatabase parity', () => {
   const reset = async (): Promise<void> => {
-    const pool = new Pool({ connectionString, max: 1, allowExitOnIdle: true });
-    try {
-      const tables = [...PLATFORM_SNAPSHOT_TABLES]
-        .reverse()
-        .map((table) => `"${table}"`)
-        .join(', ');
-      await pool.query(`TRUNCATE TABLE ${tables} CASCADE`);
-    } finally {
-      await pool.end();
-    }
+    await resetPostgresTestDatabase(connectionString!);
   };
 
   beforeEach(async () => {
@@ -31,9 +23,9 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
     const bootstrap = await createPostgresDatabase(connectionString!, { maxConnections: 2 });
     await bootstrap.close();
     await reset();
-  });
+  }, 30_000);
 
-  afterEach(reset);
+  afterEach(reset, 30_000);
 
   it('preserves idempotency, concurrent numbering, timeline, search, reporting, and diagnostics', async () => {
     const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');
@@ -241,10 +233,10 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
       try {
         if (schemaA) await pool.query(`DROP SCHEMA "${schemaA}" CASCADE`);
         if (schemaB) await pool.query(`DROP SCHEMA "${schemaB}" CASCADE`);
-        await pool.query(
-          'DELETE FROM public.auth_workspaces WHERE display_name IN ($1, $2)',
-          ['Workspace A', 'Workspace B'],
-        );
+        await pool.query('DELETE FROM public.auth_workspaces WHERE display_name IN ($1, $2)', [
+          'Workspace A',
+          'Workspace B',
+        ]);
       } finally {
         await pool.end();
       }

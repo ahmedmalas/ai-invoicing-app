@@ -25,14 +25,12 @@ import { supplierRoutes } from './routes/suppliers.js';
 import { supplierBillRoutes } from './routes/supplier-bills.js';
 import { supplierPaymentRoutes } from './routes/supplier-payments.js';
 import { purchaseOrderRoutes } from './routes/purchase-orders.js';
+import { productRoutes } from './routes/products.js';
 import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 import { createSystemRoutes } from './routes/system.js';
 import { frontendRoutes } from './routes/frontend.js';
-import {
-  enterWorkspaceContext,
-  runWithWorkspaceContext,
-} from './auth/workspace-context.js';
+import { enterWorkspaceContext, runWithWorkspaceContext } from './auth/workspace-context.js';
 
 import type { AppDatabase } from './db/database.js';
 
@@ -127,9 +125,12 @@ export async function buildApp(options: BuildAppOptions) {
   const authBypassForTesting =
     options.authBypassForTesting ??
     (nodeEnv === 'test' && process.env.AI_BUSINESS_OS_TEST_AUTH_BYPASS === '1');
-  const abossIntegrationSecret = options.abossIntegrationSecret ?? process.env.ABOSS_INTEGRATION_SECRET;
-  const abossIntegrationActorUserId = options.abossIntegrationActorUserId ?? process.env.ABOSS_INTEGRATION_ACTOR_USER_ID;
-  const abossAllowedOrganizationId = options.abossAllowedOrganizationId ?? process.env.ABOSS_ALLOWED_ORGANIZATION_ID;
+  const abossIntegrationSecret =
+    options.abossIntegrationSecret ?? process.env.ABOSS_INTEGRATION_SECRET;
+  const abossIntegrationActorUserId =
+    options.abossIntegrationActorUserId ?? process.env.ABOSS_INTEGRATION_ACTOR_USER_ID;
+  const abossAllowedOrganizationId =
+    options.abossAllowedOrganizationId ?? process.env.ABOSS_ALLOWED_ORGANIZATION_ID;
   const abossOnlyAuth = options.abossOnlyAuth ?? process.env.ABOSS_ONLY_AUTH === '1';
   const usedAbossNonces = new Map<string, number>();
   const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL;
@@ -205,7 +206,8 @@ export async function buildApp(options: BuildAppOptions) {
     '/platform/restore',
     '/health/diagnostics',
   ]);
-  const servesFrontend = options.serveFrontend ?? (options.dbPath === undefined && nodeEnv !== 'test');
+  const servesFrontend =
+    options.serveFrontend ?? (options.dbPath === undefined && nodeEnv !== 'test');
   const publicPaths = new Set([
     '/health',
     '/health/live',
@@ -220,20 +222,40 @@ export async function buildApp(options: BuildAppOptions) {
   ]);
   if (servesFrontend) {
     for (const path of [
-      '/', '/sign-in', '/create-account', '/forgot-password', '/reset-password',
-      '/auth/callback', '/dashboard', '/workspace/customers', '/workspace/quotes',
-      '/workspace/invoices', '/workspace/payments',
-      '/reports', '/timeline', '/settings', '/favicon.svg', '/assets/styles.css', '/assets/app.js',
+      '/',
+      '/sign-in',
+      '/create-account',
+      '/forgot-password',
+      '/reset-password',
+      '/auth/callback',
+      '/dashboard',
+      '/workspace/customers',
+      '/workspace/quotes',
+      '/workspace/invoices',
+      '/workspace/payments',
+      '/workspace/inventory',
+      '/workspace/stocktakes',
+      '/workspace/purchase-orders',
+      '/workspace/suppliers',
+      '/reports',
+      '/timeline',
+      '/settings',
+      '/favicon.svg',
+      '/assets/styles.css',
+      '/assets/app.js',
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
       '/assets/invoice-workspace.js',
       '/assets/invoice-curtain.js',
       '/assets/logo-studio-ui.js',
-      '/assets/launch-app.js', '/assets/auth-controls.js', '/assets/auth-controls.css',
+      '/assets/launch-app.js',
+      '/assets/auth-controls.js',
+      '/assets/auth-controls.css',
       '/workspace/invoices/new',
       '/logo-creator',
-    ]) publicPaths.add(path);
+    ])
+      publicPaths.add(path);
   }
   const isPublicRoute = (url: string): boolean => {
     const path = sanitizePath(url);
@@ -329,7 +351,9 @@ export async function buildApp(options: BuildAppOptions) {
         );
         throw new Error('AUTH_UNAUTHENTICATED');
       }
-      const roles = await Promise.all(actor.roleIds.map(async (roleId) => await db.getRoleById(roleId)));
+      const roles = await Promise.all(
+        actor.roleIds.map(async (roleId) => await db.getRoleById(roleId)),
+      );
       request.auth = {
         userId: actor.id,
         isAdmin: roles.some((role) => role?.canManageAssignments === true),
@@ -821,10 +845,28 @@ export async function buildApp(options: BuildAppOptions) {
     createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey, publicAppUrl }),
   );
   const businessPlugins = [
-    platformSnapshotRoutes, customerRoutes, businessProfileRoutes, logoStudioRoutes, preferenceRoutes, invoiceRoutes,
-    quoteRoutes, jobRoutes, roleRoutes, teamRoutes, userRoutes, searchRoutes, timelineRoutes,
-    statementRoutes, reportRoutes, creditNoteRoutes, paymentRoutes, supplierRoutes,
-    supplierBillRoutes, supplierPaymentRoutes, purchaseOrderRoutes,
+    platformSnapshotRoutes,
+    customerRoutes,
+    businessProfileRoutes,
+    logoStudioRoutes,
+    preferenceRoutes,
+    invoiceRoutes,
+    quoteRoutes,
+    jobRoutes,
+    roleRoutes,
+    teamRoutes,
+    userRoutes,
+    searchRoutes,
+    timelineRoutes,
+    statementRoutes,
+    reportRoutes,
+    creditNoteRoutes,
+    paymentRoutes,
+    supplierRoutes,
+    supplierBillRoutes,
+    supplierPaymentRoutes,
+    purchaseOrderRoutes,
+    productRoutes,
   ];
   for (const plugin of businessPlugins) {
     await app.register(plugin);
