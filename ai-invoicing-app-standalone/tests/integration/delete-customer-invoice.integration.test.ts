@@ -107,8 +107,8 @@ describe('production customer/invoice deletion path', () => {
       abossOrganizationId,
     });
     const deleted = await app.inject({ method: 'DELETE', url: deletePath, headers });
-    expect(deleted.statusCode).toBe(204);
-    expect(deleted.body).toBe('');
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({ deleted: true, id: verificationCustomer.id });
 
     const getHeaders = abossSignedHeaders({
       secret,
@@ -255,7 +255,8 @@ describe('production customer/invoice deletion path', () => {
       url: `/invoices/${draft.id}`,
       headers: authHeaders(writerUserId),
     });
-    expect(deletedDraft.statusCode).toBe(204);
+    expect(deletedDraft.statusCode).toBe(200);
+    expect(deletedDraft.json()).toEqual({ deleted: true, id: draft.id });
 
     // Converted-quote draft invoices are blocked, not 500.
     const quoteCustomer = idSchema.parse(

@@ -40,6 +40,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/customers/:customerId', async (request, reply) => {
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     await app.db.deleteCustomer(params.customerId);
-    return reply.code(204).send();
+    // Return JSON 200 (not empty 204): ABoss BFF parses upstream JSON and maps
+    // empty 204 bodies to SERVICE_UNAVAILABLE / "Internal server error".
+    return reply.code(200).send({ deleted: true, id: params.customerId });
   });
 };

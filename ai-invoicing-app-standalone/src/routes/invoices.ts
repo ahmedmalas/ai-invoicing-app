@@ -70,7 +70,9 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/invoices/:invoiceId', async (request, reply) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     await app.db.deleteInvoiceDraft(params.invoiceId);
-    return reply.code(204).send();
+    // Return JSON 200 (not empty 204): ABoss BFF parses upstream JSON and maps
+    // empty 204 bodies to SERVICE_UNAVAILABLE / "Internal server error".
+    return reply.code(200).send({ deleted: true, id: params.invoiceId });
   });
 
   app.post('/invoices/:invoiceId/finalise', async (request) => {
