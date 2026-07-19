@@ -40,6 +40,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function assertNoInjectedFailure(failpoint: string): void {
+  if (process.env.AI_BUSINESS_OS_FAILPOINT === failpoint) {
+    throw new Error(`INJECTED_FAILURE_${failpoint}`);
+  }
+}
+
 function asText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
@@ -366,6 +372,7 @@ export function createPostgresInventoryStore(
       allowNegative: input.allowNegative === true,
       alreadyLocked: true,
     });
+    assertNoInjectedFailure('inventory_post_movement_after_balance');
 
     const id = randomUUID();
     const createdAt = nowIso();
@@ -967,7 +974,7 @@ export function createPostgresInventoryStore(
       receiptStatus: PurchaseOrderReceiptStatus;
     }> {
       const order = (await db
-        .prepare('SELECT id, status FROM purchase_orders WHERE id = ?')
+        .prepare('SELECT id, status FROM purchase_orders WHERE id = ? FOR UPDATE')
         .get(purchaseOrderId)) as { id: string; status: string } | undefined;
       if (!order) throw new Error('PURCHASE_ORDER_NOT_FOUND');
       if (!['Approved', 'Sent', 'PartiallyReceived', 'Received'].includes(order.status)) {
@@ -1002,7 +1009,9 @@ export function createPostgresInventoryStore(
         const poLine = (await db
           .prepare(
             `SELECT id, description, quantity, quantity_received, product_id, unit_price
-             FROM purchase_order_line_items WHERE id = ? AND purchase_order_id = ?`,
+             FROM purchase_order_line_items
+             WHERE id = ? AND purchase_order_id = ?
+             FOR UPDATE`,
           )
           .get(line.purchaseOrderLineItemId, purchaseOrderId)) as
           | {
@@ -1020,13 +1029,20 @@ export function createPostgresInventoryStore(
           throw new Error('RECEIVE_EXCEEDS_OUTSTANDING');
         }
         const productId = line.productId ?? poLine.product_id;
-        await db
+        const updatedLine = (await db
           .prepare(
             `UPDATE purchase_order_line_items
-           SET quantity_received = quantity_received + ?
-           WHERE id = ?`,
+             SET quantity_received = quantity_received + ?
+             WHERE id = ?
+               AND quantity_received + ? <= quantity + 0.0001
+             RETURNING id`,
           )
-          .run(line.quantityReceived, poLine.id);
+          .get(line.quantityReceived, poLine.id, line.quantityReceived)) as
+          { id: string } | undefined;
+        if (!updatedLine) {
+          throw new Error('RECEIVE_EXCEEDS_OUTSTANDING');
+        }
+        assertNoInjectedFailure('inventory_receive_after_line_update');
         if (productId) {
           await db
             .prepare('UPDATE purchase_order_line_items SET product_id = ? WHERE id = ?')

@@ -49,7 +49,14 @@ import {
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { createInventoryStore, ensureInventorySchemaSqlite } from './inventory-store.js';
-import type { Product, StockMovement, Stocktake, InventoryAlert, InventoryReportBundle, PurchaseOrderReceiptStatus } from '../domain/inventory/types.js';
+import type {
+  Product,
+  StockMovement,
+  Stocktake,
+  InventoryAlert,
+  InventoryReportBundle,
+  PurchaseOrderReceiptStatus,
+} from '../domain/inventory/types.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
@@ -950,7 +957,9 @@ export interface AppDatabase {
   listProducts(filter?: Record<string, unknown>): DatabaseResult<Product[]>;
   lookupProductByCode(code: string): DatabaseResult<Product | null>;
   adjustStock(input: Record<string, unknown>): DatabaseResult<StockMovement>;
-  transferStock(input: Record<string, unknown>): DatabaseResult<{ out: StockMovement; in: StockMovement }>;
+  transferStock(
+    input: Record<string, unknown>,
+  ): DatabaseResult<{ out: StockMovement; in: StockMovement }>;
   listStockMovements(filter?: Record<string, unknown>): DatabaseResult<StockMovement[]>;
   receivePurchaseOrder(
     purchaseOrderId: string,
@@ -968,11 +977,15 @@ export interface AppDatabase {
     movements: StockMovement[];
     receiptStatus: PurchaseOrderReceiptStatus;
   }>;
-  getPurchaseOrderReceiptStatus(purchaseOrderId: string): DatabaseResult<PurchaseOrderReceiptStatus>;
+  getPurchaseOrderReceiptStatus(
+    purchaseOrderId: string,
+  ): DatabaseResult<PurchaseOrderReceiptStatus>;
   setJobMaterials(
     jobId: string,
     materials: Array<{ productId: string; quantity: number; notes?: string | null | undefined }>,
-  ): DatabaseResult<Array<{ id: string; jobId: string; productId: string; quantity: number; notes: string | null }>>;
+  ): DatabaseResult<
+    Array<{ id: string; jobId: string; productId: string; quantity: number; notes: string | null }>
+  >;
   createStocktake(input: Record<string, unknown>): DatabaseResult<Stocktake>;
   updateStocktakeCounts(
     id: string,
@@ -2399,7 +2412,9 @@ export function createDatabase(
       const limit = options?.limit ?? Number.MAX_SAFE_INTEGER;
       const offset = options?.offset ?? 0;
       const rows = db
-        .prepare('SELECT * FROM customers ORDER BY display_name ASC, created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .prepare(
+          'SELECT * FROM customers ORDER BY display_name ASC, created_at DESC, id DESC LIMIT ? OFFSET ?',
+        )
         .all(limit, offset) as Array<Record<string, unknown>>;
       return rows.map(mapCustomerRow);
     },
@@ -2602,7 +2617,9 @@ export function createDatabase(
               item.lineSubtotal,
               item.lineGst,
               item.lineTotal,
-              source && 'productId' in source ? ((source as { productId?: string | null }).productId ?? null) : null,
+              source && 'productId' in source
+                ? ((source as { productId?: string | null }).productId ?? null)
+                : null,
             );
           }
 
@@ -2735,7 +2752,9 @@ export function createDatabase(
       params.push(limit, offset);
       const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
       const rows = db
-        .prepare(`SELECT * FROM invoices${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`)
+        .prepare(
+          `SELECT * FROM invoices${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+        )
         .all(...params) as DbInvoiceRow[];
       return rows.map(mapInvoiceRow);
     },
@@ -2843,7 +2862,9 @@ export function createDatabase(
 
     createQuote(input) {
       return db.transaction((txInput: CreateQuoteInput) => {
-        const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+        const customer = db
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(txInput.customerId);
         if (!customer) throw new Error('Customer not found');
         const id = randomUUID();
         const now = nowIso();
@@ -2852,15 +2873,44 @@ export function createDatabase(
         db.prepare(
           `INSERT INTO quotes (id, customer_id, title, issue_date, expiry_date, notes, terms, quote_number, status, converted_invoice_id, subtotal, gst_total, total, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Draft', NULL, ?, ?, ?, ?, ?)`,
-        ).run(id, txInput.customerId, txInput.title, txInput.issueDate, txInput.expiryDate, txInput.notes ?? null, txInput.terms ?? null, quoteNumber, totals.subtotal, totals.gstTotal, totals.total, now, now);
+        ).run(
+          id,
+          txInput.customerId,
+          txInput.title,
+          txInput.issueDate,
+          txInput.expiryDate,
+          txInput.notes ?? null,
+          txInput.terms ?? null,
+          quoteNumber,
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          now,
+          now,
+        );
         const insertLine = db.prepare(
           `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const item of calculatedItems) {
-          insertLine.run(randomUUID(), id, item.description, item.quantity, item.unitPrice, item.gstApplicable ? 1 : 0, item.lineSubtotal, item.lineGst, item.lineTotal);
+          insertLine.run(
+            randomUUID(),
+            id,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
         }
-        upsertDocument(id, `${quoteNumber} ${txInput.title}`, 'quote', `${quoteNumber} ${txInput.title} ${txInput.notes ?? ''}`);
+        upsertDocument(
+          id,
+          `${quoteNumber} ${txInput.title}`,
+          'quote',
+          `${quoteNumber} ${txInput.title} ${txInput.notes ?? ''}`,
+        );
         const row = db.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as DbQuoteRow;
         return mapQuoteRow(row);
       })(input);
@@ -2868,24 +2918,55 @@ export function createDatabase(
 
     updateQuote(id, input) {
       return db.transaction((quoteId: string, txInput: UpdateQuoteInput) => {
-        const existing = db.prepare('SELECT status, quote_number FROM quotes WHERE id = ?').get(quoteId) as { status: QuoteStatus; quote_number: string } | undefined;
+        const existing = db
+          .prepare('SELECT status, quote_number FROM quotes WHERE id = ?')
+          .get(quoteId) as { status: QuoteStatus; quote_number: string } | undefined;
         if (!existing) throw new Error('Quote not found');
         if (existing.status !== 'Draft') throw new Error('Only draft quotes can be edited');
-        const customer = db.prepare('SELECT id FROM customers WHERE id = ?').get(txInput.customerId);
+        const customer = db
+          .prepare('SELECT id FROM customers WHERE id = ?')
+          .get(txInput.customerId);
         if (!customer) throw new Error('Customer not found');
         const { totals, calculatedItems } = calculateTotals(txInput.lineItems);
         db.prepare(
           `UPDATE quotes SET customer_id = ?, title = ?, issue_date = ?, expiry_date = ?, notes = ?, terms = ?, subtotal = ?, gst_total = ?, total = ?, updated_at = ? WHERE id = ?`,
-        ).run(txInput.customerId, txInput.title, txInput.issueDate, txInput.expiryDate, txInput.notes ?? null, txInput.terms ?? null, totals.subtotal, totals.gstTotal, totals.total, nowIso(), quoteId);
+        ).run(
+          txInput.customerId,
+          txInput.title,
+          txInput.issueDate,
+          txInput.expiryDate,
+          txInput.notes ?? null,
+          txInput.terms ?? null,
+          totals.subtotal,
+          totals.gstTotal,
+          totals.total,
+          nowIso(),
+          quoteId,
+        );
         db.prepare('DELETE FROM quote_line_items WHERE quote_id = ?').run(quoteId);
         const insertLine = db.prepare(
           `INSERT INTO quote_line_items (id, quote_id, description, quantity, unit_price, gst_applicable, line_subtotal, line_gst, line_total)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const item of calculatedItems) {
-          insertLine.run(randomUUID(), quoteId, item.description, item.quantity, item.unitPrice, item.gstApplicable ? 1 : 0, item.lineSubtotal, item.lineGst, item.lineTotal);
+          insertLine.run(
+            randomUUID(),
+            quoteId,
+            item.description,
+            item.quantity,
+            item.unitPrice,
+            item.gstApplicable ? 1 : 0,
+            item.lineSubtotal,
+            item.lineGst,
+            item.lineTotal,
+          );
         }
-        upsertDocument(quoteId, `${existing.quote_number} ${txInput.title}`, 'quote', `${existing.quote_number} ${txInput.title} ${txInput.notes ?? ''}`);
+        upsertDocument(
+          quoteId,
+          `${existing.quote_number} ${txInput.title}`,
+          'quote',
+          `${existing.quote_number} ${txInput.title} ${txInput.notes ?? ''}`,
+        );
         const row = db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId) as DbQuoteRow;
         return mapQuoteRow(row);
       })(id, input);
@@ -2894,10 +2975,19 @@ export function createDatabase(
     getQuoteById(id) {
       const row = db.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as DbQuoteRow | undefined;
       if (!row) return null;
-      const lineRows = db.prepare('SELECT description, quantity, unit_price, gst_applicable FROM quote_line_items WHERE quote_id = ? ORDER BY rowid ASC').all(id) as DbInvoiceLineItem[];
+      const lineRows = db
+        .prepare(
+          'SELECT description, quantity, unit_price, gst_applicable FROM quote_line_items WHERE quote_id = ? ORDER BY rowid ASC',
+        )
+        .all(id) as DbInvoiceLineItem[];
       return {
         ...mapQuoteRow(row),
-        lineItems: lineRows.map((item) => ({ description: item.description, quantity: item.quantity, unitPrice: item.unit_price, gstApplicable: item.gst_applicable === 1 })),
+        lineItems: lineRows.map((item) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          gstApplicable: item.gst_applicable === 1,
+        })),
       };
     },
 
@@ -2914,13 +3004,18 @@ export function createDatabase(
       }
       params.push(options?.limit ?? Number.MAX_SAFE_INTEGER, options?.offset ?? 0);
       const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
-      const rows = db.prepare(`SELECT * FROM quotes${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`).all(...params) as DbQuoteRow[];
+      const rows = db
+        .prepare(
+          `SELECT * FROM quotes${where} ORDER BY issue_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...params) as DbQuoteRow[];
       return rows.map(mapQuoteRow);
     },
 
     transitionQuoteStatus(id, status) {
       return db.transaction((quoteId: string, nextStatus: QuoteStatus) => {
-        const row = db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId) as DbQuoteRow | undefined;
+        const row = db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId) as
+          DbQuoteRow | undefined;
         if (!row) throw new Error('Quote not found');
         if (row.status === nextStatus) return mapQuoteRow(row);
         const allowed: Record<QuoteStatus, QuoteStatus[]> = {
@@ -2931,8 +3026,13 @@ export function createDatabase(
           Expired: [],
           Converted: [],
         };
-        if (!allowed[row.status].includes(nextStatus)) throw new Error('INVALID_QUOTE_STATUS_TRANSITION');
-        db.prepare('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?').run(nextStatus, nowIso(), quoteId);
+        if (!allowed[row.status].includes(nextStatus))
+          throw new Error('INVALID_QUOTE_STATUS_TRANSITION');
+        db.prepare('UPDATE quotes SET status = ?, updated_at = ? WHERE id = ?').run(
+          nextStatus,
+          nowIso(),
+          quoteId,
+        );
         const updated = db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId) as DbQuoteRow;
         return mapQuoteRow(updated);
       })(id, status);
@@ -2940,7 +3040,8 @@ export function createDatabase(
 
     deleteQuoteDraft(id) {
       return db.transaction((quoteId: string) => {
-        const row = db.prepare('SELECT status FROM quotes WHERE id = ?').get(quoteId) as { status: QuoteStatus } | undefined;
+        const row = db.prepare('SELECT status FROM quotes WHERE id = ?').get(quoteId) as
+          { status: QuoteStatus } | undefined;
         if (!row) throw new Error('Quote not found');
         if (row.status !== 'Draft') throw new Error('Only draft quotes can be deleted');
         db.prepare('DELETE FROM job_document_links WHERE document_id = ?').run(quoteId);
@@ -2954,9 +3055,20 @@ export function createDatabase(
       return db.transaction((quoteId: string) => {
         const quote = this.getQuoteById(quoteId);
         if (!quote) throw new Error('Quote not found');
-        if (quote.status !== 'Accepted') throw new Error('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION');
-        const invoice = this.createInvoiceDraft({ customerId: quote.customerId, title: quote.title, issueDate: nowIso().slice(0, 10), dueDate, notes: quote.notes ?? undefined, paymentTerms: paymentTerms ?? quote.terms ?? undefined, lineItems: quote.lineItems });
-        db.prepare("UPDATE quotes SET status = 'Converted', converted_invoice_id = ?, updated_at = ? WHERE id = ?").run(invoice.id, nowIso(), quoteId);
+        if (quote.status !== 'Accepted')
+          throw new Error('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION');
+        const invoice = this.createInvoiceDraft({
+          customerId: quote.customerId,
+          title: quote.title,
+          issueDate: nowIso().slice(0, 10),
+          dueDate,
+          notes: quote.notes ?? undefined,
+          paymentTerms: paymentTerms ?? quote.terms ?? undefined,
+          lineItems: quote.lineItems,
+        });
+        db.prepare(
+          "UPDATE quotes SET status = 'Converted', converted_invoice_id = ?, updated_at = ? WHERE id = ?",
+        ).run(invoice.id, nowIso(), quoteId);
         const updated = db.prepare('SELECT * FROM quotes WHERE id = ?').get(quoteId) as DbQuoteRow;
         return { quote: mapQuoteRow(updated), invoice };
       })(id);
@@ -6367,10 +6479,10 @@ export function createDatabase(
       return inventoryStore.listInventoryAlerts(includeDismissed);
     },
     dismissInventoryAlert(id) {
-      return inventoryStore.dismissInventoryAlert(id);
+      return db.transaction(() => inventoryStore.dismissInventoryAlert(id))();
     },
     refreshAllInventoryAlerts() {
-      return inventoryStore.refreshAllInventoryAlerts();
+      return db.transaction(() => inventoryStore.refreshAllInventoryAlerts())();
     },
     getInventoryReports() {
       return inventoryStore.getInventoryReports();

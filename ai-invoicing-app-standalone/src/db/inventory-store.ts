@@ -35,6 +35,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function assertNoInjectedFailure(failpoint: string): void {
+  if (process.env.AI_BUSINESS_OS_FAILPOINT === failpoint) {
+    throw new Error(`INJECTED_FAILURE_${failpoint}`);
+  }
+}
+
 function asText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
@@ -402,6 +408,7 @@ export function createInventoryStore(
     applyBucketDelta(db, input.productId, bucket, input.quantityDelta, {
       allowNegative: input.allowNegative === true,
     });
+    assertNoInjectedFailure('inventory_post_movement_after_balance');
 
     const id = randomUUID();
     const createdAt = nowIso();
@@ -1020,11 +1027,20 @@ export function createInventoryStore(
           throw new Error('RECEIVE_EXCEEDS_OUTSTANDING');
         }
         const productId = line.productId ?? poLine.product_id;
-        db.prepare(
-          `UPDATE purchase_order_line_items
-           SET quantity_received = quantity_received + ?
-           WHERE id = ?`,
-        ).run(line.quantityReceived, poLine.id);
+        const updatedLine = db
+          .prepare(
+            `UPDATE purchase_order_line_items
+             SET quantity_received = quantity_received + ?
+             WHERE id = ?
+               AND quantity_received + ? <= quantity + 0.0001
+             RETURNING id`,
+          )
+          .get(line.quantityReceived, poLine.id, line.quantityReceived) as
+          { id: string } | undefined;
+        if (!updatedLine) {
+          throw new Error('RECEIVE_EXCEEDS_OUTSTANDING');
+        }
+        assertNoInjectedFailure('inventory_receive_after_line_update');
         if (productId) {
           db.prepare('UPDATE purchase_order_line_items SET product_id = ? WHERE id = ?').run(
             productId,

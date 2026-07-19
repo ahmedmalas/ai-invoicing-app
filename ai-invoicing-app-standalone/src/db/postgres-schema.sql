@@ -931,6 +931,20 @@ CREATE TABLE IF NOT EXISTS inventory_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_inventory_alerts_open
 ON inventory_alerts(is_dismissed, kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_inventory_alerts_product
+ON inventory_alerts(product_id, is_dismissed, created_at);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_type_created
+ON stock_movements(movement_type, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipts_purchase_order
+ON goods_receipts(purchase_order_id, received_at, id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_receipt
+ON goods_receipt_line_items(goods_receipt_id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_lines_po_line
+ON goods_receipt_line_items(purchase_order_line_item_id);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_status_created
+ON stocktakes(status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_stocktake_lines_product
+ON stocktake_lines(product_id);
 
 CREATE TABLE IF NOT EXISTS job_materials (
   id TEXT PRIMARY KEY,
