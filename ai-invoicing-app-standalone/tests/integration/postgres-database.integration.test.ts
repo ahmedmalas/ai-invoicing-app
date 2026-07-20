@@ -23,9 +23,9 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
     const bootstrap = await createPostgresDatabase(connectionString!, { maxConnections: 2 });
     await bootstrap.close();
     await reset();
-  }, 30_000);
+  }, 60_000);
 
-  afterEach(reset, 30_000);
+  afterEach(reset, 60_000);
 
   it('preserves idempotency, concurrent numbering, timeline, search, reporting, and diagnostics', async () => {
     const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');

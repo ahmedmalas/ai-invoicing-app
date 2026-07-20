@@ -130,9 +130,9 @@ function mapJournal(row: Record<string, unknown>): Journal {
 export async function ensureAccountingSchemaPostgres(db: PgDb): Promise<void> {
   // CREATE TABLE IF NOT EXISTS already ran via schema.sql; seed COA + sequences.
   const count = (await db.prepare('SELECT COUNT(*) AS count FROM chart_of_accounts').get()) as {
-    count: number;
+    count: number | string;
   };
-  if (count.count === 0) {
+  if (Number(count?.count ?? 0) === 0) {
     const now = nowIso();
     const insert = db.prepare(
       `INSERT INTO chart_of_accounts
@@ -195,6 +195,7 @@ export function createPostgresAccountingStore(db: PgDb) {
     includeArchived?: boolean;
     accountType?: string;
   }): Promise<ChartAccount[]> {
+    await ensureAccountingSchemaPostgres(db);
     const clauses: string[] = [];
     const params: Array<string | number> = [];
     if (!filter?.includeArchived) {
@@ -390,11 +391,18 @@ export function createPostgresAccountingStore(db: PgDb) {
     return year;
   }
 
-  async function ensureCurrentFinancialYear(): Promise<FinancialYear> {
-    const defaults = defaultAustralianFinancialYear();
-    const existing = (await db.prepare('SELECT * FROM financial_years WHERE label = ?').get(defaults.label)) as Record<string, unknown> | undefined;
+  async function ensureFinancialYearForDate(date: string): Promise<FinancialYear> {
+    await ensureAccountingSchemaPostgres(db);
+    const defaults = defaultAustralianFinancialYear(new Date(`${date}T00:00:00.000Z`));
+    const existing = (await db
+      .prepare('SELECT * FROM financial_years WHERE label = ?')
+      .get(defaults.label)) as Record<string, unknown> | undefined;
     if (existing) return mapYear(existing);
     return await createFinancialYear(defaults);
+  }
+
+  async function ensureCurrentFinancialYear(): Promise<FinancialYear> {
+    return ensureFinancialYearForDate(nowIso().slice(0, 10));
   }
 
   async function setFinancialYearStatus(
@@ -557,7 +565,7 @@ export function createPostgresAccountingStore(db: PgDb) {
     lines: JournalLineInput[];
     actorUserId?: string | null;
   }): Promise<Journal & { lines: JournalLine[] }> {
-    await ensureCurrentFinancialYear();
+    await ensureFinancialYearForDate(input.journalDate);
     assertJournalBalanced(input.lines);
     const period = await getPeriodForDate(input.journalDate);
     if (!period) throw new Error('ACCOUNTING_PERIOD_NOT_FOUND');
@@ -1015,7 +1023,8 @@ export function createPostgresAccountingStore(db: PgDb) {
     total: number;
     actorUserId?: string | null;
   }): Promise<Journal & { lines: JournalLine[] }> {
-    await ensureCurrentFinancialYear();
+    await ensureAccountingSchemaPostgres(db);
+    await ensureFinancialYearForDate(input.journalDate);
     const ar = await getAccountByNumber('1-1200');
     const sales = await getAccountByNumber('4-1100') || await getAccountByNumber('4-1000');
     const gstPayable = await getAccountByNumber('2-1100');

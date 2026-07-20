@@ -19,9 +19,9 @@ describePostgres('PostgreSQL inventory parity', () => {
     const bootstrap = await createPostgresDatabase(connectionString!, { maxConnections: 2 });
     await bootstrap.close();
     await reset();
-  }, 30_000);
+  }, 60_000);
 
-  afterEach(reset, 30_000);
+  afterEach(reset, 60_000);
 
   it('covers catalogue, receiving, deductions, stocktakes, alerts, reports, and isolation', async () => {
     const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');

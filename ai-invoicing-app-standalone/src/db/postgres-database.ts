@@ -1704,7 +1704,6 @@ export async function createPostgresDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
-  await ensureAccountingSchemaPostgres(db);
   const accountingStore = createPostgresAccountingStore(db);
 
   const listRoleIdsForUser = db.prepare(
@@ -2080,6 +2079,16 @@ export async function createPostgresDatabase(
   }
 
   async function assertRestoreTargetIsEmptyOrThrow() {
+    // Accounting bootstrap seeds chart_of_accounts + journal_sequences at DB init.
+    await db.prepare('DELETE FROM journal_attachments').run();
+    await db.prepare('DELETE FROM journal_lines').run();
+    await db.prepare('DELETE FROM journals').run();
+    await db.prepare('DELETE FROM accounting_periods').run();
+    await db.prepare('DELETE FROM financial_years').run();
+    await db.prepare('DELETE FROM accounting_audit_events').run();
+    await db.prepare('DELETE FROM chart_of_accounts').run();
+    await db.prepare('DELETE FROM journal_sequences').run();
+
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
       const count = (await db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()) as {
         count: number;
@@ -2255,6 +2264,18 @@ export async function createPostgresDatabase(
     await insertSnapshotRows('job_sequences', snapshot.entities.job_sequences);
     await insertSnapshotRows('idempotency_requests', snapshot.entities.idempotency_requests);
 
+    await insertSnapshotRows('chart_of_accounts', snapshot.entities.chart_of_accounts);
+    await insertSnapshotRows('financial_years', snapshot.entities.financial_years);
+    await insertSnapshotRows('accounting_periods', snapshot.entities.accounting_periods);
+    await insertSnapshotRows('journal_sequences', snapshot.entities.journal_sequences);
+    await insertSnapshotRows('journals', snapshot.entities.journals);
+    await insertSnapshotRows('journal_lines', snapshot.entities.journal_lines);
+    await insertSnapshotRows('journal_attachments', snapshot.entities.journal_attachments);
+    await insertSnapshotRows(
+      'accounting_audit_events',
+      snapshot.entities.accounting_audit_events,
+    );
+
     for (const row of snapshot.entities.invoices) {
       if (typeof row.id !== 'string' || typeof row.status !== 'string') {
         throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
@@ -2393,6 +2414,7 @@ export async function createPostgresDatabase(
          SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
         [DATABASE_SCHEMA_VERSION, now],
       );
+      await ensureAccountingSchemaPostgres(db);
 
       const roleId = randomUUID();
       const teamId = randomUUID();

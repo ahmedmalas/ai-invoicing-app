@@ -397,13 +397,17 @@ export function createAccountingStore(db: SqliteDb) {
     return year;
   }
 
-  function ensureCurrentFinancialYear(): FinancialYear {
-    const defaults = defaultAustralianFinancialYear();
+  function ensureFinancialYearForDate(date: string): FinancialYear {
+    const defaults = defaultAustralianFinancialYear(new Date(`${date}T00:00:00.000Z`));
     const existing = db
       .prepare('SELECT * FROM financial_years WHERE label = ?')
       .get(defaults.label) as Record<string, unknown> | undefined;
     if (existing) return mapYear(existing);
     return createFinancialYear(defaults);
+  }
+
+  function ensureCurrentFinancialYear(): FinancialYear {
+    return ensureFinancialYearForDate(nowIso().slice(0, 10));
   }
 
   function setFinancialYearStatus(
@@ -571,7 +575,7 @@ export function createAccountingStore(db: SqliteDb) {
     lines: JournalLineInput[];
     actorUserId?: string | null;
   }): Journal & { lines: JournalLine[] } {
-    ensureCurrentFinancialYear();
+    ensureFinancialYearForDate(input.journalDate);
     assertJournalBalanced(input.lines);
     const period = getPeriodForDate(input.journalDate);
     if (!period) throw new Error('ACCOUNTING_PERIOD_NOT_FOUND');
@@ -1035,7 +1039,7 @@ export function createAccountingStore(db: SqliteDb) {
     total: number;
     actorUserId?: string | null;
   }): Journal & { lines: JournalLine[] } {
-    ensureCurrentFinancialYear();
+    ensureFinancialYearForDate(input.journalDate);
     const ar = getAccountByNumber('1-1200');
     const sales = getAccountByNumber('4-1100') || getAccountByNumber('4-1000');
     const gstPayable = getAccountByNumber('2-1100');

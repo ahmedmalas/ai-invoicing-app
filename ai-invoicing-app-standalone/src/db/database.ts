@@ -2128,6 +2128,17 @@ export function createDatabase(
   }
 
   function assertRestoreTargetIsEmptyOrThrow() {
+    // Accounting bootstrap seeds chart_of_accounts + journal_sequences at DB init.
+    // Clear those so an otherwise empty workspace can accept a restore.
+    db.prepare('DELETE FROM journal_attachments').run();
+    db.prepare('DELETE FROM journal_lines').run();
+    db.prepare('DELETE FROM journals').run();
+    db.prepare('DELETE FROM accounting_periods').run();
+    db.prepare('DELETE FROM financial_years').run();
+    db.prepare('DELETE FROM accounting_audit_events').run();
+    db.prepare('DELETE FROM chart_of_accounts').run();
+    db.prepare('DELETE FROM journal_sequences').run();
+
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
       const count = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
       if (count.count > 0) {
@@ -2261,6 +2272,15 @@ export function createDatabase(
     insertSnapshotRows('purchase_order_sequences', snapshot.entities.purchase_order_sequences);
     insertSnapshotRows('job_sequences', snapshot.entities.job_sequences);
     insertSnapshotRows('idempotency_requests', snapshot.entities.idempotency_requests);
+
+    insertSnapshotRows('chart_of_accounts', snapshot.entities.chart_of_accounts);
+    insertSnapshotRows('financial_years', snapshot.entities.financial_years);
+    insertSnapshotRows('accounting_periods', snapshot.entities.accounting_periods);
+    insertSnapshotRows('journal_sequences', snapshot.entities.journal_sequences);
+    insertSnapshotRows('journals', snapshot.entities.journals);
+    insertSnapshotRows('journal_lines', snapshot.entities.journal_lines);
+    insertSnapshotRows('journal_attachments', snapshot.entities.journal_attachments);
+    insertSnapshotRows('accounting_audit_events', snapshot.entities.accounting_audit_events);
 
     for (const row of snapshot.entities.invoices) {
       if (typeof row.id !== 'string' || typeof row.status !== 'string') {
