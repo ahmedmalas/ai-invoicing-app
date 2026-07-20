@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:invoice-persistence": "npm run build && node scripts/verify-invoice-persistence-browser.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -42,6 +43,7 @@
     "eslint": "^9.34.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.6.2",
+    "puppeteer-core": "^24.12.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.41.0",
