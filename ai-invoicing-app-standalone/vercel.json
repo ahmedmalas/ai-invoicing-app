@@ -6,7 +6,8 @@
   "outputDirectory": ".",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{src/db/postgres-schema.sql,public/**}"
+      "includeFiles": "{src/db/postgres-schema.sql,public/**}",
+      "maxDuration": 60
     }
   },
   "rewrites": [

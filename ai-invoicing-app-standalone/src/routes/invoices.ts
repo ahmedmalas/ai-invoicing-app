@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
@@ -14,21 +14,21 @@ const lineItemSchema = z.object({
 
 const createDraftSchema = z.object({
   customerId: z.string().uuid(),
-  title: z.string().min(1),
-  issueDate: z.string().min(1),
-  dueDate: z.string().min(1),
+  title: z.string().min(1, 'Invoice title is required.'),
+  issueDate: z.string().min(1, 'Issue date is required.'),
+  dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
-  lineItems: z.array(lineItemSchema).min(1),
+  lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
 });
 
 const updateDraftSchema = z.object({
-  title: z.string().min(1),
-  issueDate: z.string().min(1),
-  dueDate: z.string().min(1),
+  title: z.string().min(1, 'Invoice title is required.'),
+  issueDate: z.string().min(1, 'Issue date is required.'),
+  dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
-  lineItems: z.array(lineItemSchema).min(1),
+  lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
   paymentState: z.enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled']),
 });
 
@@ -47,15 +47,74 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/invoices', async (request, reply) => {
-    const body = createDraftSchema.parse(request.body);
-    const invoice = await app.db.createInvoiceDraft(body);
-    return reply.code(201).send(invoice);
+    const started = process.hrtime.bigint();
+    try {
+      const body = createDraftSchema.parse(request.body);
+      const invoice = await app.db.createInvoiceDraft(body);
+      return reply.code(201).send(invoice);
+    } catch (error) {
+      if (!(error instanceof ZodError)) {
+        request.log.error(
+          {
+            event: 'invoice.create.failure',
+            requestId: request.id,
+            route: '/api/invoices',
+            operation: 'createInvoiceDraft',
+            durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+            code:
+              error && typeof error === 'object' && 'code' in error
+                ? (error as { code?: string }).code
+                : undefined,
+            column:
+              error && typeof error === 'object' && 'column' in error
+                ? (error as { column?: string }).column
+                : undefined,
+            table:
+              error && typeof error === 'object' && 'table' in error
+                ? (error as { table?: string }).table
+                : undefined,
+          },
+          'invoice create failed',
+        );
+      }
+      throw error;
+    }
   });
 
   app.put('/invoices/:invoiceId', async (request) => {
+    const started = process.hrtime.bigint();
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
-    const body = updateDraftSchema.parse(request.body);
-    return await app.db.updateInvoiceDraft(params.invoiceId, body);
+    try {
+      const body = updateDraftSchema.parse(request.body);
+      return await app.db.updateInvoiceDraft(params.invoiceId, body);
+    } catch (error) {
+      if (!(error instanceof ZodError)) {
+        request.log.error(
+          {
+            event: 'invoice.update.failure',
+            requestId: request.id,
+            route: '/api/invoices/:invoiceId',
+            operation: 'updateInvoiceDraft',
+            invoiceId: params.invoiceId,
+            durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+            code:
+              error && typeof error === 'object' && 'code' in error
+                ? (error as { code?: string }).code
+                : undefined,
+            column:
+              error && typeof error === 'object' && 'column' in error
+                ? (error as { column?: string }).column
+                : undefined,
+            table:
+              error && typeof error === 'object' && 'table' in error
+                ? (error as { table?: string }).table
+                : undefined,
+          },
+          'invoice update failed',
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/invoices/:invoiceId', async (request, reply) => {
@@ -73,32 +132,56 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/invoices/:invoiceId/pdf', async (request, reply) => {
+    const started = process.hrtime.bigint();
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
-    const invoice = await app.db.getInvoiceById(params.invoiceId);
-    if (!invoice) {
-      return reply.code(404).send({ message: 'Invoice not found' });
+    try {
+      const invoice = await app.db.getInvoiceById(params.invoiceId);
+      if (!invoice) {
+        return reply.code(404).send({ message: 'Invoice not found' });
+      }
+
+      const customer = await app.db.getCustomerById(invoice.customerId);
+      if (!customer) {
+        return reply.code(400).send({ message: 'Invoice customer missing' });
+      }
+
+      // Finalised invoices keep the branding frozen at issue time.
+      const frozenBranding =
+        invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
+      const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
+      const pdfBuffer = await generateInvoicePdfBuffer({
+        invoice,
+        lineItems: invoice.lineItems,
+        customer,
+        businessProfile,
+        timeoutMs: 20_000,
+      });
+
+      return reply
+        .code(200)
+        .header('Content-Type', 'application/pdf')
+        .header(
+          'Content-Disposition',
+          `inline; filename="${invoice.invoiceNumber ?? invoice.id}.pdf"`,
+        )
+        .send(pdfBuffer);
+    } catch (error) {
+      request.log.error(
+        {
+          event: 'invoice.pdf.failure',
+          requestId: request.id,
+          route: '/api/invoices/:invoiceId/pdf',
+          operation: 'generateInvoicePdf',
+          invoiceId: params.invoiceId,
+          durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+          code:
+            error && typeof error === 'object' && 'code' in error
+              ? (error as { code?: string }).code
+              : undefined,
+        },
+        'invoice pdf preview failed',
+      );
+      throw error;
     }
-
-    const customer = await app.db.getCustomerById(invoice.customerId);
-    if (!customer) {
-      return reply.code(400).send({ message: 'Invoice customer missing' });
-    }
-
-    // Finalised invoices keep the branding frozen at issue time.
-    const frozenBranding =
-      invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
-    const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
-    const pdfBuffer = await generateInvoicePdfBuffer({
-      invoice,
-      lineItems: invoice.lineItems,
-      customer,
-      businessProfile,
-    });
-
-    return reply
-      .code(200)
-      .header('Content-Type', 'application/pdf')
-      .header('Content-Disposition', `inline; filename="${invoice.invoiceNumber ?? invoice.id}.pdf"`)
-      .send(pdfBuffer);
   });
 };

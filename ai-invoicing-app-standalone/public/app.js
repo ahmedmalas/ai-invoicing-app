@@ -9,6 +9,7 @@ import { readLineItemsFromForm } from './invoice-totals.js';
 import {
   applyInvoiceDraftSnapshot,
   clearInvoiceDraftSnapshot,
+  INVOICE_DRAFT_STORAGE_KEY,
   readInvoiceDraftSnapshot,
   snapshotLooksRecoverable,
   writeInvoiceDraftSnapshot,
@@ -37,6 +38,8 @@ let recoveryAccessToken = null;
 let signOutInProgress = false;
 let invoiceAutosaveTimer = null;
 let invoiceAutosaveInFlight = false;
+let invoicePersistQueue = Promise.resolve();
+let invoicePersistActive = false;
 let drawerPointerDownTarget = null;
 let ignoreNextPopstate = false;
 let invoiceWorkspaceAction = 'save';
@@ -93,6 +96,55 @@ const errorMessages = {
 };
 const friendlyMessage = (message) =>
   errorMessages[message] || message || 'Aleya Invoicing could not complete the request.';
+
+const validationFieldLabels = {
+  title: 'Invoice title',
+  customerId: 'Customer',
+  issueDate: 'Issue date',
+  dueDate: 'Due date',
+  lineItems: 'Line items',
+  'lineItems.description': 'Line item description',
+  'lineItems.quantity': 'Line item quantity',
+  'lineItems.unitPrice': 'Line item unit price',
+};
+
+function formatValidationError(payload) {
+  const issues = payload?.details?.issues;
+  if (!Array.isArray(issues) || !issues.length) {
+    return { message: friendlyMessage(payload?.message), fieldPath: null };
+  }
+  const first = issues[0];
+  const path = Array.isArray(first?.path) ? first.path.filter((part) => typeof part === 'string') : [];
+  const pathKey = path.join('.');
+  const label = validationFieldLabels[pathKey] || validationFieldLabels[path[0]] || null;
+  const rawMessage = String(first?.message || '').trim();
+  if (path[0] === 'title' && /required|too small|at least 1|min\(1\)/i.test(rawMessage)) {
+    return { message: 'Invoice title is required.', fieldPath: 'title' };
+  }
+  if (label && rawMessage) {
+    if (/required|too small|at least 1|min\(1\)/i.test(rawMessage)) {
+      return { message: `${label} is required.`, fieldPath: path[0] || null };
+    }
+    return { message: `${label}: ${rawMessage}`, fieldPath: path[0] || null };
+  }
+  return {
+    message: rawMessage || friendlyMessage(payload?.message),
+    fieldPath: path[0] || null,
+  };
+}
+
+function focusInvoiceValidationField(fieldPath) {
+  if (!fieldPath) return;
+  const form = document.querySelector('#invoice-workspace-form');
+  if (!form) return;
+  const field =
+    form.querySelector(`[name="${fieldPath}"]`) ||
+    (fieldPath === 'lineItems' ? form.querySelector('[name="description"]') : null);
+  if (field && typeof field.focus === 'function') {
+    field.focus();
+    if (typeof field.select === 'function' && field.type !== 'number') field.select();
+  }
+}
 
 function saveSession(value) {
   session = value;
@@ -151,8 +203,15 @@ async function api(path, options = {}, retry = true) {
     try {
       payload = await response.json();
     } catch {}
-    const error = new Error(friendlyMessage(payload.message));
+    const validation =
+      payload?.code === 'VALIDATION_FAILED' ? formatValidationError(payload) : null;
+    const error = new Error(
+      validation?.message || friendlyMessage(payload.message),
+    );
     error.status = response.status;
+    error.code = payload?.code;
+    error.fieldPath = validation?.fieldPath || null;
+    error.details = payload?.details || null;
     throw error;
   }
   if (response.status === 204) return null;
@@ -1159,7 +1218,15 @@ function invoicePayloadIsAutosaveReady(body) {
 }
 
 async function autosaveInvoiceWorkspace(form) {
-  if (!form || invoiceAutosaveInFlight || form.dataset.autosaveLocked === 'true') return;
+  if (
+    !form ||
+    !form.isConnected ||
+    invoiceAutosaveInFlight ||
+    invoicePersistActive ||
+    form.dataset.autosaveLocked === 'true'
+  ) {
+    return;
+  }
   let body;
   try {
     body = await collectInvoiceWorkspacePayload(form);
@@ -1175,15 +1242,17 @@ async function autosaveInvoiceWorkspace(form) {
       quiet: true,
       source: 'autosave',
     });
-    writeInvoiceDraftSnapshot(form, { recordId: saved.id });
+    if (form.isConnected) {
+      writeInvoiceDraftSnapshot(form, { recordId: saved.id });
+    }
   } catch (error) {
-    // Keep local snapshot; user can still Save Draft / Save explicitly.
+    // Keep local snapshot; never clear form values after a failed autosave.
     if (error?.status !== 401) {
       /* quiet autosave failure */
     }
   } finally {
     invoiceAutosaveInFlight = false;
-    form.dataset.autosaveLocked = 'false';
+    if (form.isConnected) form.dataset.autosaveLocked = 'false';
   }
 }
 
@@ -1297,38 +1366,81 @@ async function collectInvoiceWorkspacePayload(form) {
 }
 
 async function persistInvoiceWorkspace(form, { stay = true, quiet = false, source = 'manual' } = {}) {
-  const body = await collectInvoiceWorkspacePayload(form);
-  const recordId = form.dataset.recordId;
-  let saved;
-  if (recordId) {
-    const { customerId, ...invoiceBody } = body;
-    saved = await api('/api/invoices/' + recordId, {
-      method: 'PUT',
-      body: JSON.stringify({ ...invoiceBody, paymentState: form.dataset.paymentState || 'Draft' }),
-    });
-  } else {
-    saved = await api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
-  }
-  // Prefer server truth (includes committed line items) for any remount/reload.
-  if (!Array.isArray(saved.lineItems)) {
-    saved = await api('/api/invoices/' + saved.id);
-  }
-  form.dataset.recordId = saved.id;
-  form.dataset.paymentState = saved.paymentState || 'Draft';
-  form.dataset.status = saved.status || 'Draft';
-  const number = form.querySelector('[data-invoice-number]');
-  if (number) number.textContent = saved.invoiceNumber || 'Draft';
-  markDrawerFormPristine(form);
-  invalidateWorkspaceCache();
-  // Always bind the URL to the persisted id so refresh reloads from the database.
-  history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
-  writeInvoiceDraftSnapshot(form, { recordId: saved.id });
-  if (stay && !quiet) {
-    toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
-  } else if (!stay && !quiet && source === 'manual') {
-    /* caller shows toast for Save */
-  }
-  return saved;
+  const run = async () => {
+    if (!form?.isConnected) {
+      throw new Error('Invoice form is no longer available. Refresh and try again.');
+    }
+    // Capture values up front so a remount cannot empty the POST/PUT body mid-flight.
+    const body = await collectInvoiceWorkspacePayload(form);
+    if (!String(body.title || '').trim()) {
+      const error = new Error('Invoice title is required.');
+      error.status = 400;
+      error.fieldPath = 'title';
+      throw error;
+    }
+    const recordId = form.dataset.recordId;
+    let saved;
+    if (recordId) {
+      const { customerId, ...invoiceBody } = body;
+      saved = await api('/api/invoices/' + recordId, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...invoiceBody,
+          paymentState: form.dataset.paymentState || 'Draft',
+        }),
+      });
+    } else {
+      saved = await api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
+    }
+    // Prefer server truth (includes committed line items) for any remount/reload.
+    if (!Array.isArray(saved.lineItems)) {
+      saved = await api('/api/invoices/' + saved.id);
+    }
+    // Only mutate the live form/URL after success, and only if it is still mounted.
+    if (form.isConnected) {
+      form.dataset.recordId = saved.id;
+      form.dataset.paymentState = saved.paymentState || 'Draft';
+      form.dataset.status = saved.status || 'Draft';
+      const number = form.querySelector('[data-invoice-number]');
+      if (number) number.textContent = saved.invoiceNumber || 'Draft';
+      markDrawerFormPristine(form);
+      writeInvoiceDraftSnapshot(form, { recordId: saved.id });
+    } else {
+      // Keep recovery data if the DOM node was replaced mid-save.
+      const previous = readInvoiceDraftSnapshot();
+      if (previous) {
+        try {
+          localStorage.setItem(
+            INVOICE_DRAFT_STORAGE_KEY,
+            JSON.stringify({ ...previous, recordId: saved.id, title: previous.title || body.title }),
+          );
+        } catch {
+          /* ignore quota / private mode */
+        }
+      }
+    }
+    invalidateWorkspaceCache();
+    // Always bind the URL to the persisted id so refresh reloads from the database.
+    history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
+    if (stay && !quiet) {
+      toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
+    } else if (!stay && !quiet && source === 'manual') {
+      /* caller shows toast for Save */
+    }
+    return saved;
+  };
+
+  const queued = invoicePersistQueue.then(async () => {
+    invoicePersistActive = true;
+    try {
+      return await run();
+    } finally {
+      invoicePersistActive = false;
+    }
+  });
+  // Keep the queue alive after failures so later saves still serialize.
+  invoicePersistQueue = queued.catch(() => undefined);
+  return queued;
 }
 
 async function requestCloseInvoiceWorkspace() {
@@ -2477,6 +2589,7 @@ async function runAction(action) {
     await action();
   } catch (error) {
     toast(error.message, true);
+    if (error?.fieldPath) focusInvoiceValidationField(error.fieldPath);
   }
 }
 
@@ -2587,17 +2700,48 @@ document.addEventListener('click', async (event) => {
       return;
     }
     if (action === 'preview' || action === 'download') {
-      invoiceAction.disabled = true;
-      await runAction(async () => {
-        const saved = await persistInvoiceWorkspace(form, { stay: true });
-        if (action === 'preview') {
-          await previewInvoicePdf(saved.id);
-          toast('PDF preview opened.');
-        } else {
-          toast((await downloadDocument('invoice', saved.id)) + ' downloaded.');
-        }
+      const controls = form.querySelectorAll(
+        '[data-invoice-action], button, input, select, textarea',
+      );
+      controls.forEach((control) => {
+        control.dataset.wasDisabled = control.disabled ? '1' : '0';
+        control.disabled = true;
       });
-      invoiceAction.disabled = false;
+      try {
+        await runAction(async () => {
+          let body;
+          try {
+            body = await collectInvoiceWorkspacePayload(form);
+          } catch (error) {
+            error.fieldPath = error.fieldPath || 'lineItems';
+            throw error;
+          }
+          if (!invoicePayloadIsAutosaveReady(body)) {
+            const error = new Error(
+              !String(body?.title || '').trim()
+                ? 'Invoice title is required.'
+                : 'Add a customer, title, and at least one line item before previewing.',
+            );
+            error.status = 400;
+            error.fieldPath = !String(body?.title || '').trim() ? 'title' : 'customerId';
+            throw error;
+          }
+          // Wait for any in-flight autosave, then persist with the shared queue.
+          const saved = await persistInvoiceWorkspace(form, { stay: true, source: 'preview' });
+          if (action === 'preview') {
+            await previewInvoicePdf(saved.id);
+            toast('PDF preview opened.');
+          } else {
+            toast((await downloadDocument('invoice', saved.id)) + ' downloaded.');
+          }
+        });
+      } finally {
+        controls.forEach((control) => {
+          if (control.dataset.wasDisabled === '1') return;
+          control.disabled = false;
+          delete control.dataset.wasDisabled;
+        });
+      }
       return;
     }
   }

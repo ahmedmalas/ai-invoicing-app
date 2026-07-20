@@ -182,4 +182,52 @@ describe("invoice draft persistence helpers", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not clear a previously saved title when the form title is empty", () => {
+    const storage = createMemoryStorage();
+    const filled = createFakeForm({
+      customerId: "cus_1",
+      title: "Keep this title",
+      issueDate: "2026-07-20",
+      endDate: "2026-08-03",
+      lineItems: [{ description: "Labour", quantity: "1", unitPrice: "100" }],
+    });
+    writeInvoiceDraftSnapshot(filled, {}, storage);
+
+    const emptied = createFakeForm({
+      customerId: "cus_1",
+      title: "",
+      issueDate: "2026-07-20",
+      endDate: "2026-08-03",
+      lineItems: [{ description: "Labour", quantity: "1", unitPrice: "100" }],
+    });
+    const written = writeInvoiceDraftSnapshot(emptied, {}, storage);
+    expect(written?.title).toBe("Keep this title");
+    expect(readInvoiceDraftSnapshot(storage)?.title).toBe("Keep this title");
+  });
+
+  it("preserves line items when a remounted form writes an empty line list", () => {
+    const storage = createMemoryStorage();
+    writeInvoiceDraftSnapshot(
+      createFakeForm({
+        customerId: "cus_2",
+        title: "Title",
+        lineItems: [{ description: "Part", quantity: "2", unitPrice: "40" }],
+      }),
+      {},
+      storage,
+    );
+    const written = writeInvoiceDraftSnapshot(
+      createFakeForm({
+        customerId: "cus_2",
+        title: "Title",
+        lineItems: [],
+      }),
+      {},
+      storage,
+    );
+    expect(written?.lineItems).toEqual([
+      { description: "Part", quantity: "2", unitPrice: "40", gstApplicable: "true" },
+    ]);
+  });
 });
