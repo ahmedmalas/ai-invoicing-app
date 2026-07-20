@@ -2623,10 +2623,8 @@ export async function createPostgresDatabase(
               lineItems: txInput.lineItems.length,
             });
 
-            const row = (await db
-              .prepare('SELECT * FROM invoices WHERE id = ?')
-              .get(id)) as DbInvoiceRow;
-            return mapInvoiceRow(row);
+            // Return the committed row + line items so clients can remount from persistence.
+            return (await this.getInvoiceById(id))!;
           }),
       )(input);
     },
@@ -2700,10 +2698,7 @@ export async function createPostgresDatabase(
           lineItems: txInput.lineItems.length,
         });
 
-        const row = (await db
-          .prepare('SELECT * FROM invoices WHERE id = ?')
-          .get(invoiceId)) as DbInvoiceRow;
-        return mapInvoiceRow(row);
+        return (await this.getInvoiceById(invoiceId))!;
       })(id, input);
     },
 
@@ -2715,7 +2710,7 @@ export async function createPostgresDatabase(
       }
       const lineItemsRows = (await db
         .prepare(
-          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ?',
+          'SELECT description, quantity, unit_price, gst_applicable, product_id FROM invoice_line_items WHERE invoice_id = ? ORDER BY ctid ASC',
         )
         .all(id)) as Array<DbInvoiceLineItem & { product_id?: string | null }>;
 
