@@ -65,6 +65,29 @@ export function buildInvoiceDraftSnapshot(form, { recordId = null } = {}) {
 export function writeInvoiceDraftSnapshot(form, options = {}, storage = defaultDraftStorage()) {
   const snapshot = buildInvoiceDraftSnapshot(form, options);
   if (!snapshot) return null;
+  // Never poison a good local draft by overwriting a non-empty title/customer with blanks
+  // after a remount or failed recovery.
+  const previous = readInvoiceDraftSnapshot(storage);
+  if (previous) {
+    if (!String(snapshot.title || '').trim() && String(previous.title || '').trim()) {
+      snapshot.title = previous.title;
+    }
+    if (!String(snapshot.customerId || '').trim() && String(previous.customerId || '').trim()) {
+      snapshot.customerId = previous.customerId;
+    }
+    if (!snapshot.recordId && previous.recordId) {
+      snapshot.recordId = previous.recordId;
+    }
+    const hasLines = (snapshot.lineItems || []).some((item) =>
+      String(item?.description || '').trim(),
+    );
+    const previousHasLines = (previous.lineItems || []).some((item) =>
+      String(item?.description || '').trim(),
+    );
+    if (!hasLines && previousHasLines) {
+      snapshot.lineItems = previous.lineItems;
+    }
+  }
   try {
     storage?.setItem?.(INVOICE_DRAFT_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {

@@ -1257,6 +1257,19 @@ function loadPostgresSchema(): string {
     throw error;
   }
 }
+
+/** Additive upgrades for existing tenant schemas (keeps cold-start migration cheap). */
+function loadPostgresWorkspaceUpgradeSql(): string {
+  return `
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS contact_person TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payment_terms TEXT;
+ALTER TABLE invoice_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
+ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
+`;
+}
 function pgSql(sql: string): string {
   let index = 0;
   return sql
@@ -1418,6 +1431,37 @@ export async function createPostgresDatabase(
       `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at) VALUES (1, $1, $2) ON CONFLICT(singleton_id) DO UPDATE SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
       [DATABASE_SCHEMA_VERSION, nowIso()],
     );
+
+    // Existing tenant schemas are only created at provision time. Apply cheap
+    // additive upgrades (e.g. invoice_line_items.product_id) so older workspaces
+    // stay compatible without re-running the full schema DDL on every cold start.
+    const workspaceSchemas = await schemaClient.query<{ schema_name: string }>(
+      `SELECT schema_name FROM public.auth_workspaces ORDER BY schema_name`,
+    );
+    const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
+    for (const workspace of workspaceSchemas.rows) {
+      const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
+      if (schemaName === 'public') continue;
+      await schemaClient.query(`SET LOCAL search_path TO "${schemaName}", public`);
+      await schemaClient.query(workspaceUpgradeSql);
+      await schemaClient.query(
+        `CREATE TABLE IF NOT EXISTS app_database_metadata (singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1), schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
+      );
+      const workspaceVersion = await schemaClient.query<{ schema_version: number }>(
+        'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
+      );
+      if ((workspaceVersion.rows[0]?.schema_version ?? 0) > DATABASE_SCHEMA_VERSION) {
+        throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+      }
+      await schemaClient.query(
+        `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at)
+         VALUES (1, $1, $2)
+         ON CONFLICT(singleton_id) DO UPDATE
+         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+        [DATABASE_SCHEMA_VERSION, nowIso()],
+      );
+    }
+    await schemaClient.query('SET LOCAL search_path TO public');
     await schemaClient.query('COMMIT');
   } catch (error) {
     await schemaClient.query('ROLLBACK').catch(() => undefined);

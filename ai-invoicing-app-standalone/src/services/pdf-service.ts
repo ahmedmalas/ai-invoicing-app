@@ -42,14 +42,37 @@ export function generateInvoicePdfBuffer(input: {
   lineItems: LineItemInput[];
   customer: Customer;
   businessProfile: BrandingProfile | null;
+  timeoutMs?: number;
 }): Promise<Buffer> {
+  const timeoutMs = Math.max(1_000, Math.trunc(input.timeoutMs ?? 20_000));
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: 'A4' });
     const chunks: Buffer[] = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        doc.destroy();
+      } catch {
+        /* ignore */
+      }
+      reject(Object.assign(new Error('PDF_GENERATION_TIMEOUT'), { code: 'PDF_GENERATION_TIMEOUT' }));
+    }, timeoutMs);
 
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', (err) => reject(err));
+    doc.on('end', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+    doc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
 
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';

@@ -138,7 +138,7 @@ describePostgres('PostgreSQL AppDatabase parity', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 15_000);
 
   it('applies schema repeatedly and restores an exported snapshot', async () => {
     const { createPostgresDatabase } = await import('../../src/db/postgres-database.js');

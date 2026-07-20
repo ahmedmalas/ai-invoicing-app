@@ -47,32 +47,45 @@ export function createVercelHandler(build: AppBuilder = buildProductionApp): Ver
   };
 
   return async (request, response) => {
+    const REQUEST_HARD_TIMEOUT_MS = 55_000;
+    let hardTimeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const app = await getApp();
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = (): void => {
-          response.off('finish', onFinish);
-          response.off('close', onClose);
-          response.off('error', onError);
-        };
-        const onFinish = (): void => {
-          cleanup();
-          resolve();
-        };
-        const onClose = (): void => {
-          cleanup();
-          resolve();
-        };
-        const onError = (error: Error): void => {
-          cleanup();
-          reject(error);
-        };
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          const cleanup = (): void => {
+            response.off('finish', onFinish);
+            response.off('close', onClose);
+            response.off('error', onError);
+          };
+          const onFinish = (): void => {
+            cleanup();
+            resolve();
+          };
+          const onClose = (): void => {
+            cleanup();
+            resolve();
+          };
+          const onError = (error: Error): void => {
+            cleanup();
+            reject(error);
+          };
 
-        response.once('finish', onFinish);
-        response.once('close', onClose);
-        response.once('error', onError);
-        app.server.emit('request', request, response);
-      });
+          response.once('finish', onFinish);
+          response.once('close', onClose);
+          response.once('error', onError);
+          app.server.emit('request', request, response);
+        }),
+        new Promise<void>((_, reject) => {
+          hardTimeout = setTimeout(() => {
+            reject(
+              Object.assign(new Error('REQUEST_TIMEOUT'), {
+                code: 'REQUEST_TIMEOUT',
+              }),
+            );
+          }, REQUEST_HARD_TIMEOUT_MS);
+        }),
+      ]);
     } catch (error) {
       const startupError =
         error && typeof error === 'object'
@@ -84,20 +97,30 @@ export function createVercelHandler(build: AppBuilder = buildProductionApp): Ver
                   : 'APP_INITIALIZATION_FAILED',
             }
           : { name: 'UnknownError', code: 'APP_INITIALIZATION_FAILED' };
-      console.error('Vercel application initialization failed', startupError);
+      const isTimeout =
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error as { code?: string }).code === 'REQUEST_TIMEOUT';
+      console.error(
+        isTimeout ? 'Vercel request timed out' : 'Vercel application initialization failed',
+        startupError,
+      );
       if (!response.headersSent) {
-        response.statusCode = 500;
+        response.statusCode = isTimeout ? 504 : 500;
         response.setHeader('content-type', 'application/json; charset=utf-8');
         response.end(
           JSON.stringify({
-            status: 500,
-            code: 'INTERNAL_SERVER_ERROR',
-            message: 'Internal server error',
+            status: isTimeout ? 504 : 500,
+            code: isTimeout ? 'REQUEST_TIMEOUT' : 'INTERNAL_SERVER_ERROR',
+            message: isTimeout ? 'Request timed out' : 'Internal server error',
           }),
         );
       } else if (!response.writableEnded) {
         response.end();
       }
+    } finally {
+      if (hardTimeout) clearTimeout(hardTimeout);
     }
   };
 }

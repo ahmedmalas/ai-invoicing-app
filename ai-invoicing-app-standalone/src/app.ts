@@ -84,6 +84,8 @@ export interface BuildAppOptions {
   supabaseAnonKey?: string | undefined;
   publicAppUrl?: string | undefined;
   serveFrontend?: boolean | undefined;
+  requestTimeoutMs?: number;
+  connectionTimeoutMs?: number;
 }
 
 export async function buildApp(options: BuildAppOptions) {
@@ -105,6 +107,9 @@ export async function buildApp(options: BuildAppOptions) {
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: options.requestBodyLimit ?? 1_048_576,
+    // Fail requests well under the Vercel 300s hard limit so handlers cannot hang forever.
+    requestTimeout: options.requestTimeoutMs ?? 55_000,
+    connectionTimeout: options.connectionTimeoutMs ?? 20_000,
   });
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   let db: AppDatabase;
@@ -574,20 +579,32 @@ export async function buildApp(options: BuildAppOptions) {
 
     if (error instanceof ZodError) {
       app.opsMetrics.validationFailureCount += 1;
+      const issuePaths = error.issues.map((issue) => issue.path.join('.'));
+      const titleIssue = error.issues.find((issue) => issue.path[0] === 'title');
+      const validationMessage = titleIssue
+        ? 'Invoice title is required.'
+        : error.issues[0]?.message || 'Validation failed';
       app.log.warn(
         {
           event: 'validation.failure',
           requestId: request.id,
           method: request.method,
           url: sanitizePath(request.url),
-          issues: error.issues,
+          operation: sanitizePath(request.url),
+          validationPaths: issuePaths,
+          durationMs: Number(request.headers['x-response-time'] || 0) || undefined,
+          issues: error.issues.map((issue) => ({
+            path: issue.path,
+            code: issue.code,
+            message: issue.message,
+          })),
         },
         'validation failed',
       );
       return reply.code(400).send({
         status: 400,
         code: 'VALIDATION_FAILED',
-        message: 'Validation failed',
+        message: validationMessage,
         details: {
           issues: error.issues,
         },
@@ -782,14 +799,41 @@ export async function buildApp(options: BuildAppOptions) {
         ('severity' in error && typeof (error as { code?: unknown }).code === 'string'))
     ) {
       app.opsMetrics.databaseFailureCount += 1;
+      const pgError = error as {
+        name?: string;
+        code?: string;
+        column?: string;
+        table?: string;
+        schema?: string;
+        constraint?: string;
+        routine?: string;
+        severity?: string;
+        detail?: string;
+      };
+      const started = requestStartedAt.get(request);
+      const durationMs =
+        started !== undefined ? Number(process.hrtime.bigint() - started) / 1_000_000 : undefined;
       app.log.error(
         {
           event: 'database.failure',
           requestId: request.id,
           method: request.method,
           url: sanitizePath(request.url),
-          name: error.name,
-          code: (error as { code?: string }).code ?? 'DATABASE_ERROR',
+          route: sanitizePath(request.url),
+          operation: `${request.method} ${sanitizePath(request.url)}`,
+          invoiceId:
+            typeof (request.params as { invoiceId?: unknown } | undefined)?.invoiceId === 'string'
+              ? (request.params as { invoiceId: string }).invoiceId
+              : undefined,
+          name: pgError.name ?? error.name,
+          code: pgError.code ?? 'DATABASE_ERROR',
+          column: pgError.column,
+          table: pgError.table,
+          schema: pgError.schema,
+          constraint: pgError.constraint,
+          routine: pgError.routine,
+          severity: pgError.severity,
+          durationMs,
         },
         'database operation failed',
       );
