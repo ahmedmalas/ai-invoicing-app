@@ -50,6 +50,31 @@ import {
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { createInventoryStore, ensureInventorySchemaSqlite } from './inventory-store.js';
+import {
+  createAccountingStore,
+  ensureAccountingSchemaSqlite,
+} from './accounting-store.js';
+import type {
+  AccountingAuditEvent,
+  AccountingDashboard,
+  AccountingPeriod,
+  AccountingPeriodStatus,
+  AgeingReport,
+  BalanceSheetReport,
+  BasReport,
+  ChartAccount,
+  FinancialYear,
+  GstDetailRow,
+  GstSummaryReport,
+  Journal,
+  JournalAttachment,
+  JournalLine,
+  JournalLineInput,
+  JournalStatus,
+  LedgerEntry,
+  ProfitAndLossReport,
+  TrialBalanceRow,
+} from '../domain/accounting/types.js';
 import type {
   Product,
   StockMovement,
@@ -698,7 +723,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 45;
+export const DATABASE_SCHEMA_VERSION = 46;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -751,6 +776,14 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'stocktake_sequences',
   'idempotency_requests',
   'timeline_events',
+  'chart_of_accounts',
+  'financial_years',
+  'accounting_periods',
+  'journals',
+  'journal_lines',
+  'journal_attachments',
+  'accounting_audit_events',
+  'journal_sequences',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -999,6 +1032,113 @@ export interface AppDatabase {
   dismissInventoryAlert(id: string): DatabaseResult<void>;
   refreshAllInventoryAlerts(): DatabaseResult<InventoryAlert[]>;
   getInventoryReports(): DatabaseResult<InventoryReportBundle>;
+  listChartAccounts(filter?: {
+    includeArchived?: boolean;
+    accountType?: string;
+  }): DatabaseResult<ChartAccount[]>;
+  getChartAccountById(id: string): DatabaseResult<ChartAccount | null>;
+  upsertChartAccount(input: {
+    id?: string;
+    accountNumber: string;
+    name: string;
+    accountType: ChartAccount['accountType'];
+    category: ChartAccount['category'];
+    gstDefault: ChartAccount['gstDefault'];
+    isActive?: boolean;
+    description?: string | null;
+    actorUserId?: string | null;
+  }): DatabaseResult<ChartAccount>;
+  archiveChartAccount(id: string, actorUserId?: string | null): DatabaseResult<ChartAccount>;
+  listFinancialYears(): DatabaseResult<FinancialYear[]>;
+  createFinancialYear(input?: {
+    label?: string;
+    startDate?: string;
+    endDate?: string;
+    actorUserId?: string | null;
+  }): DatabaseResult<FinancialYear>;
+  ensureCurrentFinancialYear(): DatabaseResult<FinancialYear>;
+  setFinancialYearStatus(
+    id: string,
+    status: FinancialYear['status'],
+    actorUserId?: string | null,
+  ): DatabaseResult<FinancialYear>;
+  listAccountingPeriods(financialYearId?: string): DatabaseResult<AccountingPeriod[]>;
+  setAccountingPeriodStatus(
+    id: string,
+    status: AccountingPeriodStatus,
+    actorUserId?: string | null,
+  ): DatabaseResult<AccountingPeriod>;
+  createJournal(input: {
+    journalDate: string;
+    narration: string;
+    notes?: string | null;
+    reference?: string | null;
+    source?: 'Manual' | 'Auto' | 'Reversal';
+    status?: 'Draft' | 'Approved';
+    lines: JournalLineInput[];
+    actorUserId?: string | null;
+  }): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  updateDraftJournal(
+    id: string,
+    input: {
+      journalDate?: string;
+      narration?: string;
+      notes?: string | null;
+      reference?: string | null;
+      lines?: JournalLineInput[];
+      actorUserId?: string | null;
+    },
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  approveJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  postJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  reverseJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  getJournalById(id: string): DatabaseResult<(Journal & { lines: JournalLine[] }) | null>;
+  listJournals(filter?: {
+    status?: JournalStatus;
+    from?: string;
+    to?: string;
+  }): DatabaseResult<Journal[]>;
+  addJournalAttachment(input: {
+    journalId: string;
+    fileName: string;
+    contentType: string;
+    contentBase64: string;
+  }): DatabaseResult<JournalAttachment>;
+  getGeneralLedger(
+    accountId: string,
+    from?: string,
+    to?: string,
+  ): DatabaseResult<{ account: ChartAccount; entries: LedgerEntry[] }>;
+  getTrialBalance(asAt?: string): DatabaseResult<TrialBalanceRow[]>;
+  getProfitAndLoss(from: string, to: string): DatabaseResult<ProfitAndLossReport>;
+  getBalanceSheet(asAt: string): DatabaseResult<BalanceSheetReport>;
+  getGstDetail(from: string, to: string): DatabaseResult<GstDetailRow[]>;
+  getGstSummary(from: string, to: string): DatabaseResult<GstSummaryReport>;
+  getGstExceptions(from: string, to: string): DatabaseResult<GstDetailRow[]>;
+  getBasReport(from: string, to: string): DatabaseResult<BasReport>;
+  getAgedReceivables(asAt: string): DatabaseResult<AgeingReport>;
+  getAgedPayables(asAt: string): DatabaseResult<AgeingReport>;
+  listAccountingAuditEvents(
+    entityType?: string,
+    entityId?: string,
+  ): DatabaseResult<AccountingAuditEvent[]>;
+  getAccountingDashboard(): DatabaseResult<AccountingDashboard>;
+  exportAccountingCsv(
+    rows: Array<Record<string, string | number | null | undefined>>,
+  ): DatabaseResult<string>;
+  exportAccountingExcel(
+    sheetName: string,
+    rows: Array<Record<string, string | number | null | undefined>>,
+  ): DatabaseResult<string>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
@@ -1433,6 +1573,7 @@ export function createDatabase(
   }
 
   ensureInventorySchemaSqlite(db);
+  ensureAccountingSchemaSqlite(db);
 
   const timelineColumns = db
     .prepare("SELECT name FROM pragma_table_info('timeline_events')")
@@ -1642,6 +1783,7 @@ export function createDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
+  const accountingStore = createAccountingStore(db);
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -2799,6 +2941,16 @@ export function createDatabase(
         });
 
         inventoryStore.applyInvoiceStockOut(invoiceId);
+
+        // Auto journal: DR Accounts Receivable / CR Service Income + GST Payable
+        accountingStore.createAutoSalesJournal({
+          journalDate: finalised.issueDate,
+          invoiceId: finalised.id,
+          invoiceNumber: finalised.invoiceNumber,
+          subtotal: finalised.totals.subtotal,
+          gstTotal: finalised.totals.gstTotal,
+          total: finalised.totals.total,
+        });
 
         return finalised;
       })(id);
@@ -6549,6 +6701,107 @@ export function createDatabase(
     restorePlatformSnapshot(snapshot) {
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       restorePlatformSnapshot(parsedSnapshot);
+    },
+
+    listChartAccounts(filter) {
+      return accountingStore.listAccounts(filter);
+    },
+    getChartAccountById(id) {
+      return accountingStore.getAccountById(id);
+    },
+    upsertChartAccount(input) {
+      return db.transaction(() => accountingStore.upsertAccount(input))();
+    },
+    archiveChartAccount(id, actorUserId) {
+      return db.transaction(() => accountingStore.archiveAccount(id, actorUserId))();
+    },
+    listFinancialYears() {
+      return accountingStore.listFinancialYears();
+    },
+    createFinancialYear(input) {
+      return db.transaction(() => accountingStore.createFinancialYear(input))();
+    },
+    ensureCurrentFinancialYear() {
+      return db.transaction(() => accountingStore.ensureCurrentFinancialYear())();
+    },
+    setFinancialYearStatus(id, status, actorUserId) {
+      return db.transaction(() =>
+        accountingStore.setFinancialYearStatus(id, status, actorUserId),
+      )();
+    },
+    listAccountingPeriods(financialYearId) {
+      return accountingStore.listPeriods(financialYearId);
+    },
+    setAccountingPeriodStatus(id, status, actorUserId) {
+      return db.transaction(() =>
+        accountingStore.setPeriodStatus(id, status, actorUserId),
+      )();
+    },
+    createJournal(input) {
+      return db.transaction(() => accountingStore.createJournal(input))();
+    },
+    updateDraftJournal(id, input) {
+      return db.transaction(() => accountingStore.updateDraftJournal(id, input))();
+    },
+    approveJournal(id, actorUserId) {
+      return db.transaction(() => accountingStore.approveJournal(id, actorUserId))();
+    },
+    postJournal(id, actorUserId) {
+      return db.transaction(() => accountingStore.postJournal(id, actorUserId))();
+    },
+    reverseJournal(id, actorUserId) {
+      return db.transaction(() => accountingStore.reverseJournal(id, actorUserId))();
+    },
+    getJournalById(id) {
+      return accountingStore.getJournalById(id);
+    },
+    listJournals(filter) {
+      return accountingStore.listJournals(filter);
+    },
+    addJournalAttachment(input) {
+      return db.transaction(() => accountingStore.addJournalAttachment(input))();
+    },
+    getGeneralLedger(accountId, from, to) {
+      return accountingStore.getGeneralLedger(accountId, from, to);
+    },
+    getTrialBalance(asAt) {
+      return accountingStore.getTrialBalance(asAt);
+    },
+    getProfitAndLoss(from, to) {
+      return accountingStore.getProfitAndLoss(from, to);
+    },
+    getBalanceSheet(asAt) {
+      return accountingStore.getBalanceSheet(asAt);
+    },
+    getGstDetail(from, to) {
+      return accountingStore.getGstDetail(from, to);
+    },
+    getGstSummary(from, to) {
+      return accountingStore.getGstSummary(from, to);
+    },
+    getGstExceptions(from, to) {
+      return accountingStore.getGstExceptions(from, to);
+    },
+    getBasReport(from, to) {
+      return accountingStore.getBasReport(from, to);
+    },
+    getAgedReceivables(asAt) {
+      return accountingStore.getAgedReceivables(asAt);
+    },
+    getAgedPayables(asAt) {
+      return accountingStore.getAgedPayables(asAt);
+    },
+    listAccountingAuditEvents(entityType, entityId) {
+      return accountingStore.listAuditEvents(entityType, entityId);
+    },
+    getAccountingDashboard() {
+      return accountingStore.getAccountingDashboard();
+    },
+    exportAccountingCsv(rows) {
+      return accountingStore.exportCsv(rows);
+    },
+    exportAccountingExcel(sheetName, rows) {
+      return accountingStore.exportExcel(sheetName, rows);
     },
   };
 }

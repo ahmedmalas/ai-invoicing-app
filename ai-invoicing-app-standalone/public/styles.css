@@ -1427,8 +1427,60 @@ td.primary-cell {
   color: var(--muted);
   font-size: 12px;
 }
+.accounting-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.accounting-tab {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+}
+.accounting-tab.active,
+.accounting-tab:hover {
+  color: var(--ink);
+  border-bottom-color: var(--accent, #c4954a);
+}
+.accounting-metrics {
+  margin-top: 8px;
+}
+.accounting-report-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.accounting-report-output {
+  margin: 0;
+  padding: 16px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+.journal-lines {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+.journal-line-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1.4fr;
+  gap: 8px;
+}
+.accounting-report-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 @media (max-width: 720px) {
   .form-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .journal-line-row {
     grid-template-columns: 1fr;
   }
 }

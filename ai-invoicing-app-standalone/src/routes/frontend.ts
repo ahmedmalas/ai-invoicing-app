@@ -20,6 +20,7 @@ const tracedAssets = {
   'invoice-workspace.js': new URL('../../public/invoice-workspace.js', import.meta.url),
   'invoice-curtain.js': new URL('../../public/invoice-curtain.js', import.meta.url),
   'logo-studio-ui.js': new URL('../../public/logo-studio-ui.js', import.meta.url),
+  'accounting-ui.js': new URL('../../public/accounting-ui.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
@@ -104,6 +105,12 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .header('Cache-Control', 'no-cache')
       .send(asset('logo-studio-ui.js')),
   );
+  app.get('/assets/accounting-ui.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('accounting-ui.js')),
+  );
   app.get('/assets/launch-app.js', async (_request, reply) =>
     reply
       .type('application/javascript; charset=utf-8')
@@ -152,6 +159,9 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/workspace/purchase-orders',
     '/workspace/suppliers',
     '/workspace/stocktakes',
+    '/workspace/accounting',
+    '/workspace/accounting/journals',
+    '/workspace/accounting/reports',
     '/reports',
     '/timeline',
     '/settings',
