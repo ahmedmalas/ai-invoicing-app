@@ -61,10 +61,9 @@
    - Provide customer "I've Paid" declarations with amount, date, reference, bank, notes, and receipt upload.
    - Notify owners and allow approve/reject actions with full audit log.
 
-14. Live Bank Feeds / Open Banking (Future/Advanced)
-   - Future optional connection with user authorization.
-   - Detect incoming payments and match invoices using amount, reference, payer name, invoice number, and confidence score.
-   - Only auto-mark paid when confidence/rules pass; otherwise require review.
+14. Banking / Bank Reconciliation
+   - Banking workspace with account setup, CSV/OFX/QIF import, transaction list, invoice matching, payment creation, unmatch, and audit history.
+   - Live Open Banking provider sync remains Future/Advanced (schema reserved for external account/connection ids).
 
 15. Accounting, Tax, and ATO Connectivity
    - Work standalone first, with optional exports/connectors for MYOB, Xero, QuickBooks, Reckon.

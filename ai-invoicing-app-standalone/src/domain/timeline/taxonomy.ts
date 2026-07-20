@@ -43,6 +43,11 @@ export const TIMELINE_EVENT_KEYS = [
   'inventory.stocktake_submitted',
   'inventory.stocktake_approved',
   'purchase_order.goods_received',
+  'reconciliation.imported',
+  'reconciliation.matched',
+  'reconciliation.suggested',
+  'reconciliation.ignored',
+  'reconciliation.unmatched',
 ] as const;
 
 export type TimelineEventKey = (typeof TIMELINE_EVENT_KEYS)[number];
@@ -59,7 +64,8 @@ export type TimelineCategory =
   | 'preferences'
   | 'job'
   | 'team'
-  | 'inventory';
+  | 'inventory'
+  | 'reconciliation';
 
 export type TimelineActorType = 'system';
 export type TimelineSource = 'api';
@@ -530,5 +536,55 @@ export const TIMELINE_TAXONOMY: Record<TimelineEventKey, TimelineTaxonomyDefinit
     source: 'api',
     payloadSchema: 'timeline.purchase_order.goods_received.v1',
     legacyEventType: 'Purchase Order Goods Received',
+  },
+  'reconciliation.imported': {
+    key: 'reconciliation.imported',
+    version: 1,
+    category: 'reconciliation',
+    entityType: 'bank_account',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.reconciliation.imported.v1',
+    legacyEventType: 'Bank Statement Imported',
+  },
+  'reconciliation.matched': {
+    key: 'reconciliation.matched',
+    version: 1,
+    category: 'reconciliation',
+    entityType: 'bank_transaction',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.reconciliation.matched.v1',
+    legacyEventType: 'Bank Transaction Matched',
+  },
+  'reconciliation.suggested': {
+    key: 'reconciliation.suggested',
+    version: 1,
+    category: 'reconciliation',
+    entityType: 'bank_transaction',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.reconciliation.suggested.v1',
+    legacyEventType: 'Bank Match Suggested',
+  },
+  'reconciliation.ignored': {
+    key: 'reconciliation.ignored',
+    version: 1,
+    category: 'reconciliation',
+    entityType: 'bank_transaction',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.reconciliation.ignored.v1',
+    legacyEventType: 'Bank Transaction Ignored',
+  },
+  'reconciliation.unmatched': {
+    key: 'reconciliation.unmatched',
+    version: 1,
+    category: 'reconciliation',
+    entityType: 'bank_transaction',
+    actorType: 'system',
+    source: 'api',
+    payloadSchema: 'timeline.reconciliation.unmatched.v1',
+    legacyEventType: 'Bank Transaction Unmatched',
   },
 };
