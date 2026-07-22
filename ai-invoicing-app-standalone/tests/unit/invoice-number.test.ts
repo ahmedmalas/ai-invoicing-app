@@ -94,4 +94,40 @@ describe('canonical invoice number pathway', () => {
       'INVOICE_NUMBER_IMMUTABLE',
     );
   });
+
+  it('keeps draft payload invoiceNumber null and still surfaces missing-title validation', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const editorSource = readFileSync(
+      join(process.cwd(), 'public/invoice-editor.js'),
+      'utf8',
+    );
+    expect(editorSource).not.toMatch(/new FormData\s*\(/);
+    expect(editorSource).toMatch(/function buildPayload\s*\(/);
+    expect(editorSource).toMatch(/Invoice title is required\./);
+    expect(editorSource).toMatch(/assertPayloadMatchesVisibleInvoiceNumber/);
+    // Preview collects payload before disabling action buttons.
+    const previewIdx = editorSource.indexOf("if (action === 'preview' || action === 'download')");
+    const buildIdx = editorSource.indexOf('body = buildPayload()', previewIdx);
+    const busyIdx = editorSource.indexOf('setActionsBusy(true)', previewIdx);
+    expect(previewIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeGreaterThan(previewIdx);
+    expect(busyIdx).toBeGreaterThan(buildIdx);
+
+    const draftHtml = buildEditorHtml({
+      profile: { companyName: 'Aleya Demo' },
+      customers: [{ id: '11111111-1111-4111-8111-111111111111', displayName: 'Acme' }],
+      record: {
+        id: '33333333-3333-4333-8333-333333333333',
+        invoiceNumber: null,
+        status: 'Draft',
+        title: 'Draft job',
+        issueDate: '2026-07-22',
+        dueDate: '2026-08-05',
+        lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
+      },
+    });
+    expect(draftHtml).toContain('data-invoice-number=""');
+    expect(draftHtml).toContain('>Draft<');
+  });
 });

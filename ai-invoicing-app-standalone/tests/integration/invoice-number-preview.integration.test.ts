@@ -203,5 +203,91 @@ describe('existing invoice number → preview PDF pathway', () => {
     const saved = invoiceSchema.parse(update.json());
     expect(saved.invoiceNumber).toBeNull();
     expect(saved.title).toBe('Draft without number edited');
+
+    const pdf = await app.inject({ method: 'GET', url: `/api/invoices/${saved.id}/pdf` });
+    expect(pdf.statusCode).toBe(200);
+    const text = await extractPdfText(pdf.rawPayload);
+    expect(text).toMatch(/Invoice Number:\s*Draft/i);
+    expect(text).not.toMatch(/INV-\d{4}-\d{6}/);
+
+    const afterPdf = invoiceSchema.parse(
+      (await app.inject({ method: 'GET', url: `/api/invoices/${saved.id}` })).json(),
+    );
+    expect(afterPdf.invoiceNumber).toBeNull();
+  });
+
+  it('edit another field on a draft, then PDF preview, without allocating a number', async () => {
+    const app = await buildApp({
+      dbPath: tempDbPath(),
+      authBypassForTesting: true,
+      serveFrontend: false,
+    });
+    apps.push(app);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/business-profile',
+      payload: {
+        companyName: 'Number Pathway Co',
+        address: '1 Number Street',
+        primaryColor: '#0F766E',
+        secondaryColor: '#134E4A',
+      },
+    });
+
+    const customerId = await seedCustomer(app);
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/invoices',
+      payload: {
+        customerId,
+        title: 'Legacy style draft',
+        issueDate: '2026-07-22',
+        dueDate: '2026-08-05',
+        notes: 'original',
+        invoiceNumber: null,
+        lineItems: [{ description: 'Service', quantity: 1, unitPrice: 50, gstApplicable: true }],
+      },
+    });
+    const draft = invoiceSchema.parse(create.json());
+
+    const update = await app.inject({
+      method: 'PUT',
+      url: `/api/invoices/${draft.id}`,
+      payload: {
+        title: 'Legacy style draft',
+        issueDate: '2026-07-22',
+        dueDate: '2026-08-05',
+        paymentState: 'Draft',
+        notes: 'edited without touching number',
+        invoiceNumber: null,
+        lineItems: [{ description: 'Service', quantity: 1, unitPrice: 50, gstApplicable: true }],
+      },
+    });
+    expect(update.statusCode).toBe(200);
+    const saved = invoiceSchema.parse(update.json());
+    expect(saved.invoiceNumber).toBeNull();
+    expect(update.json().notes).toBe('edited without touching number');
+
+    const pdf = await app.inject({ method: 'GET', url: `/api/invoices/${saved.id}/pdf` });
+    expect(pdf.statusCode).toBe(200);
+    const text = await extractPdfText(pdf.rawPayload);
+    expect(text).toContain('Legacy style draft');
+    expect(text).toContain('edited without touching number');
+
+    const missingTitle = await app.inject({
+      method: 'PUT',
+      url: `/api/invoices/${saved.id}`,
+      payload: {
+        title: '',
+        issueDate: '2026-07-22',
+        dueDate: '2026-08-05',
+        paymentState: 'Draft',
+        invoiceNumber: null,
+        lineItems: [{ description: 'Service', quantity: 1, unitPrice: 50, gstApplicable: true }],
+      },
+    });
+    expect(missingTitle.statusCode).toBe(400);
+    expect(JSON.stringify(missingTitle.json())).toMatch(/Invoice title is required/i);
   });
 });
