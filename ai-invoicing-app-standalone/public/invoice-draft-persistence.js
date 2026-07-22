@@ -106,9 +106,14 @@ export function snapshotLooksRecoverable(snapshot) {
 
 export function applyInvoiceDraftSnapshot(form, snapshot) {
   if (!form || !snapshot) return false;
+  const active = form.ownerDocument?.activeElement;
+  const editingInsideForm = Boolean(active && form.contains?.(active));
   const setValue = (name, value) => {
     const field = form.querySelector(`[name="${name}"]`);
-    if (field != null && value != null && value !== '') field.value = value;
+    if (field == null || value == null || value === '') return;
+    // Never clobber a field the user is actively editing.
+    if (active && (active === field || field.contains?.(active))) return;
+    field.value = value;
   };
   setValue('customerId', snapshot.customerId);
   setValue('title', snapshot.title);
@@ -116,29 +121,30 @@ export function applyInvoiceDraftSnapshot(form, snapshot) {
   setValue('endDate', snapshot.dueDate);
   setValue('notes', snapshot.notes);
   setValue('paymentTerms', snapshot.paymentTerms);
-  if (snapshot.recordId) form.dataset.recordId = snapshot.recordId;
+  if (snapshot.recordId && !form.dataset.recordId) form.dataset.recordId = snapshot.recordId;
 
   const body = form.querySelector('[data-invoice-lines]');
   const lines = Array.isArray(snapshot.lineItems) ? snapshot.lineItems : [];
-  if (body && lines.length) {
+  // Remounting line rows would destroy caret/selection — skip while the user is typing.
+  if (body && lines.length && !(editingInsideForm && body.contains(active))) {
     body.innerHTML = lines
       .map((item, index) => {
         const gst = item.gstApplicable === false || item.gstApplicable === 'false' ? 'false' : 'true';
         return (
           '<tr class="invoice-line" data-invoice-line data-line-index="' +
           index +
-          '" draggable="true">' +
-          '<td class="invoice-line-handle" title="Drag to reorder"><button type="button" class="icon-button" data-line-drag tabindex="-1" aria-label="Reorder line">⋮⋮</button></td>' +
+          '">' +
+          '<td class="invoice-line-handle" title="Drag to reorder"><span class="icon-button invoice-line-drag-handle" data-line-drag role="button" tabindex="0" aria-label="Reorder line">⋮⋮</span></td>' +
           '<td><input name="description" value="' +
           escapeAttr(item.description) +
-          '" required placeholder="Description of work or goods" autocomplete="off"></td>' +
+          '" required placeholder="Description of work or goods" autocomplete="off" spellcheck="true" draggable="false"></td>' +
           '<td><input name="quantity" type="number" min="0.01" step="0.01" value="' +
           escapeAttr(item.quantity || 1) +
-          '" required></td>' +
+          '" required draggable="false"></td>' +
           '<td><input name="unitPrice" type="number" min="0" step="0.01" value="' +
           escapeAttr(item.unitPrice || 0) +
-          '" required></td>' +
-          '<td><select name="gstApplicable"><option value="true"' +
+          '" required draggable="false"></td>' +
+          '<td><select name="gstApplicable" draggable="false"><option value="true"' +
           (gst === 'true' ? ' selected' : '') +
           '>GST</option><option value="false"' +
           (gst === 'false' ? ' selected' : '') +

@@ -96,6 +96,9 @@ export function generateInvoicePdfBuffer(input: {
     });
     doc.text(`Issue Date: ${input.invoice.issueDate}`, { align: 'right' });
     doc.text(`Due Date: ${input.invoice.dueDate}`, { align: 'right' });
+    if (input.invoice.title) {
+      doc.text(`Title: ${input.invoice.title}`, { align: 'right' });
+    }
 
     doc.moveDown(1);
     doc.fontSize(12).fillColor('#111827').text('Bill To');

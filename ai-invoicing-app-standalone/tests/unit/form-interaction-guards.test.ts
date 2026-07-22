@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  captureEditableSelection,
   hasActiveTextSelection,
   isDrawerFormDirty,
   isEditableTarget,
+  isInvoiceLineDragHandle,
   markDrawerFormPristine,
+  restoreEditableSelection,
   serializeFormState,
+  shouldAllowInvoiceLineDragStart,
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from '../../public/form-interaction-guards.js';
@@ -77,6 +81,37 @@ describe('form interaction guards', () => {
         ctrlKey: true,
       }),
     ).toBe(false);
+  });
+
+  it('only allows invoice line drag from the dedicated handle', () => {
+    const handle = fakeElement({ tag: 'span', attrs: { 'data-line-drag': '' } });
+    const description = fakeElement({ tag: 'input', attrs: { name: 'description' } });
+    expect(isInvoiceLineDragHandle(handle)).toBe(true);
+    expect(isInvoiceLineDragHandle(description)).toBe(false);
+    expect(shouldAllowInvoiceLineDragStart({ target: handle })).toBe(true);
+    expect(shouldAllowInvoiceLineDragStart({ target: description })).toBe(false);
+  });
+
+  it('captures and restores editable selection ranges', () => {
+    const field = {
+      selectionStart: 2,
+      selectionEnd: 8,
+      selectionDirection: 'forward',
+      isConnected: true,
+      focusCalls: 0,
+      range: null as null | [number, number, string],
+      focus() {
+        this.focusCalls += 1;
+      },
+      setSelectionRange(start: number, end: number, direction?: string) {
+        this.range = [start, end, direction || 'none'];
+      },
+    };
+    const snapshot = captureEditableSelection(field);
+    expect(snapshot).toMatchObject({ selectionStart: 2, selectionEnd: 8 });
+    expect(restoreEditableSelection(snapshot)).toBe(true);
+    expect(field.focusCalls).toBe(1);
+    expect(field.range).toEqual([2, 8, 'forward']);
   });
 
   it('does not close the drawer when a click on the backdrop came from a drag starting in the description field', () => {
