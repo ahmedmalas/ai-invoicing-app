@@ -8,8 +8,44 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import zlib from 'node:zlib';
 import Database from 'better-sqlite3';
 import puppeteer from 'puppeteer-core';
+
+function extractPdfText(pdf) {
+  const source = pdf.toString('latin1');
+  const streams = [...source.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)];
+  const parts = [];
+  for (const match of streams) {
+    const raw = Buffer.from(match[1] ?? '', 'latin1');
+    let decoded = '';
+    try {
+      decoded = zlib.inflateSync(raw).toString('latin1');
+    } catch {
+      decoded = raw.toString('latin1');
+    }
+    for (const tj of decoded.matchAll(/\[(.*?)\]\s*TJ/gs)) {
+      const body = tj[1] ?? '';
+      let run = '';
+      for (const token of body.matchAll(/<([0-9a-fA-F]+)>|\(([^)\\]*(?:\\.[^)\\]*)*)\)/g)) {
+        if (token[1]) {
+          for (let i = 0; i + 1 < token[1].length; i += 2) {
+            run += String.fromCharCode(Number.parseInt(token[1].slice(i, i + 2), 16));
+          }
+        } else if (token[2] !== undefined) {
+          run += token[2].replace(/\\([nrt\\()])/g, (_, ch) => {
+            if (ch === 'n') return '\n';
+            if (ch === 'r') return '\r';
+            if (ch === 't') return '\t';
+            return ch;
+          });
+        }
+      }
+      if (run) parts.push(run);
+    }
+  }
+  return parts.join(' ');
+}
 
 const AUTH_BYPASS_USER_ID = '00000000-0000-0000-0000-000000000001';
 const PORT = Number(process.env.VERIFY_PORT || 4188);
@@ -148,6 +184,8 @@ async function main() {
         token_type: 'bearer',
       }),
     );
+    // Avoid stale draft recovery fighting with this verification run.
+    localStorage.removeItem('aleya-invoice-workspace-draft-v1');
   });
   await gotoApp('/dashboard');
   await waitFor(page, async () => !(await page.url()).includes('/sign-in'), 20000, 'auth');
@@ -173,10 +211,18 @@ async function main() {
 
   await gotoApp('/workspace/invoices/new');
   await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'form');
+  await waitFor(
+    page,
+    async () =>
+      (await page.$eval('[data-invoice-curtain]', (el) => el.getAttribute('data-curtain-state'))) ===
+      'open',
+    10000,
+    'curtain open',
+  );
 
   // Title must be editable and keep caret during totals/autosave scheduling.
-  await page.focus('input[name="title"]');
-  await page.keyboard.type('Header Name Alpha');
+  await page.click('input[name="title"]', { clickCount: 3 });
+  await page.type('input[name="title"]', 'Header Name Alpha', { delay: 15 });
   const titleTyping = await page.evaluate(() => {
     const field = document.querySelector('input[name="title"]');
     return {
@@ -329,26 +375,18 @@ async function main() {
   }
   step('title_survives_autosave', titleAfterAutosave);
 
-  // PDF endpoint contains the title (inflate FlateDecode streams like the unit helper).
+  // PDF endpoint contains the title (decode PDFKit TJ runs).
   const pdfResp = await fetch(BASE + '/api/invoices/' + invoiceId + '/pdf', {
     headers: { authorization: 'Bearer test-bypass-token' },
   });
   const pdfBuf = Buffer.from(await pdfResp.arrayBuffer());
-  const { inflateSync } = await import('node:zlib');
-  const source = pdfBuf.toString('latin1');
-  let pdfText = source;
-  for (const match of source.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    try {
-      pdfText += inflateSync(Buffer.from(match[1], 'latin1')).toString('latin1');
-    } catch {
-      /* ignore */
-    }
-  }
+  const pdfText = extractPdfText(pdfBuf);
   report.checks.pdf = {
     status: pdfResp.status,
     contentType: pdfResp.headers.get('content-type'),
     includesTitle: pdfText.includes('Persisted Header Title'),
     byteLength: pdfBuf.byteLength,
+    sample: pdfText.slice(0, 240),
   };
   if (pdfResp.status !== 200 || !pdfText.includes('Persisted Header Title')) {
     throw new Error('PDF missing title: ' + JSON.stringify(report.checks.pdf));

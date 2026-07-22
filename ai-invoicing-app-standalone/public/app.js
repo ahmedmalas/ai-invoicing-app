@@ -1340,6 +1340,9 @@ async function mountInvoiceWorkspace(record = null) {
   refreshInvoiceWorkspaceTotals(form);
   await openInvoiceCurtain(curtain, {
     onOpened: () => {
+      // Never yank focus if the user already started editing (title/description/etc.).
+      const active = form.ownerDocument?.activeElement;
+      if (active && form.contains(active) && isEditableTarget(active)) return;
       form.querySelector('[name="title"], [data-customer-select]')?.focus();
     },
   });
