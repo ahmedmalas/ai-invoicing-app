@@ -4,6 +4,7 @@ import {
   restoreEditableSelection,
   shouldAllowInvoiceLineDragStart,
 } from './form-interaction-guards.js';
+import { syncCanonicalInvoiceTitle } from './invoice-title.js';
 import { calculateInvoiceTotals, calculateLineItem, readLineItemsFromForm } from './invoice-totals.js';
 import { logoSrcFromProfile } from './logo-studio-ui.js';
 
@@ -221,7 +222,7 @@ export function buildInvoiceWorkspaceHtml({
     '<div><h2>Bill To</h2>' +
     customerControl +
     '</div>' +
-    '<div><h2>Invoice title</h2><label class="invoice-field"><input name="title" required value="' +
+    '<div><h2>Invoice title</h2><label class="invoice-field"><input name="title" data-invoice-title required value="' +
     escapeHtml(record?.title || '') +
     '" placeholder="Short job or invoice title" autocomplete="off" spellcheck="true" draggable="false"></label></div>' +
     '</div></section>' +
@@ -287,6 +288,13 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
   let dragArmedRow = null;
 
   form.addEventListener('input', (event) => {
+    if (
+      event.target.closest?.(
+        '[name="title"], [data-invoice-title], [data-invoice-title-display]',
+      )
+    ) {
+      syncCanonicalInvoiceTitle(form);
+    }
     if (event.target.closest('[data-invoice-line], [name="title"], [name="notes"], [name="paymentTerms"]')) {
       refreshInvoiceWorkspaceTotals(form);
     }

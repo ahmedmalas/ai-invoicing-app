@@ -156,10 +156,15 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
+    protocolTimeout: 120000,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
   const page = await browser.newPage();
   page.setDefaultTimeout(30000);
+  await page.evaluateOnNewDocument(() => {
+    // Avoid hanging the page on real PDF window.open during verification.
+    window.open = () => null;
+  });
   page.on('dialog', async (dialog) => {
     try {
       await dialog.accept();
@@ -414,12 +419,53 @@ async function main() {
   }
   step('reopen_preserves_title_and_description');
 
-  // Empty title validation message.
-  await page.focus('input[name="title"]');
-  await page.keyboard.down('Control');
-  await page.keyboard.press('A');
-  await page.keyboard.up('Control');
-  await page.keyboard.press('Backspace');
+  // Payload binding: visible title must be submitted even if inputs are disabled
+  // (the production bug: FormData omits disabled controls).
+  await page.click('input[name="title"]', { clickCount: 3 });
+  await page.type('input[name="title"]', 'Bound Visible Title', { delay: 10 });
+  const disabledPayload = await page.evaluate(async () => {
+    const form = document.querySelector('#invoice-workspace-form');
+    const title = form.querySelector('input[name="title"]');
+    const visibleBefore = title.value;
+    form.querySelectorAll('input, select, textarea, button').forEach((el) => {
+      el.disabled = true;
+    });
+    const mod = await import('/assets/invoice-workspace-payload.js');
+    const body = mod.collectInvoiceWorkspacePayload(form);
+    const formDataTitle = Object.fromEntries(new FormData(form)).title;
+    form.querySelectorAll('input, select, textarea, button').forEach((el) => {
+      el.disabled = false;
+    });
+    return {
+      visibleBefore,
+      formDataTitle: formDataTitle || null,
+      payloadTitle: body.title,
+      ready: mod.invoicePayloadIsAutosaveReady(body),
+    };
+  });
+  report.checks.disabledPayload = disabledPayload;
+  if (disabledPayload.visibleBefore !== 'Bound Visible Title') {
+    throw new Error('Visible title not set before disabled payload check');
+  }
+  if (disabledPayload.formDataTitle) {
+    step('formdata_included_disabled_title', String(disabledPayload.formDataTitle));
+  } else {
+    step('formdata_omits_disabled_title');
+  }
+  if (disabledPayload.payloadTitle !== 'Bound Visible Title') {
+    throw new Error(
+      'Payload title diverged from visible title while disabled: ' +
+        JSON.stringify(disabledPayload),
+    );
+  }
+  step('payload_matches_visible_title_when_disabled', disabledPayload.payloadTitle);
+
+  // Empty title validation (before successful preview, so toast/state stay clean).
+  await page.evaluate(() => {
+    document.querySelector('.toast')?.remove();
+    const title = document.querySelector('input[name="title"]');
+    if (title) title.value = '';
+  });
   await page.click('[data-invoice-action="preview"]');
   await waitFor(
     page,
@@ -431,6 +477,63 @@ async function main() {
     'title validation toast',
   );
   step('empty_title_field_error');
+
+  // Restore a visible title and prove preview/save submits that exact value.
+  await page.evaluate(() => document.querySelector('.toast')?.remove());
+  await page.click('input[name="title"]', { clickCount: 3 });
+  await page.type('input[name="title"]', 'Bound Visible Title', { delay: 10 });
+  const previewBodies = [];
+  page.on('request', (req) => {
+    if (!/\/api\/invoices(\/|$)/.test(req.url())) return;
+    if (!['POST', 'PUT'].includes(req.method())) return;
+    try {
+      previewBodies.push(JSON.parse(req.postData() || '{}'));
+    } catch {
+      /* ignore */
+    }
+  });
+  await page.click('[data-invoice-action="preview"]');
+  await waitFor(
+    page,
+    async () => {
+      const toast = await page.$eval('.toast', (el) => el.textContent || '').catch(() => '');
+      if (/Invoice title is required/i.test(toast)) {
+        throw new Error('Preview rejected a visibly populated title');
+      }
+      return (
+        previewBodies.some((body) => body.title === 'Bound Visible Title') ||
+        /PDF preview opened/i.test(toast)
+      );
+    },
+    15000,
+    'preview accepts visible title',
+  );
+  report.checks.previewBodies = previewBodies;
+  if (!previewBodies.some((body) => body.title === 'Bound Visible Title')) {
+    throw new Error('Preview/save request missing visible title: ' + JSON.stringify(previewBodies));
+  }
+  step('preview_submits_visible_title');
+
+  // Edit existing invoice title and reopen to prove persistence.
+  await waitFor(
+    page,
+    async () =>
+      !(await page.$eval('[data-invoice-action="preview"]', (el) => el.disabled).catch(() => true)),
+    10000,
+    'preview button re-enabled',
+  );
+  await page.click('input[name="title"]', { clickCount: 3 });
+  await page.type('input[name="title"]', 'Edited Existing Title', { delay: 10 });
+  await page.click('[data-invoice-action="draft"]');
+  await new Promise((r) => setTimeout(r, 1500));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'edit reopen');
+  const edited = await page.$eval('input[name="title"]', (el) => el.value);
+  report.checks.editedExistingTitle = edited;
+  if (edited !== 'Edited Existing Title') {
+    throw new Error('Edited title did not persist on reopen: ' + edited);
+  }
+  step('edit_existing_title_persists', edited);
 
   report.ok = true;
   mkdirSync('/opt/cursor/artifacts', { recursive: true });

@@ -8,7 +8,6 @@ import {
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from './form-interaction-guards.js';
-import { readLineItemsFromForm } from './invoice-totals.js';
 import {
   applyInvoiceDraftSnapshot,
   clearInvoiceDraftSnapshot,
@@ -23,6 +22,10 @@ import {
   customerPreviewHtml,
   refreshInvoiceWorkspaceTotals,
 } from './invoice-workspace.js';
+import {
+  collectInvoiceWorkspacePayload,
+  invoicePayloadIsAutosaveReady,
+} from './invoice-workspace-payload.js';
 import { closeInvoiceCurtain, openInvoiceCurtain } from './invoice-curtain.js';
 import {
   businessProfileReadinessMessage,
@@ -1216,16 +1219,6 @@ function scheduleInvoiceDraftSnapshot(form) {
   }, 1200);
 }
 
-function invoicePayloadIsAutosaveReady(body) {
-  return Boolean(
-    body?.customerId &&
-      String(body.title || '').trim() &&
-      Array.isArray(body.lineItems) &&
-      body.lineItems.length &&
-      body.lineItems.every((item) => String(item.description || '').trim() && Number(item.quantity) > 0),
-  );
-}
-
 async function autosaveInvoiceWorkspace(form) {
   if (
     !form ||
@@ -1359,22 +1352,6 @@ function closeInvoiceWorkspace({ force = false, animate = true } = {}) {
   return closeInvoiceCurtain(curtain, { animate }).finally(() => {
     invoiceCurtainClosing = false;
   });
-}
-
-async function collectInvoiceWorkspacePayload(form) {
-  const data = Object.fromEntries(new FormData(form));
-  const lineItems = readLineItemsFromForm(form);
-  if (!lineItems.length) throw new Error('Add at least one line item.');
-  if (lineItems.some((item) => !item.description)) throw new Error('Each line needs a description.');
-  return {
-    customerId: data.customerId,
-    title: String(data.title || '').trim(),
-    issueDate: data.issueDate,
-    dueDate: data.endDate,
-    ...(data.notes ? { notes: String(data.notes) } : {}),
-    ...(data.paymentTerms ? { paymentTerms: String(data.paymentTerms) } : {}),
-    lineItems,
-  };
 }
 
 async function persistInvoiceWorkspace(form, { stay = true, quiet = false, source = 'manual' } = {}) {
@@ -2712,33 +2689,39 @@ document.addEventListener('click', async (event) => {
       return;
     }
     if (action === 'preview' || action === 'download') {
-      const controls = form.querySelectorAll(
-        '[data-invoice-action], button, input, select, textarea',
-      );
+      // Collect while inputs are still enabled, then only disable action buttons.
+      // Disabling inputs before payload collection previously omitted title from FormData
+      // and showed "Invoice title is required" even though the title was visible.
+      let body;
+      try {
+        body = await collectInvoiceWorkspacePayload(form);
+      } catch (error) {
+        error.fieldPath = error.fieldPath || 'lineItems';
+        await runAction(async () => {
+          throw error;
+        });
+        return;
+      }
+      if (!invoicePayloadIsAutosaveReady(body)) {
+        const error = new Error(
+          !String(body?.title || '').trim()
+            ? 'Invoice title is required.'
+            : 'Add a customer, title, and at least one line item before previewing.',
+        );
+        error.status = 400;
+        error.fieldPath = !String(body?.title || '').trim() ? 'title' : 'customerId';
+        await runAction(async () => {
+          throw error;
+        });
+        return;
+      }
+      const controls = form.querySelectorAll('[data-invoice-action]');
       controls.forEach((control) => {
         control.dataset.wasDisabled = control.disabled ? '1' : '0';
         control.disabled = true;
       });
       try {
         await runAction(async () => {
-          let body;
-          try {
-            body = await collectInvoiceWorkspacePayload(form);
-          } catch (error) {
-            error.fieldPath = error.fieldPath || 'lineItems';
-            throw error;
-          }
-          if (!invoicePayloadIsAutosaveReady(body)) {
-            const error = new Error(
-              !String(body?.title || '').trim()
-                ? 'Invoice title is required.'
-                : 'Add a customer, title, and at least one line item before previewing.',
-            );
-            error.status = 400;
-            error.fieldPath = !String(body?.title || '').trim() ? 'title' : 'customerId';
-            throw error;
-          }
-          // Wait for any in-flight autosave, then persist with the shared queue.
           const saved = await persistInvoiceWorkspace(form, { stay: true, source: 'preview' });
           if (action === 'preview') {
             await previewInvoicePdf(saved.id);

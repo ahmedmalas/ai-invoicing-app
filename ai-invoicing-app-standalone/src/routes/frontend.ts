@@ -17,6 +17,11 @@ const tracedAssets = {
     '../../public/invoice-draft-persistence.js',
     import.meta.url,
   ),
+  'invoice-title.js': new URL('../../public/invoice-title.js', import.meta.url),
+  'invoice-workspace-payload.js': new URL(
+    '../../public/invoice-workspace-payload.js',
+    import.meta.url,
+  ),
   'invoice-workspace.js': new URL('../../public/invoice-workspace.js', import.meta.url),
   'invoice-curtain.js': new URL('../../public/invoice-curtain.js', import.meta.url),
   'logo-studio-ui.js': new URL('../../public/logo-studio-ui.js', import.meta.url),
@@ -85,6 +90,18 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .type('application/javascript; charset=utf-8')
       .header('Cache-Control', 'no-cache')
       .send(asset('invoice-draft-persistence.js')),
+  );
+  app.get('/assets/invoice-title.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('invoice-title.js')),
+  );
+  app.get('/assets/invoice-workspace-payload.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .send(asset('invoice-workspace-payload.js')),
   );
   app.get('/assets/invoice-workspace.js', async (_request, reply) =>
     reply
