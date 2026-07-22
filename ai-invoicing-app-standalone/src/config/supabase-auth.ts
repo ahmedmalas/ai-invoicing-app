@@ -3,11 +3,12 @@
  * Do not remap hosts or inject hardcoded anon keys.
  *
  * Expected Auth project for Vercel Preview and Production:
- *   SUPABASE_URL=https://ntkctiqyvjcjokclkmll.supabase.co
- *   SUPABASE_ANON_KEY / SUPABASE_PUBLISHABLE_KEY = matching public keys
+ *   SUPABASE_URL=https://jsrxhisdjvwsufbqqtir.supabase.co
+ *   SUPABASE_ANON_KEY / SUPABASE_PUBLISHABLE_KEY / NEXT_PUBLIC_SUPABASE_ANON_KEY
+ *   = matching public keys from the same jsrxhisdjvwsufbqqtir project
  */
 
-export const EXPECTED_SUPABASE_AUTH_URL = 'https://ntkctiqyvjcjokclkmll.supabase.co';
+export const EXPECTED_SUPABASE_AUTH_URL = 'https://jsrxhisdjvwsufbqqtir.supabase.co';
 
 export type ResolvedSupabaseAuth = {
   supabaseUrl?: string;

@@ -7,6 +7,10 @@ import {
 } from '../../src/config/supabase-auth.js';
 
 describe('resolveSupabaseAuthConfig', () => {
+  it('documents the intended jsrx Auth project URL', () => {
+    expect(EXPECTED_SUPABASE_AUTH_URL).toBe('https://jsrxhisdjvwsufbqqtir.supabase.co');
+  });
+
   it('accepts the production Auth host without remapping', () => {
     const resolved = resolveSupabaseAuthConfig({
       supabaseUrl: EXPECTED_SUPABASE_AUTH_URL,

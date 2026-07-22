@@ -1,8 +1,8 @@
 name: Fix Supabase Auth env on Vercel
 
 # On-demand workflow: if VERCEL_TOKEN + SUPABASE_ANON_KEY are present in repo secrets,
-# rewrite Preview + Production SUPABASE_* env vars to the production Auth project
-# (https://ntkctiqyvjcjokclkmll.supabase.co). Keys are never hardcoded in source.
+# rewrite Preview + Production SUPABASE_* env vars to the intended Auth project
+# (https://jsrxhisdjvwsufbqqtir.supabase.co). Keys are never hardcoded in source.
 on:
   workflow_dispatch:
   push:
@@ -28,7 +28,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_TEAM_ID: team_oV08U3snaxnxaI70873bYDka
           VERCEL_PROJECT_ID: prj_o3Kmm3okLf1jo4LHNVdIJqsUQAV9
-          SUPABASE_URL: https://ntkctiqyvjcjokclkmll.supabase.co
+          SUPABASE_URL: https://jsrxhisdjvwsufbqqtir.supabase.co
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then
