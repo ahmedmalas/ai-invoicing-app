@@ -1,7 +1,8 @@
 name: Fix Supabase Auth env on Vercel
 
-# One-shot / on-demand workflow: if VERCEL_TOKEN is present in repo secrets,
-# rewrite Preview + Production SUPABASE_* env vars to the canonical Auth project.
+# On-demand workflow: if VERCEL_TOKEN + SUPABASE_ANON_KEY are present in repo secrets,
+# rewrite Preview + Production SUPABASE_* env vars to the production Auth project
+# (https://ntkctiqyvjcjokclkmll.supabase.co). Keys are never hardcoded in source.
 on:
   workflow_dispatch:
   push:
@@ -27,10 +28,15 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_TEAM_ID: team_oV08U3snaxnxaI70873bYDka
           VERCEL_PROJECT_ID: prj_o3Kmm3okLf1jo4LHNVdIJqsUQAV9
+          SUPABASE_URL: https://ntkctiqyvjcjokclkmll.supabase.co
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then
             echo "VERCEL_TOKEN secret is not configured; skipping env patch."
+            exit 0
+          fi
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "SUPABASE_ANON_KEY secret is not configured; skipping env patch."
             exit 0
           fi
           node scripts/fix-vercel-supabase-env.mjs

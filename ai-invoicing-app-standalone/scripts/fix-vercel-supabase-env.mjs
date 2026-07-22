@@ -2,19 +2,22 @@
 /**
  * Patch Vercel Preview + Production Supabase Auth env vars.
  *
- * Requires: VERCEL_TOKEN, optional VERCEL_TEAM_ID / VERCEL_PROJECT_ID.
+ * Requires:
+ *   VERCEL_TOKEN
+ *   SUPABASE_ANON_KEY (or SUPABASE_PUBLISHABLE_KEY) — never hardcoded
+ * Optional:
+ *   VERCEL_TEAM_ID / VERCEL_PROJECT_ID / SUPABASE_URL
  *
  * Usage:
- *   VERCEL_TOKEN=... node scripts/fix-vercel-supabase-env.mjs
+ *   VERCEL_TOKEN=... SUPABASE_ANON_KEY=... node scripts/fix-vercel-supabase-env.mjs
  */
-
 const TEAM_ID = process.env.VERCEL_TEAM_ID || 'team_oV08U3snaxnxaI70873bYDka';
 const PROJECT_ID = process.env.VERCEL_PROJECT_ID || 'prj_o3Kmm3okLf1jo4LHNVdIJqsUQAV9';
 const TOKEN = process.env.VERCEL_TOKEN;
-const SUPABASE_URL = 'https://bmfpclozzmeekazmoaxw.supabase.co';
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || 'https://ntkctiqyvjcjokclkmll.supabase.co';
 const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtZnBjbG96em1lZWthem1vYXh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2Njc4NzMsImV4cCI6MjA5OTI0Mzg3M30.yCenCK5G1YrKnqCKHW58n-U1nPt8L3c4koOGHrD5bQk';
+  process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
 
 const TARGET_KEYS = [
   'SUPABASE_URL',
@@ -25,6 +28,11 @@ const TARGET_KEYS = [
 
 if (!TOKEN) {
   console.error('VERCEL_TOKEN is required');
+  process.exit(1);
+}
+
+if (!SUPABASE_ANON_KEY) {
+  console.error('SUPABASE_ANON_KEY or SUPABASE_PUBLISHABLE_KEY is required (do not hardcode keys in source)');
   process.exit(1);
 }
 
@@ -87,13 +95,15 @@ async function upsertEnv(key, target) {
 async function main() {
   for (const target of ['production', 'preview']) {
     for (const key of TARGET_KEYS) {
-      // Always keep URL + anon in sync; publishable aliases share the anon JWT for this app.
+      // Keep URL + public key aliases in sync for Preview/Production.
       if (key === 'SUPABASE_URL' || key.endsWith('ANON_KEY') || key.endsWith('PUBLISHABLE_KEY')) {
         await upsertEnv(key, target);
       }
     }
   }
-  console.log('Supabase Auth env patch complete. Redeploy Preview/Production to pick up values.');
+  console.log(
+    `Supabase Auth env patch complete (URL=${SUPABASE_URL}). Redeploy Preview/Production to pick up values.`,
+  );
 }
 
 main().catch((error) => {

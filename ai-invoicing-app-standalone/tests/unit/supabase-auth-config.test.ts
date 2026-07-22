@@ -1,59 +1,46 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
-  CANONICAL_SUPABASE_AUTH_URL,
-  ORPHANED_PREVIEW_AUTH_HOST,
+  EXPECTED_SUPABASE_AUTH_URL,
   SupabaseAuthConfigurationError,
   resolveSupabaseAuthConfig,
 } from '../../src/config/supabase-auth.js';
 
-const originalStrict = process.env.SUPABASE_AUTH_STRICT;
-
-afterEach(() => {
-  if (originalStrict === undefined) delete process.env.SUPABASE_AUTH_STRICT;
-  else process.env.SUPABASE_AUTH_STRICT = originalStrict;
-});
-
 describe('resolveSupabaseAuthConfig', () => {
-  it('does not remap the orphaned preview Auth host', () => {
+  it('accepts the production Auth host without remapping', () => {
     const resolved = resolveSupabaseAuthConfig({
-      supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
-      supabaseAnonKey: 'preview-orphan-anon-key',
-      strict: false,
+      supabaseUrl: EXPECTED_SUPABASE_AUTH_URL,
+      supabaseAnonKey: 'preview-anon-key',
     });
     expect(resolved).toEqual({
-      supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
-      supabaseAnonKey: 'preview-orphan-anon-key',
-      orphanedHostConfigured: true,
+      supabaseUrl: EXPECTED_SUPABASE_AUTH_URL,
+      supabaseAnonKey: 'preview-anon-key',
     });
   });
 
-  it('fails boot when SUPABASE_AUTH_STRICT=1 and orphaned host is configured', () => {
-    process.env.SUPABASE_AUTH_STRICT = '1';
+  it('leaves unrelated Auth hosts unchanged (no remap)', () => {
+    const resolved = resolveSupabaseAuthConfig({
+      supabaseUrl: 'https://example.supabase.co',
+      supabaseAnonKey: 'keep-me',
+    });
+    expect(resolved).toEqual({
+      supabaseUrl: 'https://example.supabase.co',
+      supabaseAnonKey: 'keep-me',
+    });
+  });
+
+  it('rejects malformed SUPABASE_URL', () => {
     expect(() =>
       resolveSupabaseAuthConfig({
-        supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
+        supabaseUrl: 'not-a-url',
       }),
     ).toThrow(SupabaseAuthConfigurationError);
   });
 
-  it('leaves unrelated Auth hosts unchanged', () => {
-    const resolved = resolveSupabaseAuthConfig({
-      supabaseUrl: CANONICAL_SUPABASE_AUTH_URL,
-      supabaseAnonKey: 'keep-me',
-    });
-    expect(resolved).toEqual({
-      supabaseUrl: CANONICAL_SUPABASE_AUTH_URL,
-      supabaseAnonKey: 'keep-me',
-      orphanedHostConfigured: false,
-    });
-  });
-
   it('handles missing URL', () => {
-    expect(resolveSupabaseAuthConfig({})).toEqual({ orphanedHostConfigured: false });
+    expect(resolveSupabaseAuthConfig({})).toEqual({});
     expect(resolveSupabaseAuthConfig({ supabaseAnonKey: 'only-key' })).toEqual({
       supabaseAnonKey: 'only-key',
-      orphanedHostConfigured: false,
     });
   });
 });
