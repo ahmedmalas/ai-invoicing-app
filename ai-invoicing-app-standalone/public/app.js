@@ -1,7 +1,10 @@
 import {
+  captureEditableSelection,
   hasActiveTextSelection,
   isDrawerFormDirty,
+  isEditableTarget,
   markDrawerFormPristine,
+  restoreEditableSelection,
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from './form-interaction-guards.js';
@@ -1200,7 +1203,13 @@ function updateCustomerPreview(form) {
 
 function scheduleInvoiceDraftSnapshot(form) {
   if (!form) return;
+  const active = form.ownerDocument?.activeElement;
+  const selection =
+    active && form.contains(active) && isEditableTarget(active)
+      ? captureEditableSelection(active)
+      : null;
   writeInvoiceDraftSnapshot(form);
+  if (selection) restoreEditableSelection(selection);
   if (invoiceAutosaveTimer) clearTimeout(invoiceAutosaveTimer);
   invoiceAutosaveTimer = setTimeout(() => {
     void autosaveInvoiceWorkspace(form);
@@ -2602,6 +2611,8 @@ document.addEventListener(
 );
 
 document.addEventListener('keydown', (event) => {
+  // Never steal clipboard / text-editing keys, and do not close the workspace while typing.
+  if (shouldIgnoreGlobalShortcut(event)) return;
   if (event.key === 'Escape' && document.querySelector('[data-invoice-curtain]')) {
     event.preventDefault();
     void requestCloseInvoiceWorkspace();
@@ -2612,8 +2623,6 @@ document.addEventListener('keydown', (event) => {
     requestCloseDrawer();
     return;
   }
-  // Future global shortcuts must not steal clipboard / text-editing keys from fields.
-  if (shouldIgnoreGlobalShortcut(event)) return;
 });
 
 document.addEventListener('click', async (event) => {

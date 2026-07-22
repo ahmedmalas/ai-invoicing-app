@@ -1141,6 +1141,33 @@ td.primary-cell {
   border-radius: 8px;
   padding: 8px 10px;
   background: white;
+  position: relative;
+  z-index: 1;
+  -webkit-user-select: text;
+  user-select: text;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+.invoice-field input[name='title'],
+.invoice-lines-table input[name='description'] {
+  cursor: text;
+}
+.invoice-line-handle,
+.invoice-line-drag-handle {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: grab;
+  touch-action: none;
+}
+.invoice-line-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+}
+.invoice-line.is-dragging .invoice-line-drag-handle {
+  cursor: grabbing;
 }
 .invoice-field textarea {
   min-height: 96px;

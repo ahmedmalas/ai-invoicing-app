@@ -1,3 +1,9 @@
+import {
+  captureEditableSelection,
+  isEditableTarget,
+  restoreEditableSelection,
+  shouldAllowInvoiceLineDragStart,
+} from './form-interaction-guards.js';
 import { calculateInvoiceTotals, calculateLineItem, readLineItemsFromForm } from './invoice-totals.js';
 import { logoSrcFromProfile } from './logo-studio-ui.js';
 
@@ -30,20 +36,22 @@ function customerOptionsHtml(customers, selected = '') {
 export function invoiceWorkspaceLineRow(item = {}, index = 0) {
   const calculated = calculateLineItem(item);
   return (
+    // Rows are not draggable by default — HTML5 drag on the <tr> blocks text selection
+    // inside description/qty/price inputs. Drag is enabled only from the handle.
     '<tr class="invoice-line" data-invoice-line data-line-index="' +
     index +
-    '" draggable="true">' +
-    '<td class="invoice-line-handle" title="Drag to reorder"><button type="button" class="icon-button" data-line-drag tabindex="-1" aria-label="Reorder line">⋮⋮</button></td>' +
+    '">' +
+    '<td class="invoice-line-handle" title="Drag to reorder"><span class="icon-button invoice-line-drag-handle" data-line-drag role="button" tabindex="0" aria-label="Reorder line">⋮⋮</span></td>' +
     '<td><input name="description" value="' +
     escapeHtml(calculated.description) +
-    '" required placeholder="Description of work or goods" autocomplete="off"></td>' +
+    '" required placeholder="Description of work or goods" autocomplete="off" spellcheck="true" draggable="false"></td>' +
     '<td><input name="quantity" type="number" min="0.01" step="0.01" value="' +
     escapeHtml(calculated.quantity || 1) +
-    '" required></td>' +
+    '" required draggable="false"></td>' +
     '<td><input name="unitPrice" type="number" min="0" step="0.01" value="' +
     escapeHtml(calculated.unitPrice || 0) +
-    '" required></td>' +
-    '<td><select name="gstApplicable"><option value="true"' +
+    '" required draggable="false"></td>' +
+    '<td><select name="gstApplicable" draggable="false"><option value="true"' +
     (calculated.gstApplicable ? ' selected' : '') +
     '>GST</option><option value="false"' +
     (!calculated.gstApplicable ? ' selected' : '') +
@@ -61,6 +69,11 @@ export function invoiceWorkspaceLineRow(item = {}, index = 0) {
 
 export function refreshInvoiceWorkspaceTotals(form) {
   if (!form) return { totals: { subtotal: 0, gstTotal: 0, total: 0 } };
+  const active = form.ownerDocument?.activeElement;
+  const selection =
+    active && form.contains(active) && isEditableTarget(active)
+      ? captureEditableSelection(active)
+      : null;
   const { calculatedItems, totals } = calculateInvoiceTotals(readLineItemsFromForm(form));
   form.querySelectorAll('[data-invoice-line]').forEach((row, index) => {
     const totalCell = row.querySelector('[data-line-total]');
@@ -73,6 +86,7 @@ export function refreshInvoiceWorkspaceTotals(form) {
   if (subtotalEl) subtotalEl.textContent = money(totals.subtotal);
   if (gstEl) gstEl.textContent = money(totals.gstTotal);
   if (grandEl) grandEl.textContent = money(totals.total);
+  if (selection) restoreEditableSelection(selection);
   return { calculatedItems, totals };
 }
 
@@ -209,7 +223,7 @@ export function buildInvoiceWorkspaceHtml({
     '</div>' +
     '<div><h2>Invoice title</h2><label class="invoice-field"><input name="title" required value="' +
     escapeHtml(record?.title || '') +
-    '" placeholder="Short job or invoice title"></label></div>' +
+    '" placeholder="Short job or invoice title" autocomplete="off" spellcheck="true" draggable="false"></label></div>' +
     '</div></section>' +
     '<section class="invoice-section">' +
     '<div class="invoice-section-head"><h2>Line items</h2>' +
@@ -270,6 +284,7 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
   form.dataset.bound = 'true';
 
   let dragRow = null;
+  let dragArmedRow = null;
 
   form.addEventListener('input', (event) => {
     if (event.target.closest('[data-invoice-line], [name="title"], [name="notes"], [name="paymentTerms"]')) {
@@ -328,6 +343,13 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
   });
 
   form.addEventListener('keydown', (event) => {
+    // Never steal clipboard / selection shortcuts from editable fields.
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      ['a', 'c', 'x', 'v', 'z', 'y'].includes(String(event.key || '').toLowerCase())
+    ) {
+      return;
+    }
     const row = event.target.closest?.('[data-invoice-line]');
     if (!row) return;
     if (event.altKey && event.key === 'ArrowUp') {
@@ -349,21 +371,63 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
     }
   });
 
+  const disarmInvoiceLineDrag = () => {
+    form.querySelectorAll('[data-invoice-line][draggable="true"]').forEach((row) => {
+      row.removeAttribute('draggable');
+    });
+    dragArmedRow = null;
+  };
+
+  // Arm temporary row dragging only while the dedicated handle is pressed.
+  form.addEventListener('pointerdown', (event) => {
+    if (isEditableTarget(event.target)) {
+      disarmInvoiceLineDrag();
+      return;
+    }
+    const handle = event.target.closest?.('[data-line-drag]');
+    const row = handle?.closest?.('[data-invoice-line]');
+    if (!row) {
+      disarmInvoiceLineDrag();
+      return;
+    }
+    dragArmedRow = row;
+    row.setAttribute('draggable', 'true');
+  });
+  form.addEventListener('pointerup', () => {
+    if (!dragRow) disarmInvoiceLineDrag();
+  });
+  form.addEventListener('pointercancel', () => {
+    if (!dragRow) disarmInvoiceLineDrag();
+  });
+
   form.addEventListener('dragstart', (event) => {
-    dragRow = event.target.closest('[data-invoice-line]');
-    if (!dragRow) return;
+    const row = event.target.closest?.('[data-invoice-line]');
+    const allowed =
+      shouldAllowInvoiceLineDragStart(event) ||
+      (row && row === dragArmedRow && !isEditableTarget(event.target));
+    if (!allowed || !row) {
+      event.preventDefault();
+      dragRow = null;
+      disarmInvoiceLineDrag();
+      return;
+    }
+    dragRow = row;
+    dragRow.setAttribute('draggable', 'true');
     dragRow.classList.add('is-dragging');
     event.dataTransfer?.setData('text/plain', dragRow.dataset.lineIndex || '0');
-    event.dataTransfer.effectAllowed = 'move';
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
   });
   form.addEventListener('dragend', () => {
     dragRow?.classList.remove('is-dragging');
     dragRow = null;
+    disarmInvoiceLineDrag();
     form.querySelectorAll('.drag-over').forEach((node) => node.classList.remove('drag-over'));
   });
   form.addEventListener('dragover', (event) => {
     const over = event.target.closest('[data-invoice-line]');
     if (!dragRow || !over || over === dragRow) return;
+    // Allow drop target highlighting, but never block native behaviour on editables.
+    if (isEditableTarget(event.target)) return;
     event.preventDefault();
     form.querySelectorAll('.drag-over').forEach((node) => node.classList.remove('drag-over'));
     over.classList.add('drag-over');
@@ -371,6 +435,7 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
   form.addEventListener('drop', (event) => {
     const over = event.target.closest('[data-invoice-line]');
     if (!dragRow || !over || over === dragRow) return;
+    if (isEditableTarget(event.target)) return;
     event.preventDefault();
     const body = form.querySelector('[data-invoice-lines]');
     const rows = [...body.querySelectorAll('[data-invoice-line]')];
@@ -380,6 +445,11 @@ export function bindInvoiceWorkspaceInteractions(form, { onToast } = {}) {
     else body.insertBefore(dragRow, over);
     reindexInvoiceLines(form);
     refreshInvoiceWorkspaceTotals(form);
+  });
+
+  // Defend against any ancestor selectstart cancellation while editing invoice fields.
+  form.addEventListener('selectstart', (event) => {
+    if (isEditableTarget(event.target)) event.stopPropagation();
   });
 
   refreshInvoiceWorkspaceTotals(form);

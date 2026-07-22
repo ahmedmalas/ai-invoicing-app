@@ -66,9 +66,21 @@ function createFakeForm(values: {
       return null;
     },
   }));
-  const linesBody = { innerHTML: "" };
-  return {
-    dataset: { recordId: values.recordId },
+  const activeDescription = { value: "typing..." };
+  const linesBody = {
+    innerHTML: "",
+    contains(node: unknown) {
+      return node === activeDescription;
+    },
+  };
+  const form = {
+    dataset: { recordId: values.recordId } as Record<string, string | undefined>,
+    ownerDocument: {
+      activeElement: null as unknown,
+    },
+    contains(node: unknown) {
+      return node === form.ownerDocument.activeElement || node === activeDescription;
+    },
     querySelector(selector: string) {
       if (selector === "[data-invoice-lines]") return linesBody;
       const name = selector.match(/name="([^"]+)"/)?.[1];
@@ -79,7 +91,10 @@ function createFakeForm(values: {
       if (selector === "[data-invoice-line]") return lines;
       return [];
     },
+    __activeDescription: activeDescription,
+    __linesBody: linesBody,
   };
+  return form;
 }
 
 describe("invoice draft persistence helpers", () => {
@@ -162,6 +177,38 @@ describe("invoice draft persistence helpers", () => {
     expect(titleField?.value).toBe("From form");
     expect(customerField?.value).toBe("cus_9");
     expect(String(linesBody?.innerHTML)).toContain("Part");
+  });
+
+  it("does not rewrite line-item markup while a description field is focused", () => {
+    const target = createFakeForm({
+      customerId: "",
+      title: "",
+      issueDate: "",
+      endDate: "",
+      lineItems: [{ description: "Original", quantity: "1", unitPrice: "10" }],
+    }) as ReturnType<typeof createFakeForm> & {
+      __activeDescription: { value: string };
+      __linesBody: { innerHTML: string };
+    };
+    target.__linesBody.innerHTML = "KEEP_ME";
+    target.ownerDocument.activeElement = target.__activeDescription;
+
+    applyInvoiceDraftSnapshot(target, {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      recordId: null,
+      pathname: "/workspace/invoices/new",
+      customerId: "cus_9",
+      title: "Recovered",
+      issueDate: "2026-07-01",
+      dueDate: "2026-07-31",
+      notes: "",
+      paymentTerms: "",
+      lineItems: [{ description: "Replaced", quantity: "2", unitPrice: "20" }],
+    });
+
+    expect(target.__linesBody.innerHTML).toBe("KEEP_ME");
+    expect((target.querySelector('[name="title"]') as { value: string }).value).toBe("Recovered");
   });
 
   it("does not treat empty snapshots as recoverable", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { extractPdfText } from '../helpers/pdf-text.js';
 import { generateInvoicePdfBuffer } from '../../src/services/pdf-service.js';
 
 const baseInput = {
@@ -68,5 +69,6 @@ describe('invoice PDF business identity', () => {
     expect(withProfile.length).toBeGreaterThan(800);
     // Profile-backed PDFs include ABN/payment/footer blocks and are larger than empty-profile stubs.
     expect(withProfile.length).toBeGreaterThan(withoutProfile.length);
+    expect(extractPdfText(withProfile)).toContain('Scaffold hire');
   });
 });
