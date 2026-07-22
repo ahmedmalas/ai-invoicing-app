@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   CANONICAL_SUPABASE_AUTH_URL,
@@ -7,19 +7,34 @@ import {
   resolveSupabaseAuthConfig,
 } from '../../src/config/supabase-auth.js';
 
+const originalStrict = process.env.SUPABASE_AUTH_STRICT;
+
+afterEach(() => {
+  if (originalStrict === undefined) delete process.env.SUPABASE_AUTH_STRICT;
+  else process.env.SUPABASE_AUTH_STRICT = originalStrict;
+});
+
 describe('resolveSupabaseAuthConfig', () => {
-  it('rejects the orphaned preview Auth host instead of remapping it', () => {
+  it('does not remap the orphaned preview Auth host', () => {
+    const resolved = resolveSupabaseAuthConfig({
+      supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
+      supabaseAnonKey: 'preview-orphan-anon-key',
+      strict: false,
+    });
+    expect(resolved).toEqual({
+      supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
+      supabaseAnonKey: 'preview-orphan-anon-key',
+      orphanedHostConfigured: true,
+    });
+  });
+
+  it('fails boot when SUPABASE_AUTH_STRICT=1 and orphaned host is configured', () => {
+    process.env.SUPABASE_AUTH_STRICT = '1';
     expect(() =>
       resolveSupabaseAuthConfig({
         supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
-        supabaseAnonKey: 'preview-orphan-anon-key',
       }),
     ).toThrow(SupabaseAuthConfigurationError);
-    expect(() =>
-      resolveSupabaseAuthConfig({
-        supabaseUrl: `https://${ORPHANED_PREVIEW_AUTH_HOST}`,
-      }),
-    ).toThrow(/Silent remapping is disabled/);
   });
 
   it('leaves unrelated Auth hosts unchanged', () => {
@@ -30,13 +45,15 @@ describe('resolveSupabaseAuthConfig', () => {
     expect(resolved).toEqual({
       supabaseUrl: CANONICAL_SUPABASE_AUTH_URL,
       supabaseAnonKey: 'keep-me',
+      orphanedHostConfigured: false,
     });
   });
 
   it('handles missing URL', () => {
-    expect(resolveSupabaseAuthConfig({})).toEqual({});
+    expect(resolveSupabaseAuthConfig({})).toEqual({ orphanedHostConfigured: false });
     expect(resolveSupabaseAuthConfig({ supabaseAnonKey: 'only-key' })).toEqual({
       supabaseAnonKey: 'only-key',
+      orphanedHostConfigured: false,
     });
   });
 });
