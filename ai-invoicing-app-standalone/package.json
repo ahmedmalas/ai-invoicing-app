@@ -18,7 +18,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "verify:invoice-persistence": "npm run build && node scripts/verify-invoice-persistence-browser.mjs",
-    "verify:invoice-selection": "npm run build && node scripts/verify-invoice-selection-browser.mjs"
+    "verify:invoice-editor": "npm run build && node scripts/verify-invoice-editor-browser.mjs"
   },
   "engines": {
     "node": ">=20"

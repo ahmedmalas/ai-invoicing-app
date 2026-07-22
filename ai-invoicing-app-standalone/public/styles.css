@@ -971,11 +971,12 @@ td.primary-cell {
     padding: 20px 16px;
   }
 }
-/* Full-page invoice workspace (curtain)
+/* Full-page invoice editor (curtain)
    Open: top → bottom. Close: bottom → top (retract upward).
-   Motion is driven by Web Animations API in invoice-curtain.js (~360ms).
+   Motion is driven by Web Animations API in invoice-editor.js.
    CSS holds resting transforms only — no CSS transition (avoids skipped mounts). */
-.invoice-curtain {
+.invoice-curtain,
+[data-invoice-editor] {
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -986,10 +987,12 @@ td.primary-cell {
   backface-visibility: hidden;
   contain: layout style;
 }
-.invoice-curtain.is-open {
+.invoice-curtain.is-open,
+[data-invoice-editor].is-open {
   transform: translate3d(0, 0, 0);
 }
-.invoice-curtain.is-closing {
+.invoice-curtain.is-closing,
+[data-invoice-editor].is-closing {
   transform: translate3d(0, -100%, 0);
 }
 .invoice-workspace {

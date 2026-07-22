@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { buildApp } from '../../src/app.js';
-import { buildInvoiceWorkspaceHtml } from '../../public/invoice-workspace.js';
+import { buildEditorHtml } from '../../public/invoice-editor.js';
 import Database from 'better-sqlite3';
 
 const dirs: string[] = [];
@@ -130,12 +130,13 @@ describe('invoice persistence across refresh / session boundaries', () => {
       expect(invoice.lineItems).toHaveLength(2);
       expect(invoice.lineItems.map((item) => item.description)).toEqual(['Diagnostic', 'Travel']);
 
-      const html = buildInvoiceWorkspaceHtml({
+      const html = buildEditorHtml({
         profile: {},
         customers: [{ id: customerId, displayName: 'Persistence Customer' }],
         record: invoice,
       });
       expect(html).toContain('data-record-id="' + created.id + '"');
+      expect(html).toContain('data-invoice-field="title"');
       expect(html).toContain('Draft after refresh');
       expect(html).toContain('Diagnostic');
       expect(html).toContain('Travel');
@@ -148,10 +149,10 @@ describe('invoice persistence across refresh / session boundaries', () => {
       expect(shell.statusCode).toBe(200);
       const asset = await app.inject({
         method: 'GET',
-        url: '/assets/invoice-draft-persistence.js',
+        url: '/assets/invoice-editor.js',
       });
       expect(asset.statusCode).toBe(200);
-      expect(asset.body).toContain('INVOICE_DRAFT_STORAGE_KEY');
+      expect(asset.body).toContain('INVOICE_EDITOR_STORAGE_KEY');
     } finally {
       await app.close();
     }
@@ -272,7 +273,7 @@ describe('invoice persistence across refresh / session boundaries', () => {
       expect(invoice.lineItems).toHaveLength(1);
       expect(invoice.lineItems[0]?.description).toBe('Restart-safe line');
 
-      const html = buildInvoiceWorkspaceHtml({
+      const html = buildEditorHtml({
         profile: {},
         customers: [{ id: customerId, displayName: 'Persistence Customer' }],
         record: invoice,

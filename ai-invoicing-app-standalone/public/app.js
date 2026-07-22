@@ -1,29 +1,11 @@
 import {
-  captureEditableSelection,
   hasActiveTextSelection,
   isDrawerFormDirty,
-  isEditableTarget,
   markDrawerFormPristine,
-  restoreEditableSelection,
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from './form-interaction-guards.js';
-import { readLineItemsFromForm } from './invoice-totals.js';
-import {
-  applyInvoiceDraftSnapshot,
-  clearInvoiceDraftSnapshot,
-  INVOICE_DRAFT_STORAGE_KEY,
-  readInvoiceDraftSnapshot,
-  snapshotLooksRecoverable,
-  writeInvoiceDraftSnapshot,
-} from './invoice-draft-persistence.js';
-import {
-  bindInvoiceWorkspaceInteractions,
-  buildInvoiceWorkspaceHtml,
-  customerPreviewHtml,
-  refreshInvoiceWorkspaceTotals,
-} from './invoice-workspace.js';
-import { closeInvoiceCurtain, openInvoiceCurtain } from './invoice-curtain.js';
+import { createInvoiceEditor } from './invoice-editor.js';
 import {
   businessProfileReadinessMessage,
   isBusinessProfileReady,
@@ -39,16 +21,11 @@ let workspaceCacheAt = 0;
 const WORKSPACE_CACHE_TTL_MS = 30_000;
 let recoveryAccessToken = null;
 let signOutInProgress = false;
-let invoiceAutosaveTimer = null;
-let invoiceAutosaveInFlight = false;
-let invoicePersistQueue = Promise.resolve();
-let invoicePersistActive = false;
 let drawerPointerDownTarget = null;
 let ignoreNextPopstate = false;
-let invoiceWorkspaceAction = 'save';
-let invoiceCurtainClosing = false;
 let logoStudioConcepts = [];
 let logoStudioNotice = '';
+let invoiceEditor = null;
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -138,11 +115,15 @@ function formatValidationError(payload) {
 
 function focusInvoiceValidationField(fieldPath) {
   if (!fieldPath) return;
-  const form = document.querySelector('#invoice-workspace-form');
+  if (invoiceEditor?.isOpen?.()) {
+    invoiceEditor.focusField(fieldPath);
+    return;
+  }
+  const form = document.querySelector('#invoice-editor-form');
   if (!form) return;
   const field =
-    form.querySelector(`[name="${fieldPath}"]`) ||
-    (fieldPath === 'lineItems' ? form.querySelector('[name="description"]') : null);
+    form.querySelector(`[data-invoice-field="${fieldPath}"]`) ||
+    (fieldPath === 'lineItems' ? form.querySelector('[data-invoice-field="description"]') : null);
   if (field && typeof field.focus === 'function') {
     field.focus();
     if (typeof field.select === 'function' && field.type !== 'number') field.select();
@@ -223,13 +204,13 @@ async function api(path, options = {}, retry = true) {
 }
 
 function unsavedWorkForm() {
-  return (
-    document.querySelector('#invoice-workspace-form') ||
-    document.querySelector('.drawer-backdrop form')
-  );
+  return invoiceEditor?.getForm?.() || document.querySelector('.drawer-backdrop form');
 }
 
 function confirmDiscardUnsavedDrawerWork() {
+  if (invoiceEditor?.isOpen?.() && invoiceEditor.isDirty()) {
+    return window.confirm('You have unsaved changes. Discard them and leave this form?');
+  }
   const form = unsavedWorkForm();
   if (!form || !isDrawerFormDirty(form)) return true;
   return window.confirm('You have unsaved changes. Discard them and leave this form?');
@@ -238,11 +219,9 @@ function confirmDiscardUnsavedDrawerWork() {
 function navigate(path) {
   if (!confirmDiscardUnsavedDrawerWork()) return;
   closeDrawer();
-  const leavingWorkspace =
-    Boolean(document.querySelector('[data-invoice-curtain]')) &&
-    !isInvoiceWorkspacePath(path);
+  const leavingWorkspace = Boolean(invoiceEditor?.isOpen?.()) && !isInvoiceWorkspacePath(path);
   if (leavingWorkspace) {
-    void closeInvoiceWorkspace({ force: true, animate: true }).then(() => {
+    void invoiceEditor.close({ force: true, animate: true }).then(() => {
       history.pushState({}, '', path);
       if (currentUser) void renderRoute();
       else renderPublicAuthRoute();
@@ -1193,282 +1172,6 @@ function openInvoiceWorkspaceRoute(id = null) {
   navigate(id ? '/workspace/invoices/' + id + '/edit' : '/workspace/invoices/new');
 }
 
-function updateCustomerPreview(form) {
-  const select = form?.querySelector('[data-customer-select]');
-  const preview = form?.querySelector('[data-customer-preview]');
-  if (!select || !preview) return;
-  const customer = cache.customers.find((item) => item.id === select.value);
-  preview.innerHTML = customerPreviewHtml(customer || null);
-}
-
-function scheduleInvoiceDraftSnapshot(form) {
-  if (!form) return;
-  const active = form.ownerDocument?.activeElement;
-  const selection =
-    active && form.contains(active) && isEditableTarget(active)
-      ? captureEditableSelection(active)
-      : null;
-  writeInvoiceDraftSnapshot(form);
-  if (selection) restoreEditableSelection(selection);
-  if (invoiceAutosaveTimer) clearTimeout(invoiceAutosaveTimer);
-  invoiceAutosaveTimer = setTimeout(() => {
-    void autosaveInvoiceWorkspace(form);
-  }, 1200);
-}
-
-function invoicePayloadIsAutosaveReady(body) {
-  return Boolean(
-    body?.customerId &&
-      String(body.title || '').trim() &&
-      Array.isArray(body.lineItems) &&
-      body.lineItems.length &&
-      body.lineItems.every((item) => String(item.description || '').trim() && Number(item.quantity) > 0),
-  );
-}
-
-async function autosaveInvoiceWorkspace(form) {
-  if (
-    !form ||
-    !form.isConnected ||
-    invoiceAutosaveInFlight ||
-    invoicePersistActive ||
-    form.dataset.autosaveLocked === 'true'
-  ) {
-    return;
-  }
-  let body;
-  try {
-    body = await collectInvoiceWorkspacePayload(form);
-  } catch {
-    return;
-  }
-  if (!invoicePayloadIsAutosaveReady(body)) return;
-  invoiceAutosaveInFlight = true;
-  form.dataset.autosaveLocked = 'true';
-  try {
-    const saved = await persistInvoiceWorkspace(form, {
-      stay: true,
-      quiet: true,
-      source: 'autosave',
-    });
-    if (form.isConnected) {
-      writeInvoiceDraftSnapshot(form, { recordId: saved.id });
-    }
-  } catch (error) {
-    // Keep local snapshot; never clear form values after a failed autosave.
-    if (error?.status !== 401) {
-      /* quiet autosave failure */
-    }
-  } finally {
-    invoiceAutosaveInFlight = false;
-    if (form.isConnected) form.dataset.autosaveLocked = 'false';
-  }
-}
-
-async function mountInvoiceWorkspace(record = null) {
-  if (!cache.customers.length) {
-    toast('Create a customer before creating an invoice.', true);
-    history.replaceState({}, '', '/workspace/customers');
-    customersPage();
-    return;
-  }
-  if (record && record.status && record.status !== 'Draft') {
-    toast('Final invoices are locked. Open the invoice details instead.', true);
-    history.replaceState({}, '', '/workspace/invoices');
-    invoicesPage();
-    return;
-  }
-  document.querySelector('[data-invoice-curtain]')?.remove();
-  if (invoiceAutosaveTimer) {
-    clearTimeout(invoiceAutosaveTimer);
-    invoiceAutosaveTimer = null;
-  }
-  const recovered =
-    !record?.id && snapshotLooksRecoverable(readInvoiceDraftSnapshot())
-      ? readInvoiceDraftSnapshot()
-      : null;
-  // If a prior autosave already created a server draft, reload that record instead of a blank /new form.
-  if (!record?.id && recovered?.recordId) {
-    try {
-      const persisted = await api('/api/invoices/' + recovered.recordId);
-      if (persisted?.id && persisted.status === 'Draft') {
-        history.replaceState({}, '', '/workspace/invoices/' + persisted.id + '/edit');
-        clearInvoiceDraftSnapshot();
-        await mountInvoiceWorkspace(persisted);
-        toast('Restored your invoice draft after refresh.');
-        return;
-      }
-    } catch {
-      /* fall through to local snapshot recovery */
-    }
-  }
-  const defaults = {
-    issueDate: record?.issueDate || date(),
-    dueDate: record?.dueDate || date(14),
-    ...(record || {}),
-  };
-  document.body.insertAdjacentHTML(
-    'beforeend',
-    buildInvoiceWorkspaceHtml({
-      profile: cache.businessProfile || {},
-      customers: cache.customers,
-      // Pass date-only defaults for create so customer select renders (edit requires record.id).
-      record: record?.id ? defaults : { issueDate: defaults.issueDate, dueDate: defaults.dueDate },
-    }),
-  );
-  const curtain = document.querySelector('[data-invoice-curtain]');
-  const form = document.querySelector('#invoice-workspace-form');
-  if (!form || !curtain) return;
-  if (!record?.id) {
-    form.querySelector('[name="issueDate"]').value = defaults.issueDate;
-    form.querySelector('[name="endDate"]').value = defaults.dueDate;
-    if (recovered) {
-      applyInvoiceDraftSnapshot(form, recovered);
-      toast('Restored unsaved invoice details from this browser session.');
-    }
-  } else {
-    clearInvoiceDraftSnapshot();
-  }
-  bindInvoiceWorkspaceInteractions(form, { onToast: toast });
-  updateCustomerPreview(form);
-  form.addEventListener('change', (event) => {
-    if (event.target.matches('[data-customer-select]')) updateCustomerPreview(form);
-    scheduleInvoiceDraftSnapshot(form);
-  });
-  form.addEventListener('input', () => scheduleInvoiceDraftSnapshot(form));
-  markDrawerFormPristine(form);
-  refreshInvoiceWorkspaceTotals(form);
-  await openInvoiceCurtain(curtain, {
-    onOpened: () => {
-      // Never yank focus if the user already started editing (title/description/etc.).
-      const active = form.ownerDocument?.activeElement;
-      if (active && form.contains(active) && isEditableTarget(active)) return;
-      form.querySelector('[name="title"], [data-customer-select]')?.focus();
-    },
-  });
-}
-
-function closeInvoiceWorkspace({ force = false, animate = true } = {}) {
-  const curtain = document.querySelector('[data-invoice-curtain]');
-  if (!curtain) return Promise.resolve(true);
-  if (!force && !confirmDiscardUnsavedDrawerWork()) return Promise.resolve(false);
-  if (invoiceCurtainClosing) {
-    return Promise.resolve(true);
-  }
-  invoiceCurtainClosing = true;
-  return closeInvoiceCurtain(curtain, { animate }).finally(() => {
-    invoiceCurtainClosing = false;
-  });
-}
-
-async function collectInvoiceWorkspacePayload(form) {
-  const data = Object.fromEntries(new FormData(form));
-  const lineItems = readLineItemsFromForm(form);
-  if (!lineItems.length) throw new Error('Add at least one line item.');
-  if (lineItems.some((item) => !item.description)) throw new Error('Each line needs a description.');
-  return {
-    customerId: data.customerId,
-    title: String(data.title || '').trim(),
-    issueDate: data.issueDate,
-    dueDate: data.endDate,
-    ...(data.notes ? { notes: String(data.notes) } : {}),
-    ...(data.paymentTerms ? { paymentTerms: String(data.paymentTerms) } : {}),
-    lineItems,
-  };
-}
-
-async function persistInvoiceWorkspace(form, { stay = true, quiet = false, source = 'manual' } = {}) {
-  const run = async () => {
-    if (!form?.isConnected) {
-      throw new Error('Invoice form is no longer available. Refresh and try again.');
-    }
-    // Capture values up front so a remount cannot empty the POST/PUT body mid-flight.
-    const body = await collectInvoiceWorkspacePayload(form);
-    if (!String(body.title || '').trim()) {
-      const error = new Error('Invoice title is required.');
-      error.status = 400;
-      error.fieldPath = 'title';
-      throw error;
-    }
-    const recordId = form.dataset.recordId;
-    let saved;
-    if (recordId) {
-      const { customerId, ...invoiceBody } = body;
-      saved = await api('/api/invoices/' + recordId, {
-        method: 'PUT',
-        body: JSON.stringify({
-          ...invoiceBody,
-          paymentState: form.dataset.paymentState || 'Draft',
-        }),
-      });
-    } else {
-      saved = await api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
-    }
-    // Prefer server truth (includes committed line items) for any remount/reload.
-    if (!Array.isArray(saved.lineItems)) {
-      saved = await api('/api/invoices/' + saved.id);
-    }
-    // Only mutate the live form/URL after success, and only if it is still mounted.
-    if (form.isConnected) {
-      form.dataset.recordId = saved.id;
-      form.dataset.paymentState = saved.paymentState || 'Draft';
-      form.dataset.status = saved.status || 'Draft';
-      const number = form.querySelector('[data-invoice-number]');
-      if (number) number.textContent = saved.invoiceNumber || 'Draft';
-      markDrawerFormPristine(form);
-      writeInvoiceDraftSnapshot(form, { recordId: saved.id });
-    } else {
-      // Keep recovery data if the DOM node was replaced mid-save.
-      const previous = readInvoiceDraftSnapshot();
-      if (previous) {
-        try {
-          localStorage.setItem(
-            INVOICE_DRAFT_STORAGE_KEY,
-            JSON.stringify({ ...previous, recordId: saved.id, title: previous.title || body.title }),
-          );
-        } catch {
-          /* ignore quota / private mode */
-        }
-      }
-    }
-    invalidateWorkspaceCache();
-    // Always bind the URL to the persisted id so refresh reloads from the database.
-    history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
-    if (stay && !quiet) {
-      toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
-    } else if (!stay && !quiet && source === 'manual') {
-      /* caller shows toast for Save */
-    }
-    return saved;
-  };
-
-  const queued = invoicePersistQueue.then(async () => {
-    invoicePersistActive = true;
-    try {
-      return await run();
-    } finally {
-      invoicePersistActive = false;
-    }
-  });
-  // Keep the queue alive after failures so later saves still serialize.
-  invoicePersistQueue = queued.catch(() => undefined);
-  return queued;
-}
-
-async function requestCloseInvoiceWorkspace() {
-  const closed = await closeInvoiceWorkspace({ force: false, animate: true });
-  if (!closed) return false;
-  if (invoiceAutosaveTimer) {
-    clearTimeout(invoiceAutosaveTimer);
-    invoiceAutosaveTimer = null;
-  }
-  clearInvoiceDraftSnapshot();
-  history.pushState({}, '', '/workspace/invoices');
-  invalidateWorkspaceCache();
-  await renderRoute({ forceReload: true });
-  return true;
-}
-
 async function previewInvoicePdf(id) {
   if (!isBusinessProfileReady(cache.businessProfile))
     throw new Error('Save your business name and address in Aleya Settings before generating PDFs.');
@@ -1484,6 +1187,45 @@ async function previewInvoicePdf(id) {
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank', 'noopener,noreferrer');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function ensureInvoiceEditor() {
+  if (invoiceEditor) return invoiceEditor;
+  invoiceEditor = createInvoiceEditor({
+    api,
+    getAccessToken: () => session?.access_token,
+    getProfile: () => cache.businessProfile || {},
+    getCustomers: () => cache.customers || [],
+    toast,
+    invalidateCache: invalidateWorkspaceCache,
+    isProfileReady: isBusinessProfileReady,
+    downloadPdf: (id) => downloadDocument('invoice', id),
+    previewPdf: previewInvoicePdf,
+  });
+  return invoiceEditor;
+}
+
+async function mountInvoiceWorkspace(record = null) {
+  const editor = ensureInvoiceEditor();
+  const result = await editor.open(record);
+  if (result?.redirected === 'customers') {
+    customersPage();
+    return;
+  }
+  if (result?.redirected === 'invoices') {
+    invoicesPage();
+  }
+}
+
+async function requestCloseInvoiceWorkspace() {
+  const editor = ensureInvoiceEditor();
+  const closed = await editor.close({ force: false, animate: true });
+  if (!closed) return false;
+  editor.clearLocal();
+  history.pushState({}, '', '/workspace/invoices');
+  invalidateWorkspaceCache();
+  await renderRoute({ forceReload: true });
+  return true;
 }
 
 function customerOptions(selected = '') {
@@ -2521,7 +2263,10 @@ async function renderRoute({ forceReload = false } = {}) {
       }
       return;
     }
-    document.querySelector('[data-invoice-curtain]')?.remove();
+    if (invoiceEditor?.isOpen?.()) {
+      await invoiceEditor.close({ force: true, animate: false });
+    }
+    document.querySelector('[data-invoice-editor]')?.remove();
     if (path === '/dashboard') dashboardPage();
     else if (path === '/workspace/customers') customersPage();
     else if (path === '/workspace/quotes') quotesPage();
@@ -2616,7 +2361,7 @@ document.addEventListener(
 document.addEventListener('keydown', (event) => {
   // Never steal clipboard / text-editing keys, and do not close the workspace while typing.
   if (shouldIgnoreGlobalShortcut(event)) return;
-  if (event.key === 'Escape' && document.querySelector('[data-invoice-curtain]')) {
+  if (event.key === 'Escape' && invoiceEditor?.isOpen?.()) {
     event.preventDefault();
     void requestCloseInvoiceWorkspace();
     return;
@@ -2701,59 +2446,21 @@ document.addEventListener('click', async (event) => {
   const invoiceAction = event.target.closest('[data-invoice-action]');
   if (invoiceAction) {
     const action = invoiceAction.dataset.invoiceAction;
-    const form = document.querySelector('#invoice-workspace-form');
-    if (!form) return;
+    const editor = ensureInvoiceEditor();
+    if (!editor.isOpen()) return;
     if (action === 'cancel') {
       void requestCloseInvoiceWorkspace();
       return;
     }
     if (action === 'draft' || action === 'save') {
-      invoiceWorkspaceAction = action;
+      // Submit buttons: mark pending action; native submit follows.
+      await editor.handleAction(action);
       return;
     }
     if (action === 'preview' || action === 'download') {
-      const controls = form.querySelectorAll(
-        '[data-invoice-action], button, input, select, textarea',
-      );
-      controls.forEach((control) => {
-        control.dataset.wasDisabled = control.disabled ? '1' : '0';
-        control.disabled = true;
+      await runAction(async () => {
+        await editor.handleAction(action);
       });
-      try {
-        await runAction(async () => {
-          let body;
-          try {
-            body = await collectInvoiceWorkspacePayload(form);
-          } catch (error) {
-            error.fieldPath = error.fieldPath || 'lineItems';
-            throw error;
-          }
-          if (!invoicePayloadIsAutosaveReady(body)) {
-            const error = new Error(
-              !String(body?.title || '').trim()
-                ? 'Invoice title is required.'
-                : 'Add a customer, title, and at least one line item before previewing.',
-            );
-            error.status = 400;
-            error.fieldPath = !String(body?.title || '').trim() ? 'title' : 'customerId';
-            throw error;
-          }
-          // Wait for any in-flight autosave, then persist with the shared queue.
-          const saved = await persistInvoiceWorkspace(form, { stay: true, source: 'preview' });
-          if (action === 'preview') {
-            await previewInvoicePdf(saved.id);
-            toast('PDF preview opened.');
-          } else {
-            toast((await downloadDocument('invoice', saved.id)) + ' downloaded.');
-          }
-        });
-      } finally {
-        controls.forEach((control) => {
-          if (control.dataset.wasDisabled === '1') return;
-          control.disabled = false;
-          delete control.dataset.wasDisabled;
-        });
-      }
       return;
     }
   }
@@ -3057,21 +2764,15 @@ document.addEventListener('submit', async (event) => {
       await renderRoute({ forceReload: true });
       return;
     }
-    if (form.id === 'invoice-workspace-form') {
+    if (form.id === 'invoice-editor-form') {
       const submitterAction = event.submitter?.getAttribute?.('data-invoice-action');
-      const action = submitterAction || invoiceWorkspaceAction || 'save';
-      invoiceWorkspaceAction = 'save';
-      const wasNew = !form.dataset.recordId;
-      const saved = await persistInvoiceWorkspace(form, { stay: action === 'draft' });
-      clearInvoiceDraftSnapshot();
-      if (action === 'draft') return;
-      toast(wasNew ? 'Invoice draft created.' : 'Invoice saved.');
-      await closeInvoiceWorkspace({ force: true, animate: true });
+      const editor = ensureInvoiceEditor();
+      const result = await editor.handleSubmit(submitterAction);
+      if (result?.type === 'draft') return;
       history.pushState({}, '', '/workspace/invoices');
       invalidateWorkspaceCache();
       await renderRoute({ forceReload: true });
-      // Ensure the saved invoice is present in the reloaded list (regression guard).
-      if (saved?.id && !cache.invoices?.some((invoice) => invoice.id === saved.id)) {
+      if (result?.saved?.id && !cache.invoices?.some((invoice) => invoice.id === result.saved.id)) {
         invalidateWorkspaceCache();
         await loadWorkspace({ force: true });
         invoicesPage();

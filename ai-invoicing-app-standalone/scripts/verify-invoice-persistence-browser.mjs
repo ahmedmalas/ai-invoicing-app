@@ -208,37 +208,37 @@ async function main() {
 
   // 1) Open new invoice workspace
   await gotoApp('/workspace/invoices/new');
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'invoice form');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'invoice form');
 
   // Fill customer, title, three lines
-  await page.select('[data-customer-select], select[name="customerId"]', customerId);
-  await page.click('input[name="title"]', { clickCount: 3 });
-  await page.type('input[name="title"]', 'Browser P0 Persistence Draft');
+  await page.select('[data-invoice-field="customerId"]', customerId);
+  await page.click('[data-invoice-field="title"]', { clickCount: 3 });
+  await page.type('[data-invoice-field="title"]', 'Browser P0 Persistence Draft');
 
   async function setLine(index, description, qty, price, gst = true) {
     const rows = await page.$$('[data-invoice-line]');
     while (rows.length <= index) {
-      await page.click('[data-add-invoice-line], [data-add-line]');
+      await page.click('[data-add-line]');
       await new Promise((r) => setTimeout(r, 100));
       rows.push(...(await page.$$('[data-invoice-line]')).slice(rows.length));
     }
     const row = (await page.$$('[data-invoice-line]'))[index];
-    const desc = await row.$('input[name="description"]');
+    const desc = await row.$('[data-invoice-field="description"]');
     await desc.click({ clickCount: 3 });
     await desc.type(description);
-    const quantity = await row.$('input[name="quantity"]');
+    const quantity = await row.$('[data-invoice-field="quantity"]');
     await quantity.click({ clickCount: 3 });
     await quantity.type(String(qty));
-    const unitPrice = await row.$('input[name="unitPrice"]');
+    const unitPrice = await row.$('[data-invoice-field="unitPrice"]');
     await unitPrice.click({ clickCount: 3 });
     await unitPrice.type(String(price));
-    const gstSelect = await row.$('select[name="gstApplicable"]');
+    const gstSelect = await row.$('[data-invoice-field="gstApplicable"]');
     if (gstSelect) await gstSelect.select(gst ? 'true' : 'false');
   }
 
   // Ensure we have add-line control; workspace may start with 1 blank line.
-  const addSelector = (await page.$('[data-add-invoice-line]'))
-    ? '[data-add-invoice-line]'
+  const addSelector = (await page.$('[data-add-line]'))
+    ? '[data-add-line]'
     : '[data-add-line]';
   // Fill first three lines (add extras as needed)
   await setLine(0, 'Labour', 2, 100, true);
@@ -279,9 +279,9 @@ async function main() {
 
   // 3) Hard refresh
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'form after refresh');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'form after refresh');
   const afterRefresh = await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     return {
       url: location.pathname,
       recordId: form?.dataset.recordId || null,
@@ -310,13 +310,13 @@ async function main() {
   await page.click(addSelector);
   await setLine(3, 'Callout', 1, 75, false);
   // Remove Parts (index 1)
-  const removeButtons = await page.$$('[data-remove-invoice-line]');
+  const removeButtons = await page.$$('[data-remove-line]');
   if (removeButtons[1]) await removeButtons[1].click();
   await new Promise((r) => setTimeout(r, 2000));
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'form after edit refresh');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'form after edit refresh');
   const afterEdit = await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     return [...(form?.querySelectorAll('[data-invoice-line]') || [])].map((row) => ({
       description: row.querySelector('[name="description"]')?.value || '',
       quantity: Number(row.querySelector('[name="quantity"]')?.value || 0),
@@ -333,22 +333,22 @@ async function main() {
   step('edit_refresh_from_api', descriptions.join(', '));
 
   // 5) Recovery before autosave on a new invoice
-  await page.evaluate(() => localStorage.removeItem('aleya-invoice-workspace-draft-v1'));
+  await page.evaluate(() => localStorage.removeItem('aleya-invoice-editor-v2'));
   await gotoApp('/workspace/invoices/new');
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'new form');
-  await page.select('[data-customer-select], select[name="customerId"]', customerId);
-  await page.click('input[name="title"]', { clickCount: 3 });
-  await page.type('input[name="title"]', 'Pre-autosave recovery draft');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'new form');
+  await page.select('[data-invoice-field="customerId"]', customerId);
+  await page.click('[data-invoice-field="title"]', { clickCount: 3 });
+  await page.type('[data-invoice-field="title"]', 'Pre-autosave recovery draft');
   await setLine(0, 'Unsaved line A', 1, 10, true);
   // Lock autosave and write localStorage snapshot so refresh stays pre-API.
   await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     if (form) form.dataset.autosaveLocked = 'true';
     form?.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await new Promise((r) => setTimeout(r, 150));
   const snapshotBeforeRefresh = await page.evaluate(() =>
-    localStorage.getItem('aleya-invoice-workspace-draft-v1'),
+    localStorage.getItem('aleya-invoice-editor-v2'),
   );
   if (!snapshotBeforeRefresh || !snapshotBeforeRefresh.includes('Pre-autosave recovery draft')) {
     throw new Error('localStorage snapshot missing before refresh');
@@ -365,14 +365,14 @@ async function main() {
 
   // Hard refresh before API save — must restore from localStorage on /new.
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'recovery form');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'recovery form');
   const recovered = await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     return {
       url: location.pathname,
       title: form?.querySelector('[name="title"]')?.value || '',
       line: form?.querySelector('[data-invoice-line] [name="description"]')?.value || '',
-      snapshot: localStorage.getItem('aleya-invoice-workspace-draft-v1'),
+      snapshot: localStorage.getItem('aleya-invoice-editor-v2'),
     };
   });
   if (recovered.url !== '/workspace/invoices/new') {
@@ -388,11 +388,11 @@ async function main() {
 
   // Unlock autosave and allow it to persist successfully.
   await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     if (form) form.dataset.autosaveLocked = 'false';
     form?.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await page.select('[data-customer-select], select[name="customerId"]', customerId);
+  await page.select('[data-invoice-field="customerId"]', customerId);
   await setLine(0, 'Unsaved line A', 1, 10, true);
   await new Promise((r) => setTimeout(r, 2500));
   await waitFor(
@@ -403,7 +403,7 @@ async function main() {
   );
   report.recoveryInvoiceId = page.url().match(/\/workspace\/invoices\/([^/]+)\/edit$/)?.[1];
   const afterSaveSnapshot = await page.evaluate(() =>
-    localStorage.getItem('aleya-invoice-workspace-draft-v1'),
+    localStorage.getItem('aleya-invoice-editor-v2'),
   );
   // Snapshot may still exist with recordId, or be cleared after Save Draft path — either way must not override DB.
   const recoveryGet = await page.evaluate(async (id) => {
@@ -441,9 +441,9 @@ async function main() {
     );
   });
   await gotoApp(`/workspace/invoices/${invoiceId}/edit`);
-  await waitFor(page, async () => Boolean(await page.$('#invoice-workspace-form')), 15000, 'reopen after login');
+  await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'reopen after login');
   const afterLogin = await page.evaluate(() => {
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     return {
       title: form?.querySelector('[name="title"]')?.value || '',
       lines: [...(form?.querySelectorAll('[data-invoice-line]') || [])].map(
@@ -462,7 +462,7 @@ async function main() {
   // 8) Finalise (Issue) — same id, no duplicate
   const finalise = await page.evaluate(async (id) => {
     // Save current workspace first (manual Save path)
-    const form = document.querySelector('#invoice-workspace-form');
+    const form = document.querySelector('#invoice-editor-form');
     const saveBtn = form?.querySelector('[data-invoice-action="save"]');
     if (saveBtn) saveBtn.click();
     await new Promise((r) => setTimeout(r, 1500));
