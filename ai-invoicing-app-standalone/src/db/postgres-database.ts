@@ -2271,7 +2271,9 @@ export async function createPostgresDatabase(
         migration: {
           schemaVersion: DATABASE_SCHEMA_VERSION,
           userVersion,
-          compatible: userVersion === DATABASE_SCHEMA_VERSION,
+          // Ahead metadata is tolerated (shared DBs advanced by newer feature branches).
+          // Behind metadata means migrations have not finished — not ready.
+          compatible: userVersion >= DATABASE_SCHEMA_VERSION,
         },
         runtime: {
           journalMode: 'postgresql',

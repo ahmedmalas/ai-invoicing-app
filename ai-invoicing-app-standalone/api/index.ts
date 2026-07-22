@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
+import { resolveSupabaseAuthConfig } from '../src/config/supabase-auth.js';
 
 type AppBuilder = () => Promise<FastifyInstance>;
 export type VercelNodeHandler = (
@@ -20,6 +21,19 @@ export type VercelHandlerOptions = {
 };
 
 async function buildProductionApp(): Promise<FastifyInstance> {
+  const auth = resolveSupabaseAuthConfig({
+    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
+    ...((env.SUPABASE_ANON_KEY ??
+      env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? {
+          supabaseAnonKey:
+            env.SUPABASE_ANON_KEY ??
+            env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+            env.SUPABASE_PUBLISHABLE_KEY,
+        }
+      : {}),
+  });
   return buildApp({
     ...(env.DATABASE_URL !== undefined ? { databaseUrl: env.DATABASE_URL } : {}),
     dbPoolMax: env.DB_POOL_MAX,
@@ -42,17 +56,8 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined
       ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID }
       : {}),
-    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
-    ...((env.SUPABASE_ANON_KEY ??
-      env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-      env.SUPABASE_PUBLISHABLE_KEY) !== undefined
-      ? {
-          supabaseAnonKey:
-            env.SUPABASE_ANON_KEY ??
-            env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-            env.SUPABASE_PUBLISHABLE_KEY,
-        }
-      : {}),
+    ...(auth.supabaseUrl !== undefined ? { supabaseUrl: auth.supabaseUrl } : {}),
+    ...(auth.supabaseAnonKey !== undefined ? { supabaseAnonKey: auth.supabaseAnonKey } : {}),
   });
 }
 

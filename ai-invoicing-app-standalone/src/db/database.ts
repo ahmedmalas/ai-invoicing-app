@@ -2166,7 +2166,7 @@ export function createDatabase(
         migration: {
           schemaVersion: schemaVersionState.schemaVersion,
           userVersion: schemaVersionState.userVersion,
-          compatible: schemaVersionState.schemaVersion === schemaVersionState.userVersion,
+          compatible: schemaVersionState.userVersion >= schemaVersionState.schemaVersion,
         },
         runtime: {
           journalMode:

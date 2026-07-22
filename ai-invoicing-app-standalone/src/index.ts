@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { env } from './config/env.js';
+import { resolveSupabaseAuthConfig } from './config/supabase-auth.js';
 import { buildApp } from './app.js';
 
 async function start(): Promise<void> {
@@ -9,6 +10,13 @@ async function start(): Promise<void> {
   if (env.DB_PATH && env.DB_PATH !== ':memory:') {
     mkdirSync(dirname(env.DB_PATH), { recursive: true });
   }
+
+  const auth = resolveSupabaseAuthConfig({
+    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
+    ...((env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? { supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY }
+      : {}),
+  });
 
   const app = await buildApp({
     ...(env.DB_PATH !== undefined ? { dbPath: env.DB_PATH } : {}),
@@ -28,10 +36,8 @@ async function start(): Promise<void> {
     ...(env.ABOSS_INTEGRATION_SECRET !== undefined ? { abossIntegrationSecret: env.ABOSS_INTEGRATION_SECRET } : {}),
     ...(env.ABOSS_INTEGRATION_ACTOR_USER_ID !== undefined ? { abossIntegrationActorUserId: env.ABOSS_INTEGRATION_ACTOR_USER_ID } : {}),
     ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID } : {}),
-    ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
-    ...((env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY) !== undefined
-      ? { supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY }
-      : {}),
+    ...(auth.supabaseUrl !== undefined ? { supabaseUrl: auth.supabaseUrl } : {}),
+    ...(auth.supabaseAnonKey !== undefined ? { supabaseAnonKey: auth.supabaseAnonKey } : {}),
   });
 
   try {
