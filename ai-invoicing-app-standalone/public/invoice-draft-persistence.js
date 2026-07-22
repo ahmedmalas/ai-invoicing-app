@@ -4,6 +4,8 @@
  * until a successful server save (or the user cancels/closes the workspace).
  */
 
+import { readCanonicalInvoiceTitle, syncCanonicalInvoiceTitle } from './invoice-title.js';
+
 export const INVOICE_DRAFT_STORAGE_KEY = 'aleya-invoice-workspace-draft-v1';
 
 function defaultDraftStorage() {
@@ -35,12 +37,14 @@ export function clearInvoiceDraftSnapshot(storage = defaultDraftStorage()) {
 }
 
 function fieldValue(form, name) {
+  if (name === 'title') return readCanonicalInvoiceTitle(form);
   const field = form?.querySelector?.(`[name="${name}"]`);
   return field?.value != null ? String(field.value) : '';
 }
 
 export function buildInvoiceDraftSnapshot(form, { recordId = null } = {}) {
   if (!form) return null;
+  syncCanonicalInvoiceTitle(form);
   const lineItems = [...form.querySelectorAll('[data-invoice-line]')].map((row) => ({
     description: row.querySelector('[name="description"]')?.value ?? '',
     quantity: row.querySelector('[name="quantity"]')?.value ?? '1',
@@ -117,6 +121,7 @@ export function applyInvoiceDraftSnapshot(form, snapshot) {
   };
   setValue('customerId', snapshot.customerId);
   setValue('title', snapshot.title);
+  syncCanonicalInvoiceTitle(form);
   setValue('issueDate', snapshot.issueDate);
   setValue('endDate', snapshot.dueDate);
   setValue('notes', snapshot.notes);

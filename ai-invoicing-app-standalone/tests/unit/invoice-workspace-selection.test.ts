@@ -31,6 +31,7 @@ describe('invoice workspace selection and drag markup', () => {
       },
     });
     expect(html).toContain('name="title"');
+    expect(html).toContain('data-invoice-title');
     expect(html).toContain('value="Site visit"');
     expect(html).toContain('name="description"');
     expect(html).not.toMatch(/name="title"[^>]*readonly/);
