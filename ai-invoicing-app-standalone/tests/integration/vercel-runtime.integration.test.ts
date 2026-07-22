@@ -124,4 +124,56 @@ describe('Vercel Node runtime handler', () => {
       message: 'Internal server error',
     });
   });
+
+  it('times out hung initialization instead of waiting for the platform kill', async () => {
+    const handler = createVercelHandler(
+      () =>
+        new Promise<FastifyInstance>(() => {
+          /* never resolves — simulates stuck Postgres boot */
+        }),
+      { initializationTimeoutMs: 250 },
+    );
+    server = createServer((request, response) => {
+      void handler(request, response);
+    });
+    const baseUrl = await listen(server);
+
+    const startedAt = Date.now();
+    const response = await fetch(`${baseUrl}/health`);
+    const elapsedMs = Date.now() - startedAt;
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({
+      status: 504,
+      code: 'APP_INITIALIZATION_TIMEOUT',
+      message: 'Application initialization timed out',
+    });
+    // Bound well under Vercel's 60s FUNCTION_INVOCATION_TIMEOUT.
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
+  it('retries initialization after a previous cold-start failure', async () => {
+    let builds = 0;
+    const handler = createVercelHandler(async () => {
+      builds += 1;
+      if (builds === 1) {
+        throw new Error('transient boot failure');
+      }
+      app = await buildApp({
+        dbPath: ':memory:',
+        nodeEnv: 'test',
+        authBypassForTesting: true,
+      });
+      return app;
+    });
+    server = createServer((request, response) => {
+      void handler(request, response);
+    });
+    const baseUrl = await listen(server);
+
+    const first = await fetch(`${baseUrl}/health/live`);
+    expect(first.status).toBe(500);
+    const second = await fetch(`${baseUrl}/health/live`);
+    expect(second.status).toBe(200);
+    expect(builds).toBe(2);
+  });
 });

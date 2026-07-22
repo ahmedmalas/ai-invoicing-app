@@ -18,7 +18,8 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "verify:invoice-persistence": "npm run build && node scripts/verify-invoice-persistence-browser.mjs",
-    "verify:invoice-editor": "npm run build && node scripts/verify-invoice-editor-browser.mjs"
+    "verify:invoice-editor": "npm run build && node scripts/verify-invoice-editor-browser.mjs",
+    "verify:preview-cold-start": "node scripts/verify-preview-cold-start.mjs"
   },
   "engines": {
     "node": ">=20"

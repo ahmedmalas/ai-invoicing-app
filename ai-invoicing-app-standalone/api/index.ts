@@ -11,6 +11,14 @@ export type VercelNodeHandler = (
   response: ServerResponse,
 ) => Promise<void>;
 
+/** Keep startup under the Vercel 60s hard kill; leave headroom for the request itself. */
+export const APP_INITIALIZATION_TIMEOUT_MS = 25_000;
+const REQUEST_HARD_TIMEOUT_MS = 55_000;
+
+export type VercelHandlerOptions = {
+  initializationTimeoutMs?: number;
+};
+
 async function buildProductionApp(): Promise<FastifyInstance> {
   return buildApp({
     ...(env.DATABASE_URL !== undefined ? { databaseUrl: env.DATABASE_URL } : {}),
@@ -25,29 +33,92 @@ async function buildProductionApp(): Promise<FastifyInstance> {
     requestBodyLimit: env.REQUEST_BODY_LIMIT,
     serveFrontend: env.ENABLE_BROWSER_APP,
     abossOnlyAuth: env.ABOSS_ONLY_AUTH,
-    ...(env.ABOSS_INTEGRATION_SECRET !== undefined ? { abossIntegrationSecret: env.ABOSS_INTEGRATION_SECRET } : {}),
-    ...(env.ABOSS_INTEGRATION_ACTOR_USER_ID !== undefined ? { abossIntegrationActorUserId: env.ABOSS_INTEGRATION_ACTOR_USER_ID } : {}),
-    ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID } : {}),
+    ...(env.ABOSS_INTEGRATION_SECRET !== undefined
+      ? { abossIntegrationSecret: env.ABOSS_INTEGRATION_SECRET }
+      : {}),
+    ...(env.ABOSS_INTEGRATION_ACTOR_USER_ID !== undefined
+      ? { abossIntegrationActorUserId: env.ABOSS_INTEGRATION_ACTOR_USER_ID }
+      : {}),
+    ...(env.ABOSS_ALLOWED_ORGANIZATION_ID !== undefined
+      ? { abossAllowedOrganizationId: env.ABOSS_ALLOWED_ORGANIZATION_ID }
+      : {}),
     ...(env.SUPABASE_URL !== undefined ? { supabaseUrl: env.SUPABASE_URL } : {}),
-    ...((env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY) !== undefined
-      ? { supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY }
+    ...((env.SUPABASE_ANON_KEY ??
+      env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      env.SUPABASE_PUBLISHABLE_KEY) !== undefined
+      ? {
+          supabaseAnonKey:
+            env.SUPABASE_ANON_KEY ??
+            env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+            env.SUPABASE_PUBLISHABLE_KEY,
+        }
       : {}),
   });
 }
 
-export function createVercelHandler(build: AppBuilder = buildProductionApp): VercelNodeHandler {
+function withTimeout<T>(promise: Promise<T>, ms: number, code: string, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error(message), { code }));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+export function createVercelHandler(
+  build: AppBuilder = buildProductionApp,
+  options: VercelHandlerOptions = {},
+): VercelNodeHandler {
   let appPromise: Promise<FastifyInstance> | undefined;
+  const initializationTimeoutMs = options.initializationTimeoutMs ?? APP_INITIALIZATION_TIMEOUT_MS;
 
   const getApp = (): Promise<FastifyInstance> => {
-    appPromise ??= build().then(async (app) => {
-      await app.ready();
-      return app;
-    });
+    if (!appPromise) {
+      const startedAt = Date.now();
+      appPromise = withTimeout(
+        build().then(async (app) => {
+          await app.ready();
+          console.info(
+            JSON.stringify({
+              event: 'vercel.app.ready',
+              durationMs: Date.now() - startedAt,
+            }),
+          );
+          return app;
+        }),
+        initializationTimeoutMs,
+        'APP_INITIALIZATION_TIMEOUT',
+        'Application initialization timed out',
+      ).catch((error: unknown) => {
+        // Allow the next request to retry boot after a failed/hung cold start.
+        appPromise = undefined;
+        console.error(
+          JSON.stringify({
+            event: 'vercel.app.init_failed',
+            durationMs: Date.now() - startedAt,
+            code:
+              error && typeof error === 'object' && 'code' in error
+                ? (error as { code?: string }).code
+                : 'APP_INITIALIZATION_FAILED',
+            message: error instanceof Error ? error.message : 'unknown',
+          }),
+        );
+        throw error;
+      });
+    }
     return appPromise;
   };
 
   return async (request, response) => {
-    const REQUEST_HARD_TIMEOUT_MS = 55_000;
     let hardTimeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const app = await getApp();
@@ -87,21 +158,15 @@ export function createVercelHandler(build: AppBuilder = buildProductionApp): Ver
         }),
       ]);
     } catch (error) {
-      const startupError =
-        error && typeof error === 'object'
-          ? {
-              name: error instanceof Error ? error.name : 'UnknownError',
-              code:
-                'code' in error && typeof error.code === 'string'
-                  ? error.code
-                  : 'APP_INITIALIZATION_FAILED',
-            }
-          : { name: 'UnknownError', code: 'APP_INITIALIZATION_FAILED' };
-      const isTimeout =
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        (error as { code?: string }).code === 'REQUEST_TIMEOUT';
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? (error as { code?: string }).code
+          : undefined;
+      const isTimeout = code === 'REQUEST_TIMEOUT' || code === 'APP_INITIALIZATION_TIMEOUT';
+      const startupError = {
+        name: error instanceof Error ? error.name : 'UnknownError',
+        code: code ?? 'APP_INITIALIZATION_FAILED',
+      };
       console.error(
         isTimeout ? 'Vercel request timed out' : 'Vercel application initialization failed',
         startupError,
@@ -112,8 +177,16 @@ export function createVercelHandler(build: AppBuilder = buildProductionApp): Ver
         response.end(
           JSON.stringify({
             status: isTimeout ? 504 : 500,
-            code: isTimeout ? 'REQUEST_TIMEOUT' : 'INTERNAL_SERVER_ERROR',
-            message: isTimeout ? 'Request timed out' : 'Internal server error',
+            code: isTimeout
+              ? code === 'APP_INITIALIZATION_TIMEOUT'
+                ? 'APP_INITIALIZATION_TIMEOUT'
+                : 'REQUEST_TIMEOUT'
+              : 'INTERNAL_SERVER_ERROR',
+            message: isTimeout
+              ? code === 'APP_INITIALIZATION_TIMEOUT'
+                ? 'Application initialization timed out'
+                : 'Request timed out'
+              : 'Internal server error',
           }),
         );
       } else if (!response.writableEnded) {

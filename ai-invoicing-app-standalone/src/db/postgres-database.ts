@@ -1385,10 +1385,15 @@ export async function createPostgresDatabase(
     },
   };
   const schemaClient = await pool.connect();
+  const bootStartedAt = Date.now();
+  let bootPath: 'full' | 'fast' = 'full';
   try {
+    // Bound lock waits and DDL so a contended advisory lock or sleepy Postgres
+    // cannot hold the Vercel isolate until the hard 60s FUNCTION_INVOCATION_TIMEOUT.
+    await schemaClient.query("SET lock_timeout = '8s'");
+    await schemaClient.query("SET statement_timeout = '25s'");
     await schemaClient.query('BEGIN');
     await schemaClient.query('SELECT pg_advisory_xact_lock($1)', [1_905_052]);
-    await schemaClient.query(loadPostgresSchema());
     await schemaClient.query(`
       CREATE TABLE IF NOT EXISTS public.auth_workspaces (
         id UUID PRIMARY KEY,
@@ -1404,48 +1409,70 @@ export async function createPostgresDatabase(
       );
       ALTER TABLE public.auth_workspaces ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.auth_workspace_memberships ENABLE ROW LEVEL SECURITY;
+      CREATE TABLE IF NOT EXISTS public.app_database_metadata (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        schema_version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
-    await schemaClient.query(
-      `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
-       VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', $1)
-       ON CONFLICT (id) DO NOTHING`,
-      [nowIso()],
-    );
-    await schemaClient.query(
-      `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
-       SELECT id::uuid, '00000000-0000-0000-0000-000000000001', 'owner', $1
-       FROM public.users
-       WHERE id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-       ON CONFLICT (auth_user_id) DO NOTHING`,
-      [nowIso()],
-    );
-    await schemaClient.query(
-      `CREATE TABLE IF NOT EXISTS app_database_metadata (singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1), schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
-    );
     const version = await schemaClient.query<{ schema_version: number }>(
-      'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
+      'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
     );
-    if ((version.rows[0]?.schema_version ?? 0) > DATABASE_SCHEMA_VERSION)
-      throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+    const currentVersion = version.rows[0]?.schema_version ?? 0;
+    if (currentVersion > DATABASE_SCHEMA_VERSION) throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+
+    // Cold-start fast path: when the DB is already on this schema version, skip the
+    // full ~50KB CREATE/ALTER script (197 statements). Preview isolates always cold
+    // start; re-running full DDL was the dominant cause of 60s FUNCTION_INVOCATION_TIMEOUT.
+    if (currentVersion === DATABASE_SCHEMA_VERSION) {
+      bootPath = 'fast';
+    } else {
+      bootPath = 'full';
+      await schemaClient.query(loadPostgresSchema());
+      await schemaClient.query(
+        `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
+         VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', $1)
+         ON CONFLICT (id) DO NOTHING`,
+        [nowIso()],
+      );
+      await schemaClient.query(
+        `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
+         SELECT id::uuid, '00000000-0000-0000-0000-000000000001', 'owner', $1
+         FROM public.users
+         WHERE id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+         ON CONFLICT (auth_user_id) DO NOTHING`,
+        [nowIso()],
+      );
+    }
+
     await schemaClient.query(
-      `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at) VALUES (1, $1, $2) ON CONFLICT(singleton_id) DO UPDATE SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+      `INSERT INTO public.app_database_metadata(singleton_id, schema_version, updated_at)
+       VALUES (1, $1, $2)
+       ON CONFLICT(singleton_id) DO UPDATE
+       SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
       [DATABASE_SCHEMA_VERSION, nowIso()],
     );
 
-    // Existing tenant schemas are only created at provision time. Apply cheap
-    // additive upgrades (e.g. invoice_line_items.product_id) so older workspaces
-    // stay compatible without re-running the full schema DDL on every cold start.
+    // Cheap additive upgrades for every tenant schema (including public). Safe to
+    // re-run: all statements use IF NOT EXISTS / defaults.
     const workspaceSchemas = await schemaClient.query<{ schema_name: string }>(
       `SELECT schema_name FROM public.auth_workspaces ORDER BY schema_name`,
     );
+    if (workspaceSchemas.rows.length === 0) {
+      // Brand-new DB with no workspace row yet — ensure public upgrades still run.
+      workspaceSchemas.rows.push({ schema_name: 'public' });
+    }
     const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
     for (const workspace of workspaceSchemas.rows) {
       const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
-      if (schemaName === 'public') continue;
       await schemaClient.query(`SET LOCAL search_path TO "${schemaName}", public`);
       await schemaClient.query(workspaceUpgradeSql);
       await schemaClient.query(
-        `CREATE TABLE IF NOT EXISTS app_database_metadata (singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1), schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
+        `CREATE TABLE IF NOT EXISTS app_database_metadata (
+          singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+          schema_version INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
       );
       const workspaceVersion = await schemaClient.query<{ schema_version: number }>(
         'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
@@ -1463,12 +1490,35 @@ export async function createPostgresDatabase(
     }
     await schemaClient.query('SET LOCAL search_path TO public');
     await schemaClient.query('COMMIT');
+    await schemaClient.query('RESET lock_timeout');
+    await schemaClient.query('RESET statement_timeout');
+    console.info(
+      JSON.stringify({
+        event: 'postgres.boot.complete',
+        path: bootPath,
+        schemaVersion: DATABASE_SCHEMA_VERSION,
+        workspaceCount: workspaceSchemas.rows.length,
+        durationMs: Date.now() - bootStartedAt,
+      }),
+    );
+    schemaClient.release();
   } catch (error) {
     await schemaClient.query('ROLLBACK').catch(() => undefined);
+    console.error(
+      JSON.stringify({
+        event: 'postgres.boot.failed',
+        path: bootPath,
+        durationMs: Date.now() - bootStartedAt,
+        code:
+          error && typeof error === 'object' && 'code' in error
+            ? (error as { code?: string }).code
+            : undefined,
+        message: error instanceof Error ? error.message : 'unknown',
+      }),
+    );
+    schemaClient.release();
     await pool.end();
     throw error;
-  } finally {
-    schemaClient.release();
   }
   const insertTimeline = db.prepare(
     `INSERT INTO timeline_events (
