@@ -8,7 +8,15 @@
  *
  * Optionally set VERCEL_SHARE_TOKEN for ?_vercel_share= links
  * (required when the preview has Vercel Authentication enabled).
+ *
+ * Uses curl so Vercel share/bypass cookies persist across redirects
+ * (Node fetch does not keep a cookie jar across SSO redirects).
  */
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 const base = (process.env.PREVIEW_BASE_URL || '').replace(/\/$/, '');
 const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET || '';
 const share = process.env.VERCEL_SHARE_TOKEN || '';
@@ -18,21 +26,9 @@ if (!base) {
   process.exit(2);
 }
 
-/** @type {string[]} */
-const cookieJar = [];
-
-function rememberCookies(response) {
-  const raw = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
-  for (const entry of raw) {
-    const pair = String(entry).split(';')[0]?.trim();
-    if (!pair) continue;
-    const name = pair.split('=')[0];
-    const next = cookieJar.filter((item) => !item.startsWith(name + '='));
-    next.push(pair);
-    cookieJar.length = 0;
-    cookieJar.push(...next);
-  }
-}
+const jarDir = mkdtempSync(join(tmpdir(), 'preview-cold-start-'));
+const jarPath = join(jarDir, 'cookies.txt');
+writeFileSync(jarPath, '');
 
 function buildUrl(path, { includeShare = false } = {}) {
   const url = new URL(path, base + '/');
@@ -42,83 +38,105 @@ function buildUrl(path, { includeShare = false } = {}) {
   return url.toString();
 }
 
-async function establishShareSession() {
-  if (!share && !bypass) return;
-  const response = await fetch(buildUrl('/', { includeShare: true }), {
-    redirect: 'follow',
-    headers: {
-      ...(bypass ? { 'x-vercel-protection-bypass': bypass } : {}),
-      ...(bypass ? { 'x-vercel-set-bypass-cookie': 'true' } : {}),
-    },
-  });
-  rememberCookies(response);
-  await response.arrayBuffer();
+function curlFetch(url, { timeoutMs = 45_000 } = {}) {
+  const bodyPath = join(jarDir, `body-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+  const started = Date.now();
+  const result = spawnSync(
+    'curl',
+    [
+      '-sS',
+      '-L',
+      '--max-time',
+      String(Math.ceil(timeoutMs / 1000)),
+      '-c',
+      jarPath,
+      '-b',
+      jarPath,
+      '-o',
+      bodyPath,
+      '-w',
+      '%{http_code}\n%{url_effective}',
+      ...(bypass
+        ? ['-H', `x-vercel-protection-bypass: ${bypass}`, '-H', 'x-vercel-set-bypass-cookie: true']
+        : []),
+      url,
+    ],
+    { encoding: 'utf8' },
+  );
+  const ms = Date.now() - started;
+  if (result.error) {
+    return { status: 0, ms, error: result.error.message, body: '', finalUrl: url };
+  }
+  if (result.status !== 0) {
+    return {
+      status: 0,
+      ms,
+      error: (result.stderr || result.stdout || 'curl failed').trim(),
+      body: '',
+      finalUrl: url,
+    };
+  }
+  const [statusLine = '0', finalUrl = url] = String(result.stdout || '').trim().split('\n');
+  let body = '';
+  try {
+    body = readFileSync(bodyPath, 'utf8').slice(0, 240);
+  } catch {
+    body = '';
+  }
+  return { status: Number(statusLine) || 0, ms, body, finalUrl };
 }
 
-async function timedFetch(path, { timeoutMs = 45_000 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const started = Date.now();
-  try {
-    const response = await fetch(buildUrl(path), {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        ...(bypass ? { 'x-vercel-protection-bypass': bypass } : {}),
-        ...(bypass ? { 'x-vercel-set-bypass-cookie': 'true' } : {}),
-        ...(cookieJar.length ? { cookie: cookieJar.join('; ') } : {}),
-      },
-    });
-    rememberCookies(response);
-    const text = await response.text();
-    return {
-      path,
-      status: response.status,
-      ms: Date.now() - started,
-      finalUrl: response.url,
-      body: text.slice(0, 240),
-    };
-  } catch (error) {
-    return {
-      path,
-      status: 0,
-      ms: Date.now() - started,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+function establishShareSession() {
+  if (!share && !bypass) return;
+  const home = curlFetch(buildUrl('/', { includeShare: true }));
+  console.log('shareSession', { status: home.status, ms: home.ms, finalUrl: home.finalUrl });
+}
+
+function timedFetch(path) {
+  const result = curlFetch(buildUrl(path));
+  return { path, ...result };
 }
 
 const report = { ok: false, base, probes: [] };
 
-async function main() {
-  await establishShareSession();
+function cleanup() {
+  try {
+    rmSync(jarDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
 
-  // Prefer the public liveness route (not /api/health/live, which requires auth).
-  const live1 = await timedFetch('/health/live');
+try {
+  establishShareSession();
+
+  const live1 = timedFetch('/health/live');
   report.probes.push(live1);
   console.log('probe1', live1);
 
-  const live2 = await timedFetch('/health/live');
+  const live2 = timedFetch('/health/live');
   report.probes.push(live2);
   console.log('probe2', live2);
 
-  const ready = await timedFetch('/health/ready');
+  const ready = timedFetch('/health/ready');
   report.probes.push(ready);
   console.log('ready', { status: ready.status, ms: ready.ms, body: ready.body });
 
-  const editor = await timedFetch('/assets/invoice-editor.js');
+  const editor = timedFetch('/assets/invoice-editor.js');
   report.probes.push(editor);
   console.log('editor', { status: editor.status, ms: editor.ms, snippet: editor.body?.slice(0, 80) });
 
-  const oldAsset = await timedFetch('/assets/invoice-workspace.js');
+  const oldAsset = timedFetch('/assets/invoice-workspace.js');
   report.probes.push(oldAsset);
   console.log('oldAsset', { status: oldAsset.status, ms: oldAsset.ms });
 
   const blockedBySso =
     report.probes.some((p) => p.status === 401 || p.status === 403) ||
-    report.probes.some((p) => /vercel\.com\/sso|Authentication Required/i.test(p.body || ''));
+    report.probes.some(
+      (p) =>
+        /vercel\.com\/(login|sso)/i.test(p.finalUrl || '') ||
+        /Authentication Required|vercel\.com\/login/i.test(p.body || ''),
+    );
   const timedOut = report.probes.some(
     (p) => p.status === 504 || /timeout/i.test(p.error || '') || /timeout/i.test(p.body || ''),
   );
@@ -140,10 +158,10 @@ async function main() {
     warmMs: live2.ms,
   };
   console.log(JSON.stringify(report, null, 2));
+  cleanup();
   if (!report.ok) process.exit(1);
-}
-
-main().catch((error) => {
+} catch (error) {
+  cleanup();
   console.error(error);
   process.exit(1);
-});
+}
