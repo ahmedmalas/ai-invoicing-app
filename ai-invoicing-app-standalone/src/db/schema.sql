@@ -1202,3 +1202,123 @@ BEFORE DELETE ON stock_movements
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_STOCK_MOVEMENT');
 END;
+
+-- Slice 54: Accounting foundations (Chart of Accounts, periods, journals, audit)
+
+CREATE TABLE IF NOT EXISTS chart_of_accounts (
+  id TEXT PRIMARY KEY,
+  account_number TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  account_type TEXT NOT NULL,
+  category TEXT NOT NULL,
+  gst_default TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_archived INTEGER NOT NULL DEFAULT 0,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  description TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS financial_years (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL UNIQUE,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounting_periods (
+  id TEXT PRIMARY KEY,
+  financial_year_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  period_number INTEGER NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (financial_year_id) REFERENCES financial_years(id),
+  UNIQUE (financial_year_id, period_number)
+);
+
+CREATE TABLE IF NOT EXISTS journals (
+  id TEXT PRIMARY KEY,
+  journal_number TEXT UNIQUE,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL,
+  journal_date TEXT NOT NULL,
+  period_id TEXT,
+  narration TEXT NOT NULL,
+  notes TEXT,
+  reference TEXT,
+  created_by_user_id TEXT,
+  approved_by_user_id TEXT,
+  posted_by_user_id TEXT,
+  reversed_by_journal_id TEXT,
+  reverses_journal_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  approved_at TEXT,
+  posted_at TEXT,
+  FOREIGN KEY (period_id) REFERENCES accounting_periods(id)
+);
+
+CREATE TABLE IF NOT EXISTS journal_lines (
+  id TEXT PRIMARY KEY,
+  journal_id TEXT NOT NULL,
+  line_number INTEGER NOT NULL,
+  account_id TEXT NOT NULL,
+  description TEXT,
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0,
+  gst_amount REAL,
+  gst_code TEXT,
+  FOREIGN KEY (journal_id) REFERENCES journals(id) ON DELETE CASCADE,
+  FOREIGN KEY (account_id) REFERENCES chart_of_accounts(id)
+);
+
+CREATE TABLE IF NOT EXISTS journal_attachments (
+  id TEXT PRIMARY KEY,
+  journal_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  content_base64 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (journal_id) REFERENCES journals(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_audit_events (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor_user_id TEXT,
+  before_json TEXT,
+  after_json TEXT,
+  ip_address TEXT,
+  session_id TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS journal_sequences (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  prefix TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  next_sequence INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_coa_type_active
+ON chart_of_accounts(account_type, is_active, is_archived, account_number);
+CREATE INDEX IF NOT EXISTS idx_periods_year_status
+ON accounting_periods(financial_year_id, status, start_date);
+CREATE INDEX IF NOT EXISTS idx_journals_date_status
+ON journals(journal_date, status, journal_number);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_account
+ON journal_lines(account_id, journal_id);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_journal
+ON journal_lines(journal_id, line_number);
+CREATE INDEX IF NOT EXISTS idx_accounting_audit_entity
+ON accounting_audit_events(entity_type, entity_id, created_at);

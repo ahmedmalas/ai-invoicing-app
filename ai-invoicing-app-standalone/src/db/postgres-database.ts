@@ -59,6 +59,31 @@ import type {
   PurchaseOrderReceiptStatus,
 } from '../domain/inventory/types.js';
 import { createPostgresInventoryStore } from './postgres-inventory-store.js';
+import {
+  createPostgresAccountingStore,
+  ensureAccountingSchemaPostgres,
+} from './postgres-accounting-store.js';
+import type {
+  AccountingAuditEvent,
+  AccountingDashboard,
+  AccountingPeriod,
+  AccountingPeriodStatus,
+  AgeingReport,
+  BalanceSheetReport,
+  BasReport,
+  ChartAccount,
+  FinancialYear,
+  GstDetailRow,
+  GstSummaryReport,
+  Journal,
+  JournalAttachment,
+  JournalLine,
+  JournalLineInput,
+  JournalStatus,
+  LedgerEntry,
+  ProfitAndLossReport,
+  TrialBalanceRow,
+} from '../domain/accounting/types.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 import { assertWorkspaceSchemaName, getWorkspaceContext } from '../auth/workspace-context.js';
@@ -684,7 +709,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 45;
+export const DATABASE_SCHEMA_VERSION = 46;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -737,6 +762,14 @@ export const PLATFORM_SNAPSHOT_TABLES = [
   'stocktake_sequences',
   'idempotency_requests',
   'timeline_events',
+  'chart_of_accounts',
+  'financial_years',
+  'accounting_periods',
+  'journals',
+  'journal_lines',
+  'journal_attachments',
+  'accounting_audit_events',
+  'journal_sequences',
 ] as const;
 
 type PlatformSnapshotTable = (typeof PLATFORM_SNAPSHOT_TABLES)[number];
@@ -985,6 +1018,113 @@ export interface AppDatabase {
   dismissInventoryAlert(id: string): DatabaseResult<void>;
   refreshAllInventoryAlerts(): DatabaseResult<InventoryAlert[]>;
   getInventoryReports(): DatabaseResult<InventoryReportBundle>;
+  listChartAccounts(filter?: {
+    includeArchived?: boolean;
+    accountType?: string;
+  }): DatabaseResult<ChartAccount[]>;
+  getChartAccountById(id: string): DatabaseResult<ChartAccount | null>;
+  upsertChartAccount(input: {
+    id?: string;
+    accountNumber: string;
+    name: string;
+    accountType: ChartAccount['accountType'];
+    category: ChartAccount['category'];
+    gstDefault: ChartAccount['gstDefault'];
+    isActive?: boolean;
+    description?: string | null;
+    actorUserId?: string | null;
+  }): DatabaseResult<ChartAccount>;
+  archiveChartAccount(id: string, actorUserId?: string | null): DatabaseResult<ChartAccount>;
+  listFinancialYears(): DatabaseResult<FinancialYear[]>;
+  createFinancialYear(input?: {
+    label?: string;
+    startDate?: string;
+    endDate?: string;
+    actorUserId?: string | null;
+  }): DatabaseResult<FinancialYear>;
+  ensureCurrentFinancialYear(): DatabaseResult<FinancialYear>;
+  setFinancialYearStatus(
+    id: string,
+    status: FinancialYear['status'],
+    actorUserId?: string | null,
+  ): DatabaseResult<FinancialYear>;
+  listAccountingPeriods(financialYearId?: string): DatabaseResult<AccountingPeriod[]>;
+  setAccountingPeriodStatus(
+    id: string,
+    status: AccountingPeriodStatus,
+    actorUserId?: string | null,
+  ): DatabaseResult<AccountingPeriod>;
+  createJournal(input: {
+    journalDate: string;
+    narration: string;
+    notes?: string | null;
+    reference?: string | null;
+    source?: 'Manual' | 'Auto' | 'Reversal';
+    status?: 'Draft' | 'Approved';
+    lines: JournalLineInput[];
+    actorUserId?: string | null;
+  }): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  updateDraftJournal(
+    id: string,
+    input: {
+      journalDate?: string;
+      narration?: string;
+      notes?: string | null;
+      reference?: string | null;
+      lines?: JournalLineInput[];
+      actorUserId?: string | null;
+    },
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  approveJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  postJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  reverseJournal(
+    id: string,
+    actorUserId?: string | null,
+  ): DatabaseResult<Journal & { lines: JournalLine[] }>;
+  getJournalById(id: string): DatabaseResult<(Journal & { lines: JournalLine[] }) | null>;
+  listJournals(filter?: {
+    status?: JournalStatus;
+    from?: string;
+    to?: string;
+  }): DatabaseResult<Journal[]>;
+  addJournalAttachment(input: {
+    journalId: string;
+    fileName: string;
+    contentType: string;
+    contentBase64: string;
+  }): DatabaseResult<JournalAttachment>;
+  getGeneralLedger(
+    accountId: string,
+    from?: string,
+    to?: string,
+  ): DatabaseResult<{ account: ChartAccount; entries: LedgerEntry[] }>;
+  getTrialBalance(asAt?: string): DatabaseResult<TrialBalanceRow[]>;
+  getProfitAndLoss(from: string, to: string): DatabaseResult<ProfitAndLossReport>;
+  getBalanceSheet(asAt: string): DatabaseResult<BalanceSheetReport>;
+  getGstDetail(from: string, to: string): DatabaseResult<GstDetailRow[]>;
+  getGstSummary(from: string, to: string): DatabaseResult<GstSummaryReport>;
+  getGstExceptions(from: string, to: string): DatabaseResult<GstDetailRow[]>;
+  getBasReport(from: string, to: string): DatabaseResult<BasReport>;
+  getAgedReceivables(asAt: string): DatabaseResult<AgeingReport>;
+  getAgedPayables(asAt: string): DatabaseResult<AgeingReport>;
+  listAccountingAuditEvents(
+    entityType?: string,
+    entityId?: string,
+  ): DatabaseResult<AccountingAuditEvent[]>;
+  getAccountingDashboard(): DatabaseResult<AccountingDashboard>;
+  exportAccountingCsv(
+    rows: Array<Record<string, string | number | null | undefined>>,
+  ): DatabaseResult<string>;
+  exportAccountingExcel(
+    sheetName: string,
+    rows: Array<Record<string, string | number | null | undefined>>,
+  ): DatabaseResult<string>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
 }
@@ -1608,6 +1748,7 @@ export async function createPostgresDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
+  const accountingStore = createPostgresAccountingStore(db);
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -1982,6 +2123,16 @@ export async function createPostgresDatabase(
   }
 
   async function assertRestoreTargetIsEmptyOrThrow() {
+    // Accounting bootstrap seeds chart_of_accounts + journal_sequences at DB init.
+    await db.prepare('DELETE FROM journal_attachments').run();
+    await db.prepare('DELETE FROM journal_lines').run();
+    await db.prepare('DELETE FROM journals').run();
+    await db.prepare('DELETE FROM accounting_periods').run();
+    await db.prepare('DELETE FROM financial_years').run();
+    await db.prepare('DELETE FROM accounting_audit_events').run();
+    await db.prepare('DELETE FROM chart_of_accounts').run();
+    await db.prepare('DELETE FROM journal_sequences').run();
+
     for (const table of PLATFORM_SNAPSHOT_TABLES) {
       const count = (await db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()) as {
         count: number;
@@ -2157,6 +2308,18 @@ export async function createPostgresDatabase(
     await insertSnapshotRows('job_sequences', snapshot.entities.job_sequences);
     await insertSnapshotRows('idempotency_requests', snapshot.entities.idempotency_requests);
 
+    await insertSnapshotRows('chart_of_accounts', snapshot.entities.chart_of_accounts);
+    await insertSnapshotRows('financial_years', snapshot.entities.financial_years);
+    await insertSnapshotRows('accounting_periods', snapshot.entities.accounting_periods);
+    await insertSnapshotRows('journal_sequences', snapshot.entities.journal_sequences);
+    await insertSnapshotRows('journals', snapshot.entities.journals);
+    await insertSnapshotRows('journal_lines', snapshot.entities.journal_lines);
+    await insertSnapshotRows('journal_attachments', snapshot.entities.journal_attachments);
+    await insertSnapshotRows(
+      'accounting_audit_events',
+      snapshot.entities.accounting_audit_events,
+    );
+
     for (const row of snapshot.entities.invoices) {
       if (typeof row.id !== 'string' || typeof row.status !== 'string') {
         throw new Error('BACKUP_RESTORE_INCOMPLETE_PAYLOAD');
@@ -2295,6 +2458,7 @@ export async function createPostgresDatabase(
          SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
         [DATABASE_SCHEMA_VERSION, now],
       );
+      await ensureAccountingSchemaPostgres(db);
 
       const roleId = randomUUID();
       const teamId = randomUUID();
@@ -2862,6 +3026,15 @@ export async function createPostgresDatabase(
         });
 
         await inventoryStore.applyInvoiceStockOut(invoiceId);
+
+        await accountingStore.createAutoSalesJournal({
+          journalDate: finalised.issueDate,
+          invoiceId: finalised.id,
+          invoiceNumber: finalised.invoiceNumber,
+          subtotal: finalised.totals.subtotal,
+          gstTotal: finalised.totals.gstTotal,
+          total: finalised.totals.total,
+        });
 
         return finalised;
       })(id);
@@ -6737,6 +6910,43 @@ export async function createPostgresDatabase(
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       await restorePlatformSnapshot(parsedSnapshot);
     },
+
+    listChartAccounts: (filter) => accountingStore.listAccounts(filter),
+    getChartAccountById: (id) => accountingStore.getAccountById(id),
+    upsertChartAccount: (input) => accountingStore.upsertAccount(input),
+    archiveChartAccount: (id, actorUserId) => accountingStore.archiveAccount(id, actorUserId),
+    listFinancialYears: () => accountingStore.listFinancialYears(),
+    createFinancialYear: (input) => accountingStore.createFinancialYear(input),
+    ensureCurrentFinancialYear: () => accountingStore.ensureCurrentFinancialYear(),
+    setFinancialYearStatus: (id, status, actorUserId) =>
+      accountingStore.setFinancialYearStatus(id, status, actorUserId),
+    listAccountingPeriods: (financialYearId) => accountingStore.listPeriods(financialYearId),
+    setAccountingPeriodStatus: (id, status, actorUserId) =>
+      accountingStore.setPeriodStatus(id, status, actorUserId),
+    createJournal: (input) => accountingStore.createJournal(input),
+    updateDraftJournal: (id, input) => accountingStore.updateDraftJournal(id, input),
+    approveJournal: (id, actorUserId) => accountingStore.approveJournal(id, actorUserId),
+    postJournal: (id, actorUserId) => accountingStore.postJournal(id, actorUserId),
+    reverseJournal: (id, actorUserId) => accountingStore.reverseJournal(id, actorUserId),
+    getJournalById: (id) => accountingStore.getJournalById(id),
+    listJournals: (filter) => accountingStore.listJournals(filter),
+    addJournalAttachment: (input) => accountingStore.addJournalAttachment(input),
+    getGeneralLedger: (accountId, from, to) =>
+      accountingStore.getGeneralLedger(accountId, from, to),
+    getTrialBalance: (asAt) => accountingStore.getTrialBalance(asAt),
+    getProfitAndLoss: (from, to) => accountingStore.getProfitAndLoss(from, to),
+    getBalanceSheet: (asAt) => accountingStore.getBalanceSheet(asAt),
+    getGstDetail: (from, to) => accountingStore.getGstDetail(from, to),
+    getGstSummary: (from, to) => accountingStore.getGstSummary(from, to),
+    getGstExceptions: (from, to) => accountingStore.getGstExceptions(from, to),
+    getBasReport: (from, to) => accountingStore.getBasReport(from, to),
+    getAgedReceivables: (asAt) => accountingStore.getAgedReceivables(asAt),
+    getAgedPayables: (asAt) => accountingStore.getAgedPayables(asAt),
+    listAccountingAuditEvents: (entityType, entityId) =>
+      accountingStore.listAuditEvents(entityType, entityId),
+    getAccountingDashboard: () => accountingStore.getAccountingDashboard(),
+    exportAccountingCsv: (rows) => accountingStore.exportCsv(rows),
+    exportAccountingExcel: (sheetName, rows) => accountingStore.exportExcel(sheetName, rows),
   };
   const proxy = new Proxy(implementation, {
     get(target, property, receiver) {

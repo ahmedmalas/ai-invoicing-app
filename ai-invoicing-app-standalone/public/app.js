@@ -29,6 +29,14 @@ import {
   isBusinessProfileReady,
 } from './business-profile-readiness.js';
 import { brandMarkHtml, buildLogoCreatorPageHtml, logoSrcFromProfile } from './logo-studio-ui.js';
+import {
+  accountingDashboardWidgetsHtml,
+  buildAccountantReportsHtml,
+  buildAccountingHubHtml,
+  buildJournalsPageHtml,
+  journalDrawerHtml,
+  journalLineRowHtml,
+} from './accounting-ui.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -316,6 +324,9 @@ const navItems = [
   ['/workspace/purchase-orders', 'PO', 'Purchase Orders'],
   ['/workspace/suppliers', 'SU', 'Suppliers'],
   ['/workspace/stocktakes', 'ST', 'Stocktakes'],
+  ['/workspace/accounting', 'AC', 'Accounting'],
+  ['/workspace/accounting/journals', 'JL', 'Journals'],
+  ['/workspace/accounting/reports', 'AR', 'Accountant'],
   ['/logo-creator', 'LG', 'Logo Creator'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
@@ -423,16 +434,18 @@ async function loadWorkspace({ force = false } = {}) {
   ) {
     return cache;
   }
-  const [customers, quotes, invoices, payments, report, businessProfile] = await Promise.all([
-    api('/api/customers?limit=500'),
-    api('/api/quotes?limit=500'),
-    api('/api/invoices?limit=500'),
-    api('/api/payments?limit=500'),
-    api('/api/reports/read-model?limit=500'),
-    api('/api/business-profile').catch((error) =>
-      error.status === 404 ? null : Promise.reject(error),
-    ),
-  ]);
+  const [customers, quotes, invoices, payments, report, businessProfile, accountingDashboard] =
+    await Promise.all([
+      api('/api/customers?limit=500'),
+      api('/api/quotes?limit=500'),
+      api('/api/invoices?limit=500'),
+      api('/api/payments?limit=500'),
+      api('/api/reports/read-model?limit=500'),
+      api('/api/business-profile').catch((error) =>
+        error.status === 404 ? null : Promise.reject(error),
+      ),
+      api('/api/accounting/dashboard').catch(() => null),
+    ]);
   cache = {
     customers: customers.customers,
     quotes: quotes.quotes,
@@ -440,6 +453,7 @@ async function loadWorkspace({ force = false } = {}) {
     payments: payments.payments,
     report,
     businessProfile,
+    accountingDashboard,
   };
   workspaceCacheAt = Date.now();
   return cache;
@@ -535,6 +549,7 @@ function dashboardPage() {
         : '';
     })
     .join('');
+  const accountingDash = cache.accountingDashboard;
   shell(
     '<main class="page">' +
       pageHead(
@@ -557,6 +572,9 @@ function dashboardPage() {
       '</strong><small>Open receivables</small></article><article class="metric"><span>Customers</span><strong>' +
       cache.customers.length +
       '</strong><small>Active records</small></article></section>' +
+      '<div class="section-gap"><header class="panel-head"><h2>Accounting</h2><a href="/workspace/accounting" data-route>Open ledger</a></header>' +
+      accountingDashboardWidgetsHtml(accountingDash, money) +
+      '</div>' +
       '<section class="grid-2"><article class="panel"><header class="panel-head"><h2>Recent invoices</h2><a href="/invoices" data-route>View all</a></header>' +
       (invoiceRows
         ? '<div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>State</th><th>Outstanding</th><th></th></tr></thead><tbody>' +
@@ -2496,6 +2514,331 @@ async function stocktakesPage() {
   });
 }
 
+async function accountingPage() {
+  const params = new URLSearchParams(location.search);
+  const tab = params.get('tab') || 'overview';
+  const [accountsRes, yearsRes, periodsRes, journalsRes, dashboard] = await Promise.all([
+    api('/api/accounting/accounts?includeArchived=true'),
+    api('/api/accounting/financial-years'),
+    api('/api/accounting/periods'),
+    api('/api/accounting/journals'),
+    api('/api/accounting/dashboard').catch(() => null),
+  ]);
+  shell(
+    buildAccountingHubHtml({
+      pageHead,
+      escapeHtml,
+      money,
+      readableDate,
+      accounts: accountsRes.accounts || [],
+      years: yearsRes.financialYears || [],
+      periods: periodsRes.periods || [],
+      journals: journalsRes.journals || [],
+      dashboard,
+      activeTab: tab,
+    }),
+  );
+  document.querySelector('[data-fy-ensure]')?.addEventListener('click', async () => {
+    await api('/api/accounting/financial-years/ensure-current', { method: 'POST', body: '{}' });
+    await accountingPage();
+  });
+  document.querySelectorAll('[data-fy-close]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/accounting/financial-years/' + button.getAttribute('data-fy-close') + '/close', {
+        method: 'POST',
+        body: '{}',
+      });
+      await accountingPage();
+    });
+  });
+  document.querySelectorAll('[data-fy-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/accounting/financial-years/' + button.getAttribute('data-fy-open') + '/open', {
+        method: 'POST',
+        body: '{}',
+      });
+      await accountingPage();
+    });
+  });
+  document.querySelectorAll('[data-period-lock]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/accounting/periods/' + button.getAttribute('data-period-lock') + '/lock', {
+        method: 'POST',
+        body: '{}',
+      });
+      await accountingPage();
+    });
+  });
+  document.querySelectorAll('[data-period-unlock]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/accounting/periods/' + button.getAttribute('data-period-unlock') + '/unlock', {
+        method: 'POST',
+        body: '{}',
+      });
+      await accountingPage();
+    });
+  });
+  document.querySelectorAll('[data-period-reopen]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api('/api/accounting/periods/' + button.getAttribute('data-period-reopen') + '/reopen', {
+        method: 'POST',
+        body: '{}',
+      });
+      await accountingPage();
+    });
+  });
+  if (tab === 'audit') {
+    const auditRes = await api('/api/accounting/audit');
+    const events = auditRes.events || [];
+    const rootEl = document.querySelector('#accounting-audit-root');
+    if (rootEl) {
+      rootEl.innerHTML = events.length
+        ? '<div class="table-wrap"><table><thead><tr><th>When</th><th>Entity</th><th>Action</th><th>User</th></tr></thead><tbody>' +
+          events
+            .slice(0, 100)
+            .map(
+              (event) =>
+                '<tr><td>' +
+                readableTime(event.createdAt) +
+                '</td><td>' +
+                escapeHtml(event.entityType) +
+                '<div class="muted">' +
+                escapeHtml(event.entityId) +
+                '</div></td><td>' +
+                escapeHtml(event.action) +
+                '</td><td>' +
+                escapeHtml(event.actorUserId || 'system') +
+                '</td></tr>',
+            )
+            .join('') +
+          '</tbody></table></div>'
+        : '<p class="muted">No accounting audit events yet.</p>';
+    }
+  }
+}
+
+async function accountingJournalsPage() {
+  const [journalsRes, accountsRes] = await Promise.all([
+    api('/api/accounting/journals'),
+    api('/api/accounting/accounts'),
+  ]);
+  const accounts = accountsRes.accounts || [];
+  shell(
+    buildJournalsPageHtml({
+      pageHead,
+      escapeHtml,
+      readableDate,
+      money,
+      journals: journalsRes.journals || [],
+      accounts,
+    }),
+  );
+  const accountsHtml = (document.querySelector('#journal-account-options')?.innerHTML || '').trim();
+  document.querySelector('[data-journal-new]')?.addEventListener('click', () => {
+    drawer('Manual journal', journalDrawerHtml(accountsHtml, date()));
+    const form = document.querySelector('#journal-form');
+    form?.querySelector('[data-add-journal-line]')?.addEventListener('click', () => {
+      form.querySelector('[data-journal-lines]')?.insertAdjacentHTML(
+        'beforeend',
+        journalLineRowHtml(accountsHtml),
+      );
+    });
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const intent = event.submitter?.value || 'draft';
+      const lines = [...form.querySelectorAll('.journal-line-row')].map((row) => ({
+        accountId: row.querySelector('[name="accountId"]').value,
+        debit: Number(row.querySelector('[name="debit"]').value || 0),
+        credit: Number(row.querySelector('[name="credit"]').value || 0),
+        description: row.querySelector('[name="description"]').value || null,
+      }));
+      const payload = {
+        journalDate: form.journalDate.value,
+        narration: form.narration.value,
+        reference: form.reference.value || null,
+        notes: form.notes.value || null,
+        status: intent === 'approve' ? 'Approved' : 'Draft',
+        lines,
+      };
+      const created = await api('/api/accounting/journals', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (intent === 'approve') {
+        await api('/api/accounting/journals/' + created.id + '/post', {
+          method: 'POST',
+          body: '{}',
+        });
+      }
+      document.querySelector('[data-close-drawer]')?.click();
+      await accountingJournalsPage();
+    });
+  });
+  document.querySelectorAll('[data-journal-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const journal = await api('/api/accounting/journals/' + button.getAttribute('data-journal-open'));
+      const lineRows = (journal.lines || [])
+        .map(
+          (line) =>
+            '<tr><td>' +
+            escapeHtml(line.accountNumber || line.accountId) +
+            '</td><td>' +
+            escapeHtml(line.description || '') +
+            '</td><td>' +
+            money(line.debit) +
+            '</td><td>' +
+            money(line.credit) +
+            '</td></tr>',
+        )
+        .join('');
+      drawer(
+        journal.journalNumber || 'Journal',
+        '<div class="panel-body"><p><strong>' +
+          escapeHtml(journal.status) +
+          '</strong> · ' +
+          readableDate(journal.journalDate) +
+          '</p><p>' +
+          escapeHtml(journal.narration) +
+          '</p>' +
+          (journal.notes ? '<p class="muted">' + escapeHtml(journal.notes) + '</p>' : '') +
+          '<div class="table-wrap"><table><thead><tr><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody>' +
+          lineRows +
+          '</tbody></table></div><div class="drawer-actions">' +
+          (journal.status === 'Draft'
+            ? '<button class="button secondary" data-journal-approve="' +
+              journal.id +
+              '">Approve</button>'
+            : '') +
+          (journal.status === 'Approved' || journal.status === 'Draft'
+            ? '<button class="button" data-journal-post="' + journal.id + '">Post</button>'
+            : '') +
+          (journal.status === 'Posted'
+            ? '<button class="button secondary" data-journal-reverse="' +
+              journal.id +
+              '">Reverse</button>'
+            : '') +
+          '</div></div>',
+      );
+      document.querySelector('[data-journal-approve]')?.addEventListener('click', async () => {
+        await api('/api/accounting/journals/' + journal.id + '/approve', {
+          method: 'POST',
+          body: '{}',
+        });
+        document.querySelector('[data-close-drawer]')?.click();
+        await accountingJournalsPage();
+      });
+      document.querySelector('[data-journal-post]')?.addEventListener('click', async () => {
+        if (journal.status === 'Draft') {
+          await api('/api/accounting/journals/' + journal.id + '/approve', {
+            method: 'POST',
+            body: '{}',
+          });
+        }
+        await api('/api/accounting/journals/' + journal.id + '/post', {
+          method: 'POST',
+          body: '{}',
+        });
+        document.querySelector('[data-close-drawer]')?.click();
+        await accountingJournalsPage();
+      });
+      document.querySelector('[data-journal-reverse]')?.addEventListener('click', async () => {
+        await api('/api/accounting/journals/' + journal.id + '/reverse', {
+          method: 'POST',
+          body: '{}',
+        });
+        document.querySelector('[data-close-drawer]')?.click();
+        await accountingJournalsPage();
+      });
+    });
+  });
+}
+
+async function accountingReportsPage() {
+  const accountsRes = await api('/api/accounting/accounts');
+  shell(
+    buildAccountantReportsHtml({
+      pageHead,
+      escapeHtml,
+      today: date(),
+    }),
+  );
+  const select = document.querySelector('#accounting-ledger-account');
+  if (select) {
+    select.innerHTML =
+      '<option value="">Select account for GL</option>' +
+      (accountsRes.accounts || [])
+        .map(
+          (account) =>
+            '<option value="' +
+            account.id +
+            '">' +
+            escapeHtml(account.accountNumber + ' · ' + account.name) +
+            '</option>',
+        )
+        .join('');
+  }
+  const filter = document.querySelector('#accounting-report-filter');
+  const output = document.querySelector('#accounting-report-output');
+  document.querySelectorAll('[data-report-run]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const card = button.closest('[data-report]');
+      const report = card?.getAttribute('data-report');
+      const mode = card?.getAttribute('data-mode');
+      const format = button.getAttribute('data-report-run');
+      const from = filter?.from?.value;
+      const to = filter?.to?.value;
+      const accountId = filter?.accountId?.value;
+      let url = '';
+      if (report === 'general-ledger') {
+        if (!accountId) {
+          output.textContent = 'Select a ledger account first.';
+          return;
+        }
+        url =
+          '/api/accounting/ledger/' +
+          accountId +
+          '?from=' +
+          encodeURIComponent(from || '') +
+          '&to=' +
+          encodeURIComponent(to || '');
+      } else {
+        const params = new URLSearchParams({ format: format || 'json' });
+        if (mode === 'asAt') params.set('asAt', to || date());
+        else {
+          if (from) params.set('from', from);
+          if (to) params.set('to', to);
+        }
+        url = '/api/accounting/reports/' + report + '?' + params.toString();
+      }
+      if (format === 'json' || report === 'general-ledger') {
+        const data = await api(url.replace(/([?&])format=json&?/, '$1').replace(/[?&]$/, ''));
+        output.textContent = JSON.stringify(data, null, 2);
+        output.classList.remove('muted');
+        return;
+      }
+      const response = await fetch(url, {
+        headers: session?.accessToken
+          ? { Authorization: 'Bearer ' + session.accessToken }
+          : {},
+      });
+      if (!response.ok) {
+        output.textContent = 'Export failed (' + response.status + ').';
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download =
+        report +
+        (format === 'excel' ? '.xls' : format === 'pdf' ? '.pdf' : '.csv');
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+      output.textContent = 'Downloaded ' + report + ' as ' + format + '.';
+    });
+  });
+}
+
 async function renderRoute({ forceReload = false } = {}) {
   if (!currentUser) return;
   const path = location.pathname === '/' ? '/dashboard' : location.pathname;
@@ -2531,6 +2874,10 @@ async function renderRoute({ forceReload = false } = {}) {
     else if (path === '/workspace/purchase-orders') await purchaseOrdersPage();
     else if (path === '/workspace/suppliers') await suppliersPage();
     else if (path === '/workspace/stocktakes') await stocktakesPage();
+    else if (path === '/workspace/accounting' || path === '/workspace/accounting/')
+      await accountingPage();
+    else if (path === '/workspace/accounting/journals') await accountingJournalsPage();
+    else if (path === '/workspace/accounting/reports') await accountingReportsPage();
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
