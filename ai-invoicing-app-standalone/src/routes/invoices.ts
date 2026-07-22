@@ -1,6 +1,10 @@
 import { ZodError, z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
+import {
+  assertCreateInvoiceNumber,
+  assertUpdateInvoiceNumber,
+} from '../domain/invoices/invoice-number.js';
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
 import { parsePagination } from './pagination.js';
 
@@ -12,6 +16,8 @@ const lineItemSchema = z.object({
   productId: z.string().uuid().optional().nullable(),
 });
 
+const invoiceNumberSchema = z.string().trim().min(1).nullable().optional();
+
 const createDraftSchema = z.object({
   customerId: z.string().uuid(),
   title: z.string().min(1, 'Invoice title is required.'),
@@ -19,6 +25,7 @@ const createDraftSchema = z.object({
   dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
+  invoiceNumber: invoiceNumberSchema,
   lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
 });
 
@@ -28,6 +35,7 @@ const updateDraftSchema = z.object({
   dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
+  invoiceNumber: invoiceNumberSchema,
   lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
   paymentState: z.enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled']),
 });
@@ -50,7 +58,9 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     const started = process.hrtime.bigint();
     try {
       const body = createDraftSchema.parse(request.body);
-      const invoice = await app.db.createInvoiceDraft(body);
+      assertCreateInvoiceNumber(body.invoiceNumber);
+      const { invoiceNumber: _ignoredNumber, ...draftInput } = body;
+      const invoice = await app.db.createInvoiceDraft(draftInput);
       return reply.code(201).send(invoice);
     } catch (error) {
       if (!(error instanceof ZodError)) {
@@ -86,7 +96,13 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     try {
       const body = updateDraftSchema.parse(request.body);
-      return await app.db.updateInvoiceDraft(params.invoiceId, body);
+      const existing = await app.db.getInvoiceById(params.invoiceId);
+      if (!existing) {
+        throw new Error('Invoice not found');
+      }
+      assertUpdateInvoiceNumber(body.invoiceNumber, existing.invoiceNumber);
+      const { invoiceNumber: _ignoredNumber, ...draftInput } = body;
+      return await app.db.updateInvoiceDraft(params.invoiceId, draftInput);
     } catch (error) {
       if (!(error instanceof ZodError)) {
         request.log.error(

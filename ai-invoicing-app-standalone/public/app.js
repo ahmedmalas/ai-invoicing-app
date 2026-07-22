@@ -746,7 +746,9 @@ function invoicesPage() {
             '">Edit</button><button class="button small" data-finalise-invoice="' +
             invoice.id +
             '">Issue</button>'
-          : '<button class="button secondary small" data-pdf="invoice" data-id="' +
+          : '<button class="button ghost small" data-edit-invoice="' +
+            invoice.id +
+            '">Open</button><button class="button secondary small" data-pdf="invoice" data-id="' +
             invoice.id +
             '">PDF</button>') +
         '<button class="button ghost small" data-timeline="invoice" data-id="' +

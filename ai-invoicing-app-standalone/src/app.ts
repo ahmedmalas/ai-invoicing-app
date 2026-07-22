@@ -275,6 +275,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
+      '/assets/invoice-number.js',
       '/assets/invoice-editor.js',
       '/assets/logo-studio-ui.js',
       '/assets/launch-app.js',
@@ -783,6 +784,8 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('IMMUTABLE_PAYMENT_ALLOCATION') ||
       errorMessage.includes('IMMUTABLE_SUPPLIER_PAYMENT_ALLOCATION') ||
       errorMessage.includes('Only draft invoices can be edited') ||
+      errorMessage.includes('INVOICE_NUMBER_IMMUTABLE') ||
+      errorMessage.includes('INVOICE_NUMBER_NOT_ASSIGNABLE_ON_CREATE') ||
       errorMessage.includes('already finalised') ||
       errorMessage.includes('BACKUP_RESTORE_INCOMPATIBLE_VERSION') ||
       errorMessage.includes('BACKUP_RESTORE_TARGET_NOT_EMPTY') ||

@@ -1,13 +1,20 @@
 /**
  * Canonical invoice editor (rebuild).
  *
- * One source of truth while mounted: live control `.value` via data-invoice-field.
- * One payload builder (never FormData).
+ * One source of truth while mounted:
+ *   - editable fields: live control `.value` via data-invoice-field
+ *   - invoice number: form.dataset.invoiceNumber (server-owned; never an input)
+ * One payload builder (never FormData) — includes invoiceNumber for preview/save parity.
  * One serialised operation queue for autosave / save / preview / download.
  * Action buttons may disable; form fields never disable for payload collection.
  */
 
 import { calculateInvoiceTotals, calculateLineItem } from './invoice-totals.js';
+import {
+  assertPayloadMatchesVisibleInvoiceNumber,
+  formatInvoiceNumberDisplay,
+  normalizeInvoiceNumber,
+} from './invoice-number.js';
 import { logoSrcFromProfile } from './logo-studio-ui.js';
 
 export const INVOICE_EDITOR_STORAGE_KEY = 'aleya-invoice-editor-v2';
@@ -146,7 +153,8 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
   );
   const logo = logoSrcFromProfile(profile);
   const status = record.status || 'Draft';
-  const invoiceNumber = record.invoiceNumber || 'Draft';
+  const invoiceNumber = normalizeInvoiceNumber(record.invoiceNumber);
+  const invoiceNumberDisplay = formatInvoiceNumberDisplay(invoiceNumber);
 
   return (
     '<div class="invoice-curtain" data-invoice-editor aria-hidden="true">' +
@@ -156,6 +164,8 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     escapeHtml(record.paymentState || 'Draft') +
     '" data-status="' +
     escapeHtml(status) +
+    '" data-invoice-number="' +
+    escapeHtml(invoiceNumber || '') +
     '">' +
     '<header class="invoice-toolbar">' +
     '<div class="invoice-toolbar-brand">' +
@@ -196,8 +206,8 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     (profile.address ? '<p>' + escapeHtml(profile.address) + '</p>' : '') +
     '</div></div>' +
     '<div class="invoice-meta"><p class="invoice-doc-title">TAX INVOICE</p><dl>' +
-    '<div><dt>Invoice</dt><dd data-invoice-number>' +
-    escapeHtml(invoiceNumber) +
+    '<div><dt>Invoice number</dt><dd data-invoice-number-display>' +
+    escapeHtml(invoiceNumberDisplay) +
     '</dd></div>' +
     '<div><dt>Status</dt><dd><span class="status">' +
     escapeHtml(status) +
@@ -302,7 +312,19 @@ export function createInvoiceEditor(deps) {
     }));
   }
 
-  /** Canonical payload — always from live control values, never FormData. */
+  function readCanonicalInvoiceNumber() {
+    return normalizeInvoiceNumber(form?.dataset.invoiceNumber);
+  }
+
+  function syncInvoiceNumberDisplay(invoiceNumber) {
+    if (!form) return;
+    const normalized = normalizeInvoiceNumber(invoiceNumber);
+    form.dataset.invoiceNumber = normalized || '';
+    const display = form.querySelector('[data-invoice-number-display]');
+    if (display) display.textContent = formatInvoiceNumberDisplay(normalized);
+  }
+
+  /** Canonical payload — live control values + server-owned invoiceNumber. Never FormData. */
   function buildPayload() {
     const lineItems = readLineItems();
     if (!lineItems.length) {
@@ -317,11 +339,13 @@ export function createInvoiceEditor(deps) {
     }
     const notes = fieldValue('notes').trim();
     const paymentTerms = fieldValue('paymentTerms').trim();
+    const invoiceNumber = readCanonicalInvoiceNumber();
     return {
       customerId: fieldValue('customerId'),
       title: fieldValue('title').trim(),
       issueDate: fieldValue('issueDate'),
       dueDate: fieldValue('dueDate'),
+      invoiceNumber,
       ...(notes ? { notes } : {}),
       ...(paymentTerms ? { paymentTerms } : {}),
       lineItems,
@@ -481,12 +505,18 @@ export function createInvoiceEditor(deps) {
 
   async function persist({ quiet = false, source = 'manual' } = {}) {
     if (!form?.isConnected) throw new Error('Invoice form is no longer available. Refresh and try again.');
+    if (form.dataset.status === 'Finalised') {
+      const error = new Error('Only draft invoices can be edited');
+      error.status = 400;
+      throw error;
+    }
     const body = buildPayload();
     requireTitle(body);
+    assertPayloadMatchesVisibleInvoiceNumber(body, readCanonicalInvoiceNumber());
     const recordId = form.dataset.recordId || '';
     let saved;
     if (recordId) {
-      const { customerId, ...invoiceBody } = body;
+      const { customerId: _customerId, ...invoiceBody } = body;
       saved = await deps.api('/api/invoices/' + recordId, {
         method: 'PUT',
         body: JSON.stringify({
@@ -504,8 +534,7 @@ export function createInvoiceEditor(deps) {
       form.dataset.recordId = saved.id;
       form.dataset.paymentState = saved.paymentState || 'Draft';
       form.dataset.status = saved.status || 'Draft';
-      const number = form.querySelector('[data-invoice-number]');
-      if (number) number.textContent = saved.invoiceNumber || 'Draft';
+      syncInvoiceNumberDisplay(saved.invoiceNumber);
       markPristine();
       captureLocal(saved.id);
     } else {
@@ -757,12 +786,7 @@ export function createInvoiceEditor(deps) {
       history.replaceState({}, '', '/workspace/customers');
       return { redirected: 'customers' };
     }
-    if (record && record.status && record.status !== 'Draft') {
-      deps.toast('Final invoices are locked. Open the invoice details instead.', true);
-      history.replaceState({}, '', '/workspace/invoices');
-      return { redirected: 'invoices' };
-    }
-
+    // Finalised invoices stay open for PDF preview/download. Persist paths reject edits.
     let seed = record;
     const local = !record?.id && snapshotRecoverable(readLocal(storage)) ? readLocal(storage) : null;
     if (!record?.id && local?.recordId) {
@@ -812,6 +836,21 @@ export function createInvoiceEditor(deps) {
     root = document.querySelector('[data-invoice-editor]');
     form = document.querySelector('#invoice-editor-form');
     if (!root || !form) return { redirected: null };
+    syncInvoiceNumberDisplay(recordForHtml.invoiceNumber);
+
+    if (form.dataset.status === 'Finalised') {
+      form.querySelectorAll('[data-invoice-field], [data-add-line], [data-remove-line], [data-line-up], [data-line-down]').forEach(
+        (control) => {
+          control.disabled = true;
+        },
+      );
+      form.querySelectorAll('[data-invoice-action="draft"], [data-invoice-action="save"]').forEach(
+        (control) => {
+          control.disabled = true;
+          control.hidden = true;
+        },
+      );
+    }
 
     if (!seed?.id) {
       field('issueDate').value = defaults.issueDate;
@@ -886,12 +925,28 @@ export function createInvoiceEditor(deps) {
         error.fieldPath = !String(body.title || '').trim() ? 'title' : 'customerId';
         throw error;
       }
+      const visibleNumber = readCanonicalInvoiceNumber();
+      assertPayloadMatchesVisibleInvoiceNumber(body, visibleNumber);
       if (!deps.isProfileReady(deps.getProfile())) {
         throw new Error('Save your business name and address in Aleya Settings before generating PDFs.');
       }
       setActionsBusy(true);
       try {
-        const saved = await enqueue(() => persist({ quiet: true, source: 'preview' }));
+        const recordId = form.dataset.recordId || '';
+        const isFinalised = form.dataset.status === 'Finalised';
+        // Existing saved invoices (especially issued ones) must preview from the
+        // persisted record — never invent a number and never PUT a finalised invoice.
+        let saved;
+        if (recordId && (isFinalised || !isDirty())) {
+          saved = await enqueue(() => deps.api('/api/invoices/' + recordId));
+          syncInvoiceNumberDisplay(saved.invoiceNumber);
+          assertPayloadMatchesVisibleInvoiceNumber(
+            { ...body, invoiceNumber: normalizeInvoiceNumber(saved.invoiceNumber) },
+            normalizeInvoiceNumber(saved.invoiceNumber),
+          );
+        } else {
+          saved = await enqueue(() => persist({ quiet: true, source: 'preview' }));
+        }
         if (action === 'preview') {
           await deps.previewPdf(saved.id);
           deps.toast('PDF preview opened.');
@@ -899,7 +954,7 @@ export function createInvoiceEditor(deps) {
           const name = await deps.downloadPdf(saved.id);
           deps.toast(name + ' downloaded.');
         }
-        return { type: action, saved };
+        return { type: action, saved, payload: body };
       } finally {
         setActionsBusy(false);
       }
@@ -955,6 +1010,9 @@ export {
   snapshotRecoverable,
   readLocal as readInvoiceEditorLocal,
   clearLocal as clearInvoiceEditorLocal,
+  formatInvoiceNumberDisplay,
+  normalizeInvoiceNumber,
+  assertPayloadMatchesVisibleInvoiceNumber,
 };
 
 /** Test helper: payload from a mounted form element. */
@@ -971,6 +1029,7 @@ function buildPayloadFromForm(formEl) {
     title: read('title').trim(),
     issueDate: read('issueDate'),
     dueDate: read('dueDate'),
+    invoiceNumber: normalizeInvoiceNumber(formEl.dataset?.invoiceNumber),
     ...(read('notes').trim() ? { notes: read('notes').trim() } : {}),
     ...(read('paymentTerms').trim() ? { paymentTerms: read('paymentTerms').trim() } : {}),
     lineItems,
