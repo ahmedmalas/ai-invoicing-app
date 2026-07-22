@@ -1419,12 +1419,26 @@ export async function createPostgresDatabase(
       'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
     );
     const currentVersion = version.rows[0]?.schema_version ?? 0;
-    if (currentVersion > DATABASE_SCHEMA_VERSION) throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+    let shouldWriteVersion = true;
 
     // Cold-start fast path: when the DB is already on this schema version, skip the
     // full ~50KB CREATE/ALTER script (197 statements). Preview isolates always cold
     // start; re-running full DDL was the dominant cause of 60s FUNCTION_INVOCATION_TIMEOUT.
-    if (currentVersion === DATABASE_SCHEMA_VERSION) {
+    //
+    // If a newer feature-branch deployment advanced shared metadata (common when
+    // Preview + Production share one DATABASE_URL), do not refuse to boot and do
+    // not write the version downward.
+    if (currentVersion > DATABASE_SCHEMA_VERSION) {
+      bootPath = 'fast';
+      shouldWriteVersion = false;
+      console.warn(
+        JSON.stringify({
+          event: 'postgres.boot.schema_ahead',
+          databaseVersion: currentVersion,
+          appVersion: DATABASE_SCHEMA_VERSION,
+        }),
+      );
+    } else if (currentVersion === DATABASE_SCHEMA_VERSION) {
       bootPath = 'fast';
     } else {
       bootPath = 'full';
@@ -1445,13 +1459,15 @@ export async function createPostgresDatabase(
       );
     }
 
-    await schemaClient.query(
-      `INSERT INTO public.app_database_metadata(singleton_id, schema_version, updated_at)
-       VALUES (1, $1, $2)
-       ON CONFLICT(singleton_id) DO UPDATE
-       SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
-      [DATABASE_SCHEMA_VERSION, nowIso()],
-    );
+    if (shouldWriteVersion) {
+      await schemaClient.query(
+        `INSERT INTO public.app_database_metadata(singleton_id, schema_version, updated_at)
+         VALUES (1, $1, $2)
+         ON CONFLICT(singleton_id) DO UPDATE
+         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+        [DATABASE_SCHEMA_VERSION, nowIso()],
+      );
+    }
 
     // Cheap additive upgrades for every tenant schema (including public). Safe to
     // re-run: all statements use IF NOT EXISTS / defaults.
@@ -1477,8 +1493,10 @@ export async function createPostgresDatabase(
       const workspaceVersion = await schemaClient.query<{ schema_version: number }>(
         'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
       );
-      if ((workspaceVersion.rows[0]?.schema_version ?? 0) > DATABASE_SCHEMA_VERSION) {
-        throw new Error('DB_SCHEMA_VERSION_UNSUPPORTED');
+      const workspaceCurrent = workspaceVersion.rows[0]?.schema_version ?? 0;
+      if (workspaceCurrent > DATABASE_SCHEMA_VERSION) {
+        // Leave newer metadata intact; additive upgrades above already applied.
+        continue;
       }
       await schemaClient.query(
         `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at)
