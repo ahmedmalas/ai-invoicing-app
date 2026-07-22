@@ -1,32 +1,41 @@
 /**
- * Preview deployments were pointed at an orphaned Supabase Auth project
- * (`ntkctiqyvjcjokclkmll`) that is not in the team org and requires email
- * verification we cannot complete from CI. Remap that host to the canonical
- * production Auth project so preview sign-in works with known test accounts.
- *
- * The anon/publishable key below is the public client key for
- * ai-invoicing-app-production — safe to ship (designed for browser use).
+ * Supabase Auth configuration must come from environment variables.
+ * Do not silently remap invalid hosts — misconfigured Preview/Production
+ * Auth must fail loudly so operators fix Vercel env instead of shipping
+ * hardcoded credentials.
  */
+
 export const ORPHANED_PREVIEW_AUTH_HOST = 'ntkctiqyvjcjokclkmll.supabase.co';
 export const CANONICAL_SUPABASE_AUTH_URL = 'https://bmfpclozzmeekazmoaxw.supabase.co';
-export const CANONICAL_SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtZnBjbG96em1lZWthem1vYXh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2Njc4NzMsImV4cCI6MjA5OTI0Mzg3M30.yCenCK5G1YrKnqCKHW58n-U1nPt8L3c4koOGHrD5bQk';
 
 export type ResolvedSupabaseAuth = {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
-  remappedFromOrphanedPreviewHost: boolean;
 };
 
+export class SupabaseAuthConfigurationError extends Error {
+  readonly code = 'AUTH_CONFIGURATION_INVALID';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SupabaseAuthConfigurationError';
+  }
+}
+
+/**
+ * Resolve Auth URL/key from env without rewriting them.
+ * Throws if the known-orphaned Preview Auth host is still configured.
+ */
 export function resolveSupabaseAuthConfig(input: {
   supabaseUrl?: string | undefined;
   supabaseAnonKey?: string | undefined;
 }): ResolvedSupabaseAuth {
   const configuredUrl = input.supabaseUrl?.trim();
+  const configuredKey = input.supabaseAnonKey?.trim();
+
   if (!configuredUrl) {
     return {
-      ...(input.supabaseAnonKey !== undefined ? { supabaseAnonKey: input.supabaseAnonKey } : {}),
-      remappedFromOrphanedPreviewHost: false,
+      ...(configuredKey ? { supabaseAnonKey: configuredKey } : {}),
     };
   }
 
@@ -34,32 +43,21 @@ export function resolveSupabaseAuthConfig(input: {
   try {
     hostname = new URL(configuredUrl).hostname;
   } catch {
-    return {
-      supabaseUrl: configuredUrl,
-      ...(input.supabaseAnonKey !== undefined ? { supabaseAnonKey: input.supabaseAnonKey } : {}),
-      remappedFromOrphanedPreviewHost: false,
-    };
+    throw new SupabaseAuthConfigurationError(
+      `SUPABASE_URL is not a valid URL: ${configuredUrl}. Set it to ${CANONICAL_SUPABASE_AUTH_URL} in Vercel Preview and Production.`,
+    );
   }
 
   if (hostname === ORPHANED_PREVIEW_AUTH_HOST) {
-    console.warn(
-      JSON.stringify({
-        event: 'auth.provider_remapped',
-        fromHost: ORPHANED_PREVIEW_AUTH_HOST,
-        toHost: new URL(CANONICAL_SUPABASE_AUTH_URL).hostname,
-        reason: 'orphaned_preview_auth_project',
-      }),
+    throw new SupabaseAuthConfigurationError(
+      `SUPABASE_URL points at orphaned Auth host ${ORPHANED_PREVIEW_AUTH_HOST}. ` +
+        `Set SUPABASE_URL=${CANONICAL_SUPABASE_AUTH_URL} and the matching public anon/publishable key ` +
+        `in Vercel Preview and Production environment variables. Silent remapping is disabled.`,
     );
-    return {
-      supabaseUrl: CANONICAL_SUPABASE_AUTH_URL,
-      supabaseAnonKey: CANONICAL_SUPABASE_ANON_KEY,
-      remappedFromOrphanedPreviewHost: true,
-    };
   }
 
   return {
     supabaseUrl: configuredUrl,
-    ...(input.supabaseAnonKey !== undefined ? { supabaseAnonKey: input.supabaseAnonKey } : {}),
-    remappedFromOrphanedPreviewHost: false,
+    ...(configuredKey ? { supabaseAnonKey: configuredKey } : {}),
   };
 }

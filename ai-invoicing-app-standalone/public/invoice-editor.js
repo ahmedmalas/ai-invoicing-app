@@ -263,7 +263,14 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     '<p class="muted">GST rate ' +
     Math.round(GST_RATE * 100) +
     '%</p>' +
-    '</aside></section></div></form></div>'
+    '</aside></section>' +
+    (status === 'Draft' && record.id
+      ? '<section class="invoice-danger-zone" aria-label="Danger zone">' +
+        '<p class="muted">Delete permanently removes this draft and its line items. Finalised invoices cannot be deleted.</p>' +
+        '<button type="button" class="button danger" data-invoice-action="delete">Delete invoice draft</button>' +
+        '</section>'
+      : '') +
+    '</div></form></div>'
   );
 }
 
@@ -906,6 +913,22 @@ export function createInvoiceEditor(deps) {
     if (action === 'draft' || action === 'save') {
       pendingSubmitAction = action;
       return { type: 'submit-pending', action };
+    }
+    if (action === 'delete') {
+      const recordId = form.dataset.recordId || '';
+      if (!recordId) {
+        throw new Error('Save the invoice draft before deleting it.');
+      }
+      if (form.dataset.status !== 'Draft') {
+        throw new Error('Only draft invoices can be deleted');
+      }
+      return {
+        type: 'delete-request',
+        invoiceId: recordId,
+        invoiceNumber: formatInvoiceNumberDisplay(readCanonicalInvoiceNumber()),
+        title: fieldValue('title').trim() || 'Untitled invoice',
+        customerId: fieldValue('customerId'),
+      };
     }
     if (action === 'preview' || action === 'download') {
       let body;

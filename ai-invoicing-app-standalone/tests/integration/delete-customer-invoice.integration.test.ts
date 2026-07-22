@@ -154,7 +154,7 @@ describe('production customer/invoice deletion path', () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it('DELETE /invoices/:id returns 404 (route removed)', async () => {
+  it('DELETE /api/invoices/:id returns 404 for missing drafts', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'ai-delete-invoice-route-'));
     tempDirs.push(directory);
     const app = await buildApp({
@@ -165,8 +165,8 @@ describe('production customer/invoice deletion path', () => {
     apps.push(app);
 
     const fakeInvoiceId = randomUUID();
-    const res = await app.inject({ method: 'DELETE', url: `/invoices/${fakeInvoiceId}` });
-    expect([404, 405]).toContain(res.statusCode);
+    const res = await app.inject({ method: 'DELETE', url: `/api/invoices/${fakeInvoiceId}` });
+    expect(res.statusCode).toBe(404);
   });
 
   it('returns business-rule blockers (never 500) for protected customers', async () => {

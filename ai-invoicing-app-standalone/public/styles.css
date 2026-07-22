@@ -685,6 +685,20 @@ td.primary-cell {
   font-size: 12px;
   line-height: 1.45;
 }
+.invoice-danger-zone {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.invoice-danger-zone .muted {
+  margin: 0;
+  max-width: 42rem;
+}
 .drawer {
   width: min(620px, 100%);
   height: 100%;

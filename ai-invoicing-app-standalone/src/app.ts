@@ -718,6 +718,8 @@ export async function buildApp(options: BuildAppOptions) {
       errorMessage.includes('QUOTE_MUST_BE_ACCEPTED_BEFORE_CONVERSION') ||
       errorMessage.includes('Only draft quotes can be edited') ||
       errorMessage.includes('Only draft quotes can be deleted') ||
+      errorMessage.includes('Only draft invoices can be deleted') ||
+      errorMessage.includes('INVOICE_REFERENCED_BY_QUOTE') ||
       errorMessage.includes('IMMUTABLE_APPROVED_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_TERMINAL_PURCHASE_ORDER') ||
       errorMessage.includes('IMMUTABLE_NON_DRAFT_PURCHASE_ORDER_LINE_ITEMS') ||

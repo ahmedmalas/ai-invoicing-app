@@ -19,7 +19,9 @@
     "test:watch": "vitest",
     "verify:invoice-persistence": "npm run build && node scripts/verify-invoice-persistence-browser.mjs",
     "verify:invoice-editor": "npm run build && node scripts/verify-invoice-editor-browser.mjs",
-    "verify:preview-cold-start": "node scripts/verify-preview-cold-start.mjs"
+    "verify:invoice-delete": "vitest run --coverage.enabled=false tests/integration/invoice-delete.integration.test.ts tests/unit/supabase-auth-config.test.ts",
+    "verify:preview-cold-start": "node scripts/verify-preview-cold-start.mjs",
+    "fix:vercel-supabase-env": "node scripts/fix-vercel-supabase-env.mjs"
   },
   "engines": {
     "node": ">=20"

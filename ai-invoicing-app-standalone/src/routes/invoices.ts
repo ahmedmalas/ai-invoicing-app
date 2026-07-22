@@ -142,6 +142,44 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     return invoice;
   });
 
+  app.delete('/invoices/:invoiceId', async (request, reply) => {
+    const started = process.hrtime.bigint();
+    const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
+    try {
+      await app.db.deleteInvoiceDraft(params.invoiceId);
+      request.log.info(
+        {
+          event: 'invoice.delete.success',
+          requestId: request.id,
+          route: '/api/invoices/:invoiceId',
+          operation: 'deleteInvoiceDraft',
+          invoiceId: params.invoiceId,
+          durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+        },
+        'invoice draft deleted',
+      );
+      return reply.code(204).send();
+    } catch (error) {
+      request.log.error(
+        {
+          event: 'invoice.delete.failure',
+          requestId: request.id,
+          route: '/api/invoices/:invoiceId',
+          operation: 'deleteInvoiceDraft',
+          invoiceId: params.invoiceId,
+          durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+          code:
+            error && typeof error === 'object' && 'code' in error
+              ? (error as { code?: string }).code
+              : undefined,
+          message: error instanceof Error ? error.message : undefined,
+        },
+        'invoice draft delete failed',
+      );
+      throw error;
+    }
+  });
+
   app.post('/invoices/:invoiceId/finalise', async (request) => {
     const params = z.object({ invoiceId: z.string().uuid() }).parse(request.params);
     return await app.db.finaliseInvoice(params.invoiceId);

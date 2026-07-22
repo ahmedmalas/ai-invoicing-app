@@ -1,0 +1,36 @@
+name: Fix Supabase Auth env on Vercel
+
+# One-shot / on-demand workflow: if VERCEL_TOKEN is present in repo secrets,
+# rewrite Preview + Production SUPABASE_* env vars to the canonical Auth project.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/rebuild-invoice-workspace-93ed
+    paths:
+      - 'ai-invoicing-app-standalone/scripts/fix-vercel-supabase-env.mjs'
+      - '.github/workflows/fix-supabase-auth-env.yml'
+
+jobs:
+  patch-env:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-invoicing-app-standalone
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch Vercel Supabase Auth env
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: team_oV08U3snaxnxaI70873bYDka
+          VERCEL_PROJECT_ID: prj_o3Kmm3okLf1jo4LHNVdIJqsUQAV9
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN secret is not configured; skipping env patch."
+            exit 0
+          fi
+          node scripts/fix-vercel-supabase-env.mjs

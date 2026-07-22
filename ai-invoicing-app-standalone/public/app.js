@@ -5,7 +5,7 @@ import {
   shouldCloseDrawerOnBackdropClick,
   shouldIgnoreGlobalShortcut,
 } from './form-interaction-guards.js';
-import { createInvoiceEditor } from './invoice-editor.js';
+import { clearInvoiceEditorLocal, createInvoiceEditor } from './invoice-editor.js';
 import {
   businessProfileReadinessMessage,
   isBusinessProfileReady,
@@ -745,7 +745,15 @@ function invoicesPage() {
             invoice.id +
             '">Edit</button><button class="button small" data-finalise-invoice="' +
             invoice.id +
-            '">Issue</button>'
+            '">Issue</button><button class="button danger small" data-delete-invoice="' +
+            invoice.id +
+            '" data-invoice-title="' +
+            escapeHtml(invoice.title || '') +
+            '" data-invoice-number="' +
+            escapeHtml(invoice.invoiceNumber || 'Draft') +
+            '" data-invoice-customer="' +
+            escapeHtml(customer?.displayName || 'Customer') +
+            '">Delete</button>'
           : '<button class="button ghost small" data-edit-invoice="' +
             invoice.id +
             '">Open</button><button class="button secondary small" data-pdf="invoice" data-id="' +
@@ -1128,17 +1136,59 @@ function openDestructiveConfirmDialog({ title, message, confirmLabel = 'Delete' 
         '</button></div></div></div>',
     );
     const backdrop = document.querySelector('.confirm-backdrop');
+    let settled = false;
     const finish = (value) => {
+      if (settled) return;
+      settled = true;
       backdrop?.remove();
       resolve(value);
     };
     backdrop?.querySelector('[data-confirm-cancel]')?.addEventListener('click', () => finish(false));
-    backdrop?.querySelector('[data-confirm-ok]')?.addEventListener('click', () => finish(true));
+    backdrop?.querySelector('[data-confirm-ok]')?.addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      finish(true);
+    });
     backdrop?.addEventListener('click', (event) => {
       if (event.target === backdrop) finish(false);
     });
     backdrop?.querySelector('[data-confirm-ok]')?.focus();
   });
+}
+
+async function removeInvoiceDraftViaApi(invoiceId, meta = {}) {
+  const numberLabel = meta.invoiceNumber || 'Draft';
+  const titleLabel = meta.title || 'Untitled invoice';
+  const customerLabel = meta.customer || 'Customer';
+  const confirmed = await openDestructiveConfirmDialog({
+    title: 'Delete invoice draft?',
+    message:
+      'Permanently delete draft ' +
+      numberLabel +
+      ' — "' +
+      titleLabel +
+      '" for ' +
+      customerLabel +
+      '? This cannot be undone. Finalised invoices cannot be deleted because they are accounting records.',
+    confirmLabel: 'Delete draft',
+  });
+  if (!confirmed) return false;
+  await api('/api/invoices/' + invoiceId, { method: 'DELETE' });
+  clearInvoiceEditorLocal(globalThis.localStorage);
+  const openRecordId = invoiceEditor?.getForm?.()?.dataset?.recordId;
+  if (openRecordId === invoiceId) {
+    await invoiceEditor.close?.({ force: true, animate: false });
+    invoiceEditor = null;
+  }
+  closeDrawer();
+  if (location.pathname.includes('/invoices/' + invoiceId)) {
+    navigate('/workspace/invoices');
+  }
+  toast('Invoice draft deleted.');
+  invalidateWorkspaceCache();
+  await renderRoute({ forceReload: true });
+  return true;
 }
 
 async function removeCustomerViaApi(customerId, displayName) {
@@ -1552,10 +1602,18 @@ async function invoiceDetails(id) {
           id +
           '">Edit draft</button><button class="button" data-finalise-invoice="' +
           id +
-          '">Issue invoice</button>'
+          '">Issue invoice</button><button class="button danger" data-delete-invoice="' +
+          id +
+          '" data-invoice-title="' +
+          escapeHtml(invoice.title || '') +
+          '" data-invoice-number="' +
+          escapeHtml(invoice.invoiceNumber || 'Draft') +
+          '" data-invoice-customer="' +
+          escapeHtml(customer?.displayName || 'Customer') +
+          '">Delete draft</button>'
         : '<button class="button secondary" data-pdf="invoice" data-id="' +
           id +
-          '">Download PDF</button>') +
+          '">Download PDF</button><p class="muted-note">Finalised invoices cannot be deleted. They are preserved for accounting integrity.</p>') +
       '<button class="button ghost" data-timeline="invoice" data-id="' +
       id +
       '">Audit timeline</button></div>',
@@ -2465,6 +2523,19 @@ document.addEventListener('click', async (event) => {
       });
       return;
     }
+    if (action === 'delete') {
+      await runAction(async () => {
+        const request = await editor.handleAction(action);
+        if (request?.type !== 'delete-request') return;
+        const customer = cache.customers.find((item) => item.id === request.customerId);
+        await removeInvoiceDraftViaApi(request.invoiceId, {
+          invoiceNumber: request.invoiceNumber,
+          title: request.title,
+          customer: customer?.displayName || 'Customer',
+        });
+      });
+      return;
+    }
   }
   if (event.target.closest('[data-new-payment]')) {
     paymentForm();
@@ -2574,6 +2645,23 @@ document.addEventListener('click', async (event) => {
     convert.disabled = false;
     return;
   }
+  const deleteInvoice = event.target.closest('[data-delete-invoice]');
+  if (deleteInvoice) {
+    if (deleteInvoice.disabled) return;
+    deleteInvoice.disabled = true;
+    try {
+      await runAction(() =>
+        removeInvoiceDraftViaApi(deleteInvoice.dataset.deleteInvoice, {
+          invoiceNumber: deleteInvoice.dataset.invoiceNumber,
+          title: deleteInvoice.dataset.invoiceTitle,
+          customer: deleteInvoice.dataset.invoiceCustomer,
+        }),
+      );
+    } finally {
+      if (deleteInvoice.isConnected) deleteInvoice.disabled = false;
+    }
+    return;
+  }
   const finalise = event.target.closest('[data-finalise-invoice]');
   if (finalise) {
     finalise.disabled = true;
@@ -2671,8 +2759,25 @@ document.addEventListener('submit', async (event) => {
   const submit =
     event.submitter?.matches?.('[type="submit"]') ? event.submitter : form.querySelector('[type="submit"]');
   if (submit) submit.disabled = true;
-  const data = Object.fromEntries(new FormData(form));
+  // Invoice editor owns its own payload builder — never FormData for that form.
+  const data =
+    form.id === 'invoice-editor-form' ? {} : Object.fromEntries(new FormData(form));
   try {
+    if (form.id === 'invoice-editor-form') {
+      const submitterAction = event.submitter?.getAttribute?.('data-invoice-action');
+      const editor = ensureInvoiceEditor();
+      const result = await editor.handleSubmit(submitterAction);
+      if (result?.type === 'draft') return;
+      history.pushState({}, '', '/workspace/invoices');
+      invalidateWorkspaceCache();
+      await renderRoute({ forceReload: true });
+      if (result?.saved?.id && !cache.invoices?.some((invoice) => invoice.id === result.saved.id)) {
+        invalidateWorkspaceCache();
+        await loadWorkspace({ force: true });
+        invoicesPage();
+      }
+      return;
+    }
     if (form.id === 'signup-form' || form.id === 'reset-form') {
       if (data.password !== data.passwordConfirmation) throw new Error('Passwords do not match.');
       if (
@@ -2764,21 +2869,6 @@ document.addEventListener('submit', async (event) => {
       toast(form.dataset.recordId ? 'Customer updated.' : 'Customer created.');
       invalidateWorkspaceCache();
       await renderRoute({ forceReload: true });
-      return;
-    }
-    if (form.id === 'invoice-editor-form') {
-      const submitterAction = event.submitter?.getAttribute?.('data-invoice-action');
-      const editor = ensureInvoiceEditor();
-      const result = await editor.handleSubmit(submitterAction);
-      if (result?.type === 'draft') return;
-      history.pushState({}, '', '/workspace/invoices');
-      invalidateWorkspaceCache();
-      await renderRoute({ forceReload: true });
-      if (result?.saved?.id && !cache.invoices?.some((invoice) => invoice.id === result.saved.id)) {
-        invalidateWorkspaceCache();
-        await loadWorkspace({ force: true });
-        invoicesPage();
-      }
       return;
     }
     if (form.id === 'sales-form') {
