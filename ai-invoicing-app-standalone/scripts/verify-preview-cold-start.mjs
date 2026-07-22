@@ -138,11 +138,15 @@ try {
         /Authentication Required|vercel\.com\/login/i.test(p.body || ''),
     );
   const timedOut = report.probes.some(
-    (p) => p.status === 504 || /timeout/i.test(p.error || '') || /timeout/i.test(p.body || ''),
+    (p) =>
+      p.status === 504 ||
+      /FUNCTION_INVOCATION_TIMEOUT|timed?\s*out|ETIMEDOUT|abort/i.test(p.error || '') ||
+      /FUNCTION_INVOCATION_TIMEOUT|Gateway Timeout/i.test(p.body || ''),
   );
   const liveOk = live1.status === 200 && live2.status === 200 && /"status"\s*:\s*"ok"/.test(live1.body || '');
   const readyOk = ready.status === 200 && /"status"\s*:\s*"ready"/.test(ready.body || '');
-  const editorOk = editor.status === 200 && /createInvoiceEditor|data-invoice-editor/.test(editor.body || '');
+  const editorOk =
+    editor.status === 200 && /createInvoiceEditor|data-invoice-field|INVOICE_EDITOR_STORAGE_KEY/.test(editor.body || '');
   const oldGone =
     oldAsset.status === 404 || (oldAsset.status === 200 && !/mountInvoiceWorkspace/.test(oldAsset.body || ''));
 
