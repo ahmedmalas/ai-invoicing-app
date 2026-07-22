@@ -41,15 +41,25 @@ export function resolveSupabaseAuthConfig(input: {
     };
   }
 
+  let hostname = '';
   try {
     // Ensure SUPABASE_URL is a valid absolute URL; do not rewrite hostname.
-    new URL(configuredUrl);
+    hostname = new URL(configuredUrl).hostname;
   } catch {
     throw new SupabaseAuthConfigurationError(
       `SUPABASE_URL is not a valid URL: ${configuredUrl}. ` +
         `Set it to ${EXPECTED_SUPABASE_AUTH_URL} in Vercel Preview and Production.`,
     );
   }
+
+  // Non-secret observability only — never log key material.
+  console.info(
+    JSON.stringify({
+      event: 'auth.provider_configured',
+      providerHost: hostname,
+      expectedHost: new URL(EXPECTED_SUPABASE_AUTH_URL).hostname,
+    }),
+  );
 
   return {
     supabaseUrl: configuredUrl,

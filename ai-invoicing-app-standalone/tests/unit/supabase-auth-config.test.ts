@@ -47,4 +47,9 @@ describe('resolveSupabaseAuthConfig', () => {
       supabaseAnonKey: 'only-key',
     });
   });
+
+  it('does not invent a fallback host when URL is absent', () => {
+    const resolved = resolveSupabaseAuthConfig({ supabaseAnonKey: 'only-key' });
+    expect(resolved.supabaseUrl).toBeUndefined();
+  });
 });
