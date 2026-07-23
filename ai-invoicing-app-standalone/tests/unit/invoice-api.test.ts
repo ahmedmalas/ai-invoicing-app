@@ -20,26 +20,38 @@ describe('invoice API client', () => {
   function client(overrides: Record<string, unknown> = {}) {
     return createInvoiceApiClient({
       api: async (path, options) => {
-        calls.push({ path, options });
-        if (path === '/api/invoices' && options && 'method' in options && options.method === 'POST') {
+        if (options === undefined) {
+          calls.push({ path });
+        } else {
+          calls.push({ path, options });
+        }
+        const method =
+          options && typeof options === 'object' && 'method' in options
+            ? String((options as { method?: string }).method || '')
+            : '';
+        const bodyText =
+          options && typeof options === 'object' && 'body' in options
+            ? String((options as { body?: unknown }).body ?? '')
+            : '';
+        if (path === '/api/invoices' && method === 'POST') {
           return {
             id: '55555555-5555-4555-8555-555555555555',
             status: 'Draft',
             invoiceNumber: null,
             lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
-            ...JSON.parse(String((options as { body: string }).body)),
+            ...JSON.parse(bodyText),
           };
         }
-        if (path.startsWith('/api/invoices/') && options && 'method' in options && options.method === 'PUT') {
+        if (path.startsWith('/api/invoices/') && method === 'PUT') {
           return {
             id: path.split('/')[3],
             status: 'Draft',
             invoiceNumber: null,
             lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
-            ...JSON.parse(String((options as { body: string }).body)),
+            ...JSON.parse(bodyText),
           };
         }
-        if (path.startsWith('/api/invoices/') && (!options || !('method' in options))) {
+        if (path.startsWith('/api/invoices/') && !method) {
           return {
             id: path.split('/')[3],
             status: 'Draft',
@@ -93,7 +105,7 @@ describe('invoice API client', () => {
     const api = client();
     await api.finaliseInvoice('55555555-5555-4555-8555-555555555555');
     await api.deleteDraft('55555555-5555-4555-8555-555555555555');
-    expect(calls.map((call) => [call.path, (call.options as { method?: string })?.method])).toEqual([
+    expect(calls.map((call) => [call.path, (call.options as { method?: string } | undefined)?.method])).toEqual([
       ['/api/invoices/55555555-5555-4555-8555-555555555555/finalise', 'POST'],
       ['/api/invoices/55555555-5555-4555-8555-555555555555', 'DELETE'],
     ]);
