@@ -1,8 +1,18 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { createBuildIdentity, formatBuildIdentityLog } from '../build-identity.js';
+
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   app.get('/health', async () => ({ status: 'ok' }));
   app.get('/health/live', async () => ({ status: 'ok' }));
+  app.get('/health/build', async () => {
+    const identity = createBuildIdentity(process.env);
+    return {
+      status: 'ok',
+      ...identity,
+      logLine: formatBuildIdentityLog(identity),
+    };
+  });
   app.get('/health/ready', async (_request, reply) => {
     const diagnostics = await app.db.getOperationalDiagnostics();
     const ready =
@@ -18,6 +28,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
     return {
       status: 'ready',
       checks: diagnostics,
+      build: createBuildIdentity(process.env),
     };
   });
   app.get('/health/diagnostics', async () => {
@@ -36,6 +47,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
       },
       requests: app.opsMetrics,
       database: diagnostics,
+      build: createBuildIdentity(process.env),
     };
   });
 };

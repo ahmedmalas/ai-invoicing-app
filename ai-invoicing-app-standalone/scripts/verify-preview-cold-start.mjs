@@ -160,7 +160,9 @@ try {
   const apiOk =
     apiAsset.status === 200 && /createInvoiceApiClient/.test(apiAsset.body || '');
   const oldGone =
-    oldAsset.status === 404 || (oldAsset.status === 200 && !/mountInvoiceWorkspace/.test(oldAsset.body || ''));
+    oldAsset.status === 410 ||
+    oldAsset.status === 404 ||
+    (oldAsset.status === 200 && !/mountInvoiceWorkspace/.test(oldAsset.body || ''));
 
   report.ok = liveOk && readyOk && editorOk && modelOk && apiOk && oldGone && !timedOut && !blockedBySso;
   report.checks = {

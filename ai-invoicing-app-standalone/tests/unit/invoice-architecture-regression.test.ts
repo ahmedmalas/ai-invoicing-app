@@ -52,12 +52,46 @@ describe('invoice architecture regression', () => {
     expect(app).not.toMatch(/invoice-curtain\.js/);
     expect(app).not.toMatch(/invoice-draft-persistence\.js/);
     const frontend = fs.readFileSync(path.join(root, 'src/routes/frontend.ts'), 'utf8');
-    expect(frontend).not.toMatch(/invoice-workspace/);
-    expect(frontend).not.toMatch(/invoice-curtain/);
-    expect(frontend).not.toMatch(/invoice-draft-persistence/);
+    // Legacy filenames may appear only as DELETED_LEGACY_ASSETS → 410 Gone handlers.
+    expect(frontend).toContain('DELETED_LEGACY_ASSETS');
+    expect(frontend).toContain("code(410)");
+    expect(frontend).toContain('LEGACY_INVOICE_ASSET_REMOVED');
     expect(frontend).toContain('invoice-model.js');
     expect(frontend).toContain('invoice-api.js');
     expect(frontend).toContain('invoice-editor.js');
+    expect(frontend).toContain('build-identity.js');
+    // Must not serve deleted files as live tracedAssets.
+    expect(frontend).not.toMatch(/'invoice-workspace\.js': new URL/);
+    expect(frontend).not.toMatch(/'invoice-curtain\.js': new URL/);
+    expect(frontend).not.toMatch(/'invoice-draft-persistence\.js': new URL/);
+    const tracedBlock = frontend.slice(
+      frontend.indexOf('const tracedAssets'),
+      frontend.indexOf('const DELETED_LEGACY_ASSETS'),
+    );
+    expect(tracedBlock).not.toContain('invoice-workspace');
+    expect(tracedBlock).not.toContain('invoice-curtain');
+    expect(tracedBlock).not.toContain('invoice-draft-persistence');
+  });
+
+  it('exposes a non-secret runtime build marker for invoice pathway verification', () => {
+    const identity = fs.readFileSync(path.join(root, 'src/build-identity.ts'), 'utf8');
+    expect(identity).toContain("INVOICE_UI_VERSION = 'canonical-v3'");
+    expect(identity).toContain('createBuildIdentity');
+    expect(identity).toContain('canonical-state-payload-api');
+    const health = fs.readFileSync(path.join(root, 'src/routes/health.ts'), 'utf8');
+    expect(health).toContain('/health/build');
+    expect(health).toContain('createBuildIdentity');
+  });
+
+  it('keeps a single invoice editor entry point', () => {
+    const editors = fs
+      .readdirSync(publicDir)
+      .filter((name) => name.endsWith('.js') && /invoice-.*editor|invoice-workspace|invoice-curtain/.test(name));
+    expect(editors).toEqual(['invoice-editor.js']);
+    const app = read('app.js');
+    const editorImports = app.match(/from ['"]\.\/invoice-[^'"]+['"]/g) || [];
+    expect(editorImports.filter((line) => /invoice-editor/.test(line))).toHaveLength(1);
+    expect(editorImports.some((line) => /invoice-workspace|invoice-curtain/.test(line))).toBe(false);
   });
 
   it('does not branch invoice implementations by deployment host', () => {

@@ -83,16 +83,38 @@ describe('browser authentication and routing compatibility', () => {
       '/assets/invoice-model.js',
       '/assets/invoice-api.js',
       '/assets/invoice-editor.js',
+      '/assets/build-identity.js',
       '/assets/logo-studio-ui.js',
       '/favicon.svg',
       '/workspace/invoices/new',
       '/settings',
       '/logo-creator',
+      '/health/build',
     ]) {
       const response = await app.inject({ method: 'GET', url: path });
       expect(response.statusCode, path).toBe(200);
-      expect(response.headers['content-type']).not.toContain('application/json');
+      if (path === '/health/build') {
+        expect(response.json().invoiceUiVersion).toBe('canonical-v3');
+        expect(response.json().invoicePathway).toBe('canonical-state-payload-api');
+      } else {
+        expect(response.headers['content-type']).not.toContain('application/json');
+      }
     }
+
+    for (const legacy of [
+      '/assets/invoice-workspace.js',
+      '/assets/invoice-curtain.js',
+      '/assets/invoice-draft-persistence.js',
+    ]) {
+      const gone = await app.inject({ method: 'GET', url: legacy });
+      expect(gone.statusCode, legacy).toBe(410);
+      expect(gone.json().code).toBe('LEGACY_INVOICE_ASSET_REMOVED');
+    }
+
+    const shell = await app.inject({ method: 'GET', url: '/workspace/invoices/new' });
+    expect(shell.body).toContain('aleya-invoice-ui');
+    expect(shell.body).toContain('build-identity.js');
+    expect(shell.body).toMatch(/launch-app\.js\?v=/);
 
     const protectedApi = await app.inject({ method: 'GET', url: '/api/customers' });
     expect(protectedApi.statusCode).toBe(401);
