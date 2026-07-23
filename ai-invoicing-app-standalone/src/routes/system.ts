@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 
+import { resolveWorkspaceSetupNames } from '../domain/auth/workspace-setup.js';
+
 export interface SupabaseAuthOptions {
   url?: string | undefined;
   anonKey?: string | undefined;
@@ -39,6 +41,10 @@ const resetPasswordSchema = z
     path: ['passwordConfirmation'],
   });
 const refreshSchema = z.object({ refreshToken: z.string().min(1).max(4096) });
+const setupWorkspaceSchema = z.object({
+  displayName: z.string().trim().min(2).max(120).optional(),
+  workspaceName: z.string().trim().min(2).max(120).optional(),
+});
 
 const neutralRecoveryMessage =
   'If an account exists for that email, a password reset link has been sent.';
@@ -295,6 +301,114 @@ export function createSystemRoutes(options: SupabaseAuthOptions): FastifyPluginA
       const payload = await responsePayload(response);
       if (!response.ok) return reply.code(401).send({ message: 'Session expired' });
       return reply.send(payload);
+    });
+
+    /**
+     * Explicit first-login onboarding for Auth users without app membership.
+     * Identity is taken only from the validated Bearer token — body fields cannot
+     * select another user or attach to another organisation.
+     */
+    app.post('/api/auth/setup-workspace', async (request, reply) => {
+      const key = options.anonKey;
+      if (!key) throw new Error('AUTH_PROVIDER_NOT_CONFIGURED');
+      const authorization = request.headers.authorization;
+      if (!authorization?.startsWith('Bearer ')) {
+        return reply.code(401).send({
+          status: 401,
+          code: 'AUTH_UNAUTHENTICATED',
+          message: 'AUTH_UNAUTHENTICATED',
+        });
+      }
+      const body = setupWorkspaceSchema.parse(request.body ?? {});
+      const verify = await supabaseRequest(
+        options,
+        '/auth/v1/user',
+        { method: 'GET', headers: { authorization } },
+        key,
+      );
+      const authUser = (await responsePayload(verify)) as {
+        id?: unknown;
+        email?: unknown;
+        user_metadata?: { display_name?: unknown; workspace_name?: unknown };
+      };
+      if (!verify.ok || typeof authUser.id !== 'string' || !authUser.id) {
+        app.log.warn(
+          {
+            event: 'auth.setup_workspace_token_rejected',
+            providerStatus: verify.status,
+          },
+          'setup-workspace rejected invalid access token',
+        );
+        return reply.code(401).send({
+          status: 401,
+          code: 'AUTH_UNAUTHENTICATED',
+          message: 'AUTH_UNAUTHENTICATED',
+        });
+      }
+      if (typeof authUser.email !== 'string' || !authUser.email.trim()) {
+        return reply.code(400).send({
+          status: 400,
+          code: 'WORKSPACE_SETUP_EMAIL_REQUIRED',
+          message: 'A verified email is required to create a workspace.',
+        });
+      }
+
+      const existing = await app.db.resolveWorkspaceAccess(authUser.id);
+      if (existing) {
+        return reply.send({
+          status: 'ready',
+          workspace: {
+            id: existing.workspaceId,
+            name: existing.workspaceName,
+            role: existing.role,
+          },
+        });
+      }
+
+      const names = resolveWorkspaceSetupNames({
+        ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+        ...(body.workspaceName !== undefined ? { workspaceName: body.workspaceName } : {}),
+        email: authUser.email,
+        ...(typeof authUser.user_metadata?.display_name === 'string'
+          ? { metadataDisplayName: authUser.user_metadata.display_name }
+          : {}),
+        ...(typeof authUser.user_metadata?.workspace_name === 'string'
+          ? { metadataWorkspaceName: authUser.user_metadata.workspace_name }
+          : {}),
+      });
+
+      let workspace;
+      try {
+        workspace = await app.db.provisionWorkspaceOwner({
+          authUserId: authUser.id,
+          displayName: names.displayName,
+          email: authUser.email,
+          workspaceName: names.workspaceName,
+        });
+      } catch (error) {
+        // Concurrent first-login: membership unique constraint / serializable conflict.
+        const recovered = await app.db.resolveWorkspaceAccess(authUser.id);
+        if (!recovered) throw error;
+        workspace = recovered;
+      }
+
+      app.log.info(
+        {
+          event: 'auth.workspace_setup_completed',
+          authUserId: authUser.id,
+          workspaceId: workspace.workspaceId,
+        },
+        'application workspace provisioned for authenticated user',
+      );
+
+      return reply.code(201).send({
+        status: 'created',
+        workspace: {
+          id: workspace.workspaceId,
+          name: workspace.workspaceName,
+          role: workspace.role,
+        },
+      });
     });
 
     app.post('/api/auth/sign-out', async (request, reply) => {

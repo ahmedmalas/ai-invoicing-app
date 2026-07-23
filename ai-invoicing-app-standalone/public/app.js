@@ -73,6 +73,7 @@ const errorMessages = {
     'This customer cannot be deleted because related business records still reference it.',
   AUTH_FORBIDDEN: 'You do not have permission to make this change.',
   OWNER_ALREADY_PROVISIONED: 'Owner setup is already complete. Sign in instead.',
+  WORKSPACE_SETUP_REQUIRED: 'Finish setting up your workspace to continue.',
 };
 const friendlyMessage = (message) =>
   errorMessages[message] || message || 'Aleya Invoicing could not complete the request.';
@@ -187,6 +188,14 @@ async function api(path, options = {}, retry = true) {
     try {
       payload = await response.json();
     } catch {}
+    if (payload?.code === 'WORKSPACE_SETUP_REQUIRED') {
+      const error = new Error(
+        'Finish setting up your workspace to continue.',
+      );
+      error.status = response.status;
+      error.code = 'WORKSPACE_SETUP_REQUIRED';
+      throw error;
+    }
     const validation =
       payload?.code === 'VALIDATION_FAILED' ? formatValidationError(payload) : null;
     const error = new Error(
@@ -239,6 +248,7 @@ function authPage(kind, message = '', success = false) {
     signup: ['New workspace', 'Create account', 'Create a private invoicing workspace for your business.', 'Your business. Your secure workspace.'],
     forgot: ['Account recovery', 'Forgot password', 'Enter your email and we will send recovery instructions if an account exists.', 'A safe route back to your work.'],
     reset: ['Account recovery', 'Choose a new password', 'Use a strong password you have not used for this account before.', 'Secure your account. Keep moving.'],
+    setup: ['Workspace setup', 'Name your workspace', 'Your account is signed in. Create your private business workspace to continue.', 'One deliberate workspace for your invoices.'],
     verification: ['Verify your email', 'Check your inbox', 'Open the verification link we sent, then return to sign in.', 'One last step protects your workspace.'],
     invalid: ['Recovery link unavailable', 'Request a new link', 'This link is malformed, expired, or has already been used.', 'Your account remains protected.'],
   };
@@ -248,6 +258,9 @@ function authPage(kind, message = '', success = false) {
     form = '<form class="form" id="signin-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required minlength="12"></label><button class="button" type="submit">Continue to Aleya</button></form><nav class="auth-links" aria-label="Account options"><a href="/create-account" data-route>Create account</a><a href="/forgot-password" data-route>Forgot password?</a></nav>';
   } else if (kind === 'signup') {
     form = '<form class="form" id="signup-form"><label>Name<input name="name" autocomplete="name" required minlength="2" maxlength="120"></label><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" aria-describedby="password-help"></label><span class="field-help" id="password-help">At least 12 characters with uppercase, lowercase, and a number.</span><label>Confirm password<input name="passwordConfirmation" type="password" autocomplete="new-password" required minlength="12"></label><button class="button" type="submit">Create my workspace</button></form><nav class="auth-links"><a href="/sign-in" data-route>Already have an account? Sign in</a></nav>';
+  } else if (kind === 'setup') {
+    form =
+      '<form class="form" id="setup-workspace-form"><label>Your name<input name="displayName" autocomplete="name" required minlength="2" maxlength="120"></label><label>Workspace name<input name="workspaceName" autocomplete="organization" required minlength="2" maxlength="120"></label><button class="button" type="submit">Create my workspace</button></form><nav class="auth-links"><a href="/sign-in" data-route data-clear-session>Sign out and use another account</a></nav>';
   } else if (kind === 'forgot') {
     form = '<form class="form" id="forgot-form"><label>Email<input name="email" type="email" autocomplete="email" required></label><button class="button" type="submit">Send recovery link</button></form><nav class="auth-links"><a href="/sign-in" data-route>Back to sign in</a></nav>';
   } else if (kind === 'reset') {
@@ -277,12 +290,30 @@ function renderPublicAuthRoute(message = '', success = false) {
   const pages = {
     '/sign-in': 'signin',
     '/create-account': 'signup',
+    '/setup-workspace': 'setup',
     '/forgot-password': 'forgot',
     '/reset-password': recoveryAccessToken ? 'reset' : 'invalid',
   };
   const kind = pages[location.pathname] || 'signin';
   if (!pages[location.pathname]) history.replaceState({}, '', '/sign-in');
   authPage(kind, message, success);
+}
+
+function showWorkspaceSetup(message = '') {
+  history.replaceState({}, '', '/setup-workspace');
+  authPage('setup', message || 'Finish naming your workspace to continue.');
+}
+
+async function completeWorkspaceSetup(payload = {}) {
+  await api('/api/auth/setup-workspace', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateWorkspaceCache();
+  const identity = await api('/api/auth/me');
+  currentUser = identity.user;
+  history.replaceState({}, '', '/dashboard');
+  await renderRoute({ forceReload: true });
 }
 
 const navItems = [
@@ -2389,12 +2420,28 @@ async function bootstrap() {
       renderPublicAuthRoute();
       return;
     }
-    const identity = await api('/api/auth/me');
-    currentUser = identity.user;
-    if (['/', '/sign-in', '/create-account', '/forgot-password', '/auth/callback'].includes(location.pathname))
-      history.replaceState({}, '', '/dashboard');
-    await renderRoute();
+    if (location.pathname === '/setup-workspace') {
+      showWorkspaceSetup();
+      return;
+    }
+    try {
+      const identity = await api('/api/auth/me');
+      currentUser = identity.user;
+      if (['/', '/sign-in', '/create-account', '/forgot-password', '/auth/callback'].includes(location.pathname))
+        history.replaceState({}, '', '/dashboard');
+      await renderRoute();
+    } catch (error) {
+      if (error?.code === 'WORKSPACE_SETUP_REQUIRED') {
+        showWorkspaceSetup(error.message);
+        return;
+      }
+      throw error;
+    }
   } catch (error) {
+    if (error?.code === 'WORKSPACE_SETUP_REQUIRED' && session) {
+      showWorkspaceSetup(error.message);
+      return;
+    }
     saveSession(null);
     if (location.pathname !== '/sign-in') history.replaceState({}, '', '/sign-in');
     authPage('signin', error.message);
@@ -2438,6 +2485,10 @@ document.addEventListener('click', async (event) => {
   if (route) {
     event.preventDefault();
     document.querySelector('.app-shell')?.classList.remove('menu-open');
+    if (route.hasAttribute('data-clear-session')) {
+      saveSession(null);
+      currentUser = null;
+    }
     navigate(route.getAttribute('href'));
     return;
   }
@@ -2838,9 +2889,38 @@ document.addEventListener('submit', async (event) => {
     if (form.id === 'signin-form') {
       saveSession(await api('/api/auth/sign-in', { method: 'POST', body: JSON.stringify(data) }));
       currentUser = provisionalUser(data);
-      history.replaceState({}, '', '/dashboard');
       invalidateWorkspaceCache();
-      await renderRoute({ forceReload: true });
+      try {
+        history.replaceState({}, '', '/dashboard');
+        await renderRoute({ forceReload: true });
+      } catch (error) {
+        if (error?.code === 'WORKSPACE_SETUP_REQUIRED') {
+          const suggested =
+            String(data.email || '')
+              .split('@')[0]
+              ?.replace(/[._+-]+/g, ' ')
+              .trim() || 'Workspace owner';
+          showWorkspaceSetup(error.message);
+          const display = document.querySelector('#setup-workspace-form [name="displayName"]');
+          const workspace = document.querySelector('#setup-workspace-form [name="workspaceName"]');
+          if (display && !display.value) display.value = suggested;
+          if (workspace && !workspace.value) workspace.value = suggested + "'s workspace";
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    if (form.id === 'setup-workspace-form') {
+      if (!session?.access_token) {
+        history.replaceState({}, '', '/sign-in');
+        authPage('signin', 'Sign in again to finish workspace setup.');
+        return;
+      }
+      await completeWorkspaceSetup({
+        displayName: data.displayName,
+        workspaceName: data.workspaceName,
+      });
       return;
     }
     if (form.id === 'customer-form') {

@@ -245,6 +245,7 @@ export async function buildApp(options: BuildAppOptions) {
     '/api/system/setup/status',
     '/api/auth/sign-in',
     '/api/auth/sign-up',
+    '/api/auth/setup-workspace',
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/auth/refresh',
@@ -254,6 +255,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/',
       '/sign-in',
       '/create-account',
+      '/setup-workspace',
       '/forgot-password',
       '/reset-password',
       '/auth/callback',
@@ -344,28 +346,19 @@ export async function buildApp(options: BuildAppOptions) {
         app.log.warn({ event: 'auth.provider_identity_missing' }, 'provider identity is missing');
         throw new Error('AUTH_UNAUTHENTICATED');
       }
-      let workspace = await db.resolveWorkspaceAccess(authUser.id);
+      const workspace = await db.resolveWorkspaceAccess(authUser.id);
       if (!workspace) {
-        const displayName = authUser.user_metadata?.display_name;
-        if (typeof displayName === 'string' && displayName.trim() && authUser.email) {
-          const requestedWorkspaceName = authUser.user_metadata?.workspace_name;
-          workspace = await db.provisionWorkspaceOwner({
-            authUserId: authUser.id,
-            displayName,
-            email: authUser.email,
-            workspaceName:
-              typeof requestedWorkspaceName === 'string' && requestedWorkspaceName.trim()
-                ? requestedWorkspaceName
-                : `${displayName.trim()}'s workspace`,
-          });
-        }
-      }
-      if (!workspace) {
+        // Valid Supabase session, but application onboarding is incomplete.
+        // Do not treat this as an invalid session — the client must call
+        // POST /api/auth/setup-workspace (idempotent, own-workspace only).
         app.log.warn(
-          { event: 'auth.workspace_membership_missing' },
-          'authenticated identity has no application workspace',
+          {
+            event: 'auth.workspace_membership_missing',
+            authUserId: authUser.id,
+          },
+          'authenticated identity requires workspace setup',
         );
-        throw new Error('AUTH_UNAUTHENTICATED');
+        throw new Error('WORKSPACE_SETUP_REQUIRED');
       }
       enterWorkspaceContext({
         authUserId: authUser.id,
@@ -634,6 +627,20 @@ export async function buildApp(options: BuildAppOptions) {
         'unauthenticated request rejected',
       );
       return reply.code(401).send(standardizeErrorPayload(401, errorMessage));
+    }
+
+    if (errorMessage.includes('WORKSPACE_SETUP_REQUIRED')) {
+      app.log.warn(
+        {
+          event: 'authorization.workspace_setup_required',
+          requestId: request.id,
+          method: request.method,
+          url: sanitizePath(request.url),
+          code: 'WORKSPACE_SETUP_REQUIRED',
+        },
+        'authenticated request requires workspace setup',
+      );
+      return reply.code(409).send(standardizeErrorPayload(409, 'WORKSPACE_SETUP_REQUIRED'));
     }
 
     if (

@@ -129,6 +129,7 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/',
     '/sign-in',
     '/create-account',
+    '/setup-workspace',
     '/forgot-password',
     '/reset-password',
     '/auth/callback',
