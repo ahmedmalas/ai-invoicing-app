@@ -401,7 +401,7 @@ async function main() {
   }
   step('pdf_matches_visible_title');
 
-  // Empty title still validates.
+  // Empty title still validates — clear through the input pathway so editor state updates.
   await waitFor(
     page,
     async () =>
@@ -411,15 +411,27 @@ async function main() {
   );
   await page.evaluate(() => {
     document.querySelector('.toast')?.remove();
+  });
+  await page.click('[data-invoice-field="title"]', { clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.evaluate(() => {
     const title = document.querySelector('[data-invoice-field="title"]');
-    if (title) title.value = '';
+    if (!title) return;
+    title.value = '';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    title.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await page.click('[data-invoice-action="preview"]');
   await waitFor(
     page,
     async () => {
       const toast = await page.$eval('.toast', (el) => el.textContent || '').catch(() => '');
-      return /Invoice title is required/i.test(toast);
+      const fieldError = await page
+        .$eval('[data-invoice-field-error="title"]', (el) =>
+          el.hidden ? '' : el.textContent || '',
+        )
+        .catch(() => '');
+      return /Invoice title is required/i.test(toast) || /Invoice title is required/i.test(fieldError);
     },
     8000,
     'empty title validation',
