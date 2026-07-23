@@ -20,7 +20,7 @@ const invoiceNumberSchema = z.string().trim().min(1).nullable().optional();
 
 const createDraftSchema = z.object({
   customerId: z.string().uuid(),
-  title: z.string().min(1, 'Invoice title is required.'),
+  title: z.string().trim().min(1, 'Invoice title is required.'),
   issueDate: z.string().min(1, 'Issue date is required.'),
   dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),
@@ -30,7 +30,7 @@ const createDraftSchema = z.object({
 });
 
 const updateDraftSchema = z.object({
-  title: z.string().min(1, 'Invoice title is required.'),
+  title: z.string().trim().min(1, 'Invoice title is required.'),
   issueDate: z.string().min(1, 'Issue date is required.'),
   dueDate: z.string().min(1, 'Due date is required.'),
   notes: z.string().optional(),

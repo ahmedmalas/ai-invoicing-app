@@ -3078,6 +3078,7 @@ document.addEventListener('submit', async (event) => {
       authPage(kinds[form.id], error.message);
     } else {
       toast(error.message, true);
+      if (error?.fieldPath) focusInvoiceValidationField(error.fieldPath);
     }
   } finally {
     if (submit?.isConnected) submit.disabled = false;

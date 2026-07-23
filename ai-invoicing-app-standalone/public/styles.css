@@ -1147,6 +1147,22 @@ td.primary-cell {
   display: grid;
   gap: 6px;
 }
+.invoice-field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted, #5b6470);
+}
+.invoice-field-error {
+  color: #b42318;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.invoice-field input[aria-invalid='true'],
+.invoice-field select[aria-invalid='true'],
+.invoice-field textarea[aria-invalid='true'] {
+  border-color: #f04438;
+  box-shadow: 0 0 0 3px rgba(240, 68, 56, 0.15);
+}
 .invoice-field input,
 .invoice-field select,
 .invoice-field textarea,

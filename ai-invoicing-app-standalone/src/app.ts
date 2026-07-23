@@ -573,7 +573,12 @@ export async function buildApp(options: BuildAppOptions) {
       app.opsMetrics.validationFailureCount += 1;
       const issuePaths = error.issues.map((issue) => issue.path.join('.'));
       const titleIssue = error.issues.find((issue) => issue.path[0] === 'title');
-      const validationMessage = titleIssue
+      const titleLooksMissing =
+        Boolean(titleIssue) &&
+        /required|too small|at least 1|min\(1\)|expected string/i.test(
+          String(titleIssue?.message || ''),
+        );
+      const validationMessage = titleLooksMissing
         ? 'Invoice title is required.'
         : error.issues[0]?.message || 'Validation failed';
       app.log.warn(

@@ -289,5 +289,28 @@ describe('existing invoice number → preview PDF pathway', () => {
     });
     expect(missingTitle.statusCode).toBe(400);
     expect(JSON.stringify(missingTitle.json())).toMatch(/Invoice title is required/i);
+
+    const whitespaceTitle = await app.inject({
+      method: 'PUT',
+      url: `/api/invoices/${saved.id}`,
+      payload: {
+        title: '   ',
+        issueDate: '2026-07-22',
+        dueDate: '2026-08-05',
+        paymentState: 'Draft',
+        invoiceNumber: null,
+        lineItems: [{ description: 'Service', quantity: 1, unitPrice: 50, gstApplicable: true }],
+      },
+    });
+    expect(whitespaceTitle.statusCode).toBe(400);
+    expect(JSON.stringify(whitespaceTitle.json())).toMatch(/Invoice title is required/i);
+
+    // Validation failure must not create a duplicate draft.
+    const list = await app.inject({ method: 'GET', url: '/api/invoices?limit=500' });
+    expect(list.statusCode).toBe(200);
+    const listed = z
+      .object({ invoices: z.array(z.object({ id: z.string().uuid(), title: z.string() })) })
+      .parse(list.json());
+    expect(listed.invoices.filter((invoice) => invoice.id === saved.id)).toHaveLength(1);
   });
 });

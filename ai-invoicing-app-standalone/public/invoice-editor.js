@@ -158,7 +158,7 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
 
   return (
     '<div class="invoice-curtain" data-invoice-editor aria-hidden="true">' +
-    '<form class="invoice-workspace" id="invoice-editor-form" data-record-id="' +
+    '<form class="invoice-workspace" id="invoice-editor-form" novalidate data-record-id="' +
     escapeHtml(record.id || '') +
     '" data-payment-state="' +
     escapeHtml(record.paymentState || 'Draft') +
@@ -228,10 +228,14 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     '<div class="invoice-billto-preview" data-customer-preview>' +
     customerPreviewMarkup(null) +
     '</div></div>' +
-    '<div><h2>Invoice title</h2><label class="invoice-field">' +
-    '<input data-invoice-field="title" name="title" required value="' +
+    '<div><h2>Invoice title</h2>' +
+    '<label class="invoice-field" for="invoice-title-input">' +
+    '<span class="invoice-field-label">Invoice title</span>' +
+    '<input id="invoice-title-input" data-invoice-field="title" name="title" required value="' +
     escapeHtml(record.title || '') +
-    '" placeholder="Short job or invoice title" autocomplete="off" spellcheck="true">' +
+    '" placeholder="Short job or invoice title" autocomplete="off" spellcheck="true" ' +
+    'aria-describedby="invoice-title-error">' +
+    '<span class="invoice-field-error" id="invoice-title-error" data-invoice-field-error="title" hidden></span>' +
     '</label></div></div></section>' +
     '<section class="invoice-section">' +
     '<div class="invoice-section-head"><h2>Line items</h2>' +
@@ -306,7 +310,33 @@ export function createInvoiceEditor(deps) {
 
   function fieldValue(name) {
     const control = field(name);
+    // Always read live `.value` — never FormData. Disabled controls still expose value.
     return control ? String(control.value ?? '') : '';
+  }
+
+  function setFieldError(fieldPath, message) {
+    if (!form) return;
+    const errorEl = form.querySelector(`[data-invoice-field-error="${fieldPath}"]`);
+    const control = field(fieldPath);
+    if (errorEl) {
+      const text = String(message || '').trim();
+      errorEl.hidden = !text;
+      errorEl.textContent = text;
+    }
+    if (control) {
+      if (message) control.setAttribute('aria-invalid', 'true');
+      else control.removeAttribute('aria-invalid');
+    }
+  }
+
+  function clearFieldErrors() {
+    form?.querySelectorAll('[data-invoice-field-error]').forEach((node) => {
+      node.hidden = true;
+      node.textContent = '';
+    });
+    form?.querySelectorAll('[aria-invalid="true"]').forEach((node) => {
+      node.removeAttribute('aria-invalid');
+    });
   }
 
   function readLineItems() {
@@ -372,10 +402,15 @@ export function createInvoiceEditor(deps) {
   }
 
   function requireTitle(body) {
-    if (String(body.title || '').trim()) return;
+    if (String(body.title || '').trim()) {
+      setFieldError('title', '');
+      return;
+    }
     const error = new Error('Invoice title is required.');
     error.status = 400;
     error.fieldPath = 'title';
+    setFieldError('title', error.message);
+    field('title')?.focus?.();
     throw error;
   }
 
@@ -491,6 +526,9 @@ export function createInvoiceEditor(deps) {
   }
 
   function setActionsBusy(busy) {
+    // Only toolbar actions may disable. Never disable invoice fields — FormData (and
+    // some browsers) omit disabled controls, which previously surfaced a false
+    // "Invoice title is required." while the title was still visible.
     form?.querySelectorAll('[data-invoice-action]').forEach((button) => {
       if (busy) {
         button.dataset.wasDisabled = button.disabled ? '1' : '0';
@@ -608,6 +646,8 @@ export function createInvoiceEditor(deps) {
 
   function bindInteractions() {
     form.addEventListener('input', (event) => {
+      const path = event.target?.getAttribute?.('data-invoice-field');
+      if (path) setFieldError(path, '');
       if (event.target.closest('[data-invoice-line], [data-invoice-field]')) refreshTotals();
       scheduleAutosave();
     });
@@ -939,13 +979,16 @@ export function createInvoiceEditor(deps) {
         throw error;
       }
       if (!payloadReady(body)) {
+        const missingTitle = !String(body.title || '').trim();
         const error = new Error(
-          !String(body.title || '').trim()
+          missingTitle
             ? 'Invoice title is required.'
             : 'Add a customer, title, and at least one line item before previewing.',
         );
         error.status = 400;
-        error.fieldPath = !String(body.title || '').trim() ? 'title' : 'customerId';
+        error.fieldPath = missingTitle ? 'title' : 'customerId';
+        if (missingTitle) setFieldError('title', error.message);
+        field(error.fieldPath)?.focus?.();
         throw error;
       }
       const visibleNumber = readCanonicalInvoiceNumber();
