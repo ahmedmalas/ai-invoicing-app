@@ -17,9 +17,8 @@ import type {
 import type { CustomerStatementReport } from '../db/database.js';
 import {
   drawAlignedTotals,
-  drawInvoiceFooter,
   drawPaymentDetailsBlock,
-  ensureContentAboveFooter,
+  ensureContentFitsPage,
   gstStatusLabel,
   pageContentRight,
   pageContentWidth,
@@ -90,8 +89,6 @@ export function generateInvoicePdfBuffer(input: {
         top: PDF_PAGE_MARGIN,
         left: PDF_PAGE_MARGIN,
         right: PDF_PAGE_MARGIN,
-        // Keep a standard bottom margin; the footer safe band is enforced manually
-        // via ensureContentAboveFooter / drawInvoiceFooter (avoids PDFKit page-break loops).
         bottom: PDF_PAGE_MARGIN,
       },
     });
@@ -127,17 +124,6 @@ export function generateInvoicePdfBuffer(input: {
     const gstStatus = gstStatusLabel(input.lineItems);
     const contentRight = () => pageContentRight(doc);
     const contentWidth = () => pageContentWidth(doc);
-
-    const paintFooter = () => {
-      drawInvoiceFooter(doc, profile, gstStatus);
-    };
-    // After a new page is created, paint the footer then restore the content cursor.
-    // Leaving the cursor in the footer band would immediately trigger another page.
-    doc.on('pageAdded', () => {
-      paintFooter();
-      doc.x = PDF_PAGE_MARGIN;
-      doc.y = PDF_PAGE_MARGIN;
-    });
 
     writeBrandedHeader(doc, profile, brandPrimary);
     writeBusinessIdentityBlock(doc, profile, gstStatus);
@@ -180,7 +166,7 @@ export function generateInvoicePdfBuffer(input: {
     }
 
     doc.moveDown(1);
-    ensureContentAboveFooter(doc, 40);
+    ensureContentFitsPage(doc, 40);
     doc.fontSize(12).fillColor('#111827').text('Line Items', PDF_PAGE_MARGIN, doc.y, {
       width: contentWidth(),
       align: 'left',
@@ -216,7 +202,7 @@ export function generateInvoicePdfBuffer(input: {
       const lineGst = item.gstApplicable ? lineSubtotal * 0.1 : 0;
       const lineTotal = lineSubtotal + lineGst;
 
-      ensureContentAboveFooter(doc, 28);
+      ensureContentFitsPage(doc, 28);
       doc.moveDown(0.55);
       const y = doc.y;
       doc.fillColor('#111827').fontSize(10).text(item.description, col.description.x, y, {
@@ -232,7 +218,7 @@ export function generateInvoicePdfBuffer(input: {
     }
 
     doc.moveDown(1);
-    ensureContentAboveFooter(doc, 70);
+    ensureContentFitsPage(doc, 70);
     drawAlignedTotals(
       doc,
       [
@@ -244,7 +230,7 @@ export function generateInvoicePdfBuffer(input: {
     );
 
     if (input.invoice.notes) {
-      ensureContentAboveFooter(doc, 40);
+      ensureContentFitsPage(doc, 40);
       doc.moveDown(1.1);
       doc.fillColor('#111827').fontSize(11).text('Notes', PDF_PAGE_MARGIN, doc.y, {
         width: contentWidth(),
@@ -258,7 +244,7 @@ export function generateInvoicePdfBuffer(input: {
     }
 
     if (input.invoice.paymentTerms) {
-      ensureContentAboveFooter(doc, 36);
+      ensureContentFitsPage(doc, 36);
       doc.moveDown(0.9);
       doc.fillColor('#111827').fontSize(11).text('Payment terms', PDF_PAGE_MARGIN, doc.y, {
         width: contentWidth(),
@@ -271,10 +257,8 @@ export function generateInvoicePdfBuffer(input: {
       });
     }
 
+    // Invoice ends after business / payment information — no generated-by branding footer.
     drawPaymentDetailsBlock(doc, profile, input.bankDetails);
-
-    // Footer on the final page (pageAdded covers earlier pages only).
-    paintFooter();
     doc.end();
   });
 }
