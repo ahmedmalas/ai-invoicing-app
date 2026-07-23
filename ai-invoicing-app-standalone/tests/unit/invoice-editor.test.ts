@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 
 import {
   buildEditorHtml,
-  buildPayloadFromForm,
+  buildInvoicePayload,
+  createEmptyEditorState,
+  hydrateEditorState,
   INVOICE_EDITOR_STORAGE_KEY,
   lineRowHtml,
 } from '../../public/invoice-editor.js';
 
-describe('invoice editor rebuild', () => {
-  it('renders one canonical title field and no FormData-dependent markup', () => {
+describe('invoice editor canonical pathway', () => {
+  it('renders one canonical title field from editor state', () => {
     const html = buildEditorHtml({
       profile: { companyName: 'Aleya Demo' },
       customers: [{ id: '11111111-1111-4111-8111-111111111111', displayName: 'Acme' }],
@@ -29,47 +32,16 @@ describe('invoice editor rebuild', () => {
     expect(html.match(/data-invoice-field="title"/g)?.length).toBe(1);
   });
 
-  it('builds payloads from live control values even when inputs are disabled', () => {
-    const title = {
-      value: 'Visible Bound Title',
-      disabled: true,
-    };
-    const form = {
-      querySelector(selector: string) {
-        if (selector.includes('data-invoice-field="title"')) return title;
-        if (selector.includes('data-invoice-field="customerId"'))
-          return { value: '11111111-1111-4111-8111-111111111111' };
-        if (selector.includes('data-invoice-field="issueDate"')) return { value: '2026-07-22' };
-        if (selector.includes('data-invoice-field="dueDate"')) return { value: '2026-08-05' };
-        if (selector.includes('data-invoice-field="notes"')) return { value: '' };
-        if (selector.includes('data-invoice-field="paymentTerms"')) return { value: '' };
-        return null;
-      },
-      querySelectorAll(selector: string) {
-        if (selector === '[data-invoice-line]') {
-          return [
-            {
-              querySelector(inner: string) {
-                if (inner.includes('description')) return { value: 'Roof work' };
-                if (inner.includes('quantity')) return { value: '2' };
-                if (inner.includes('unitPrice')) return { value: '150' };
-                if (inner.includes('gstApplicable')) return { value: 'true' };
-                return null;
-              },
-            },
-          ];
-        }
-        return [];
-      },
-    };
-
-    // FormData would omit disabled title; canonical builder must not.
-    const formDataTitle = title.disabled ? undefined : title.value;
-    expect(formDataTitle).toBeUndefined();
-    const payload = buildPayloadFromForm(form) as {
-      title: string;
-      lineItems: Array<{ description: string }>;
-    };
+  it('builds payloads from editor state even when UI would be disabled', () => {
+    const state = hydrateEditorState({
+      customerId: '11111111-1111-4111-8111-111111111111',
+      title: 'Visible Bound Title',
+      issueDate: '2026-07-22',
+      dueDate: '2026-08-05',
+      lineItems: [{ description: 'Roof work', quantity: 2, unitPrice: 150, gstApplicable: true }],
+    });
+    // FormData would omit disabled title; canonical state builder must not care.
+    const payload = buildInvoicePayload(state);
     expect(payload.title).toBe('Visible Bound Title');
     expect(payload.lineItems[0]?.description).toBe('Roof work');
   });
@@ -78,12 +50,12 @@ describe('invoice editor rebuild', () => {
     const html = buildEditorHtml({
       profile: { companyName: 'Aleya Demo' },
       customers: [{ id: '11111111-1111-4111-8111-111111111111', displayName: 'Acme' }],
-      record: {
+      state: createEmptyEditorState({
         issueDate: '2026-07-22',
         dueDate: '2026-08-05',
         title: '',
         lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
-      },
+      }),
     });
     expect(html).toContain('novalidate');
     expect(html).toContain('data-invoice-field-error="title"');
@@ -93,49 +65,26 @@ describe('invoice editor rebuild', () => {
   });
 
   it('trims whitespace-only titles out of the canonical payload', () => {
-    const form = {
-      querySelector(selector: string) {
-        if (selector.includes('data-invoice-field="title"')) return { value: '   ' };
-        if (selector.includes('data-invoice-field="customerId"'))
-          return { value: '11111111-1111-4111-8111-111111111111' };
-        if (selector.includes('data-invoice-field="issueDate"')) return { value: '2026-07-22' };
-        if (selector.includes('data-invoice-field="dueDate"')) return { value: '2026-08-05' };
-        if (selector.includes('data-invoice-field="notes"')) return { value: '' };
-        if (selector.includes('data-invoice-field="paymentTerms"')) return { value: '' };
-        return null;
-      },
-      querySelectorAll(selector: string) {
-        if (selector === '[data-invoice-line]') {
-          return [
-            {
-              querySelector(inner: string) {
-                if (inner.includes('description')) return { value: 'Labour' };
-                if (inner.includes('quantity')) return { value: '1' };
-                if (inner.includes('unitPrice')) return { value: '100' };
-                if (inner.includes('gstApplicable')) return { value: 'true' };
-                return null;
-              },
-            },
-          ];
-        }
-        return [];
-      },
-    };
-    const payload = buildPayloadFromForm(form) as { title: string };
-    expect(payload.title).toBe('');
+    const state = createEmptyEditorState({
+      customerId: '11111111-1111-4111-8111-111111111111',
+      title: '   ',
+      issueDate: '2026-07-22',
+      dueDate: '2026-08-05',
+      lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
+    });
+    expect(buildInvoicePayload(state).title).toBe('');
   });
 
-  it('never disables invoice fields while busy — only action buttons', async () => {
-    const source = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../../public/invoice-editor.js', import.meta.url), 'utf8'),
-    );
+  it('never disables invoice fields while busy — only action buttons', () => {
+    const source = fs.readFileSync(new URL('../../public/invoice-editor.js', import.meta.url), 'utf8');
     expect(source).toMatch(/Only toolbar actions may disable/);
     expect(source).toMatch(/querySelectorAll\('\[data-invoice-action\]'\)/);
     expect(source).toMatch(/Never FormData/);
-    // Regression: production disabled every input before FormData collection.
     expect(source).not.toMatch(
       /querySelectorAll\(\s*'\[data-invoice-action\], button, input, select, textarea'/,
     );
+    expect(source).toContain('createInvoiceApiClient');
+    expect(source).toContain('buildInvoicePayload(state)');
   });
 
   it('keeps line rows non-draggable by default', () => {
@@ -144,7 +93,7 @@ describe('invoice editor rebuild', () => {
     expect(html).not.toMatch(/data-invoice-line[^>]*draggable="true"/);
   });
 
-  it('exports a dedicated storage key for the rebuilt editor', () => {
-    expect(INVOICE_EDITOR_STORAGE_KEY).toBe('aleya-invoice-editor-v2');
+  it('exports a dedicated storage key for the canonical editor', () => {
+    expect(INVOICE_EDITOR_STORAGE_KEY).toBe('aleya-invoice-editor-v3');
   });
 });

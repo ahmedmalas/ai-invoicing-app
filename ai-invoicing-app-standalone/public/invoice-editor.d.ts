@@ -1,3 +1,5 @@
+import type { InvoiceCanonicalPayload, InvoiceEditorState } from './invoice-model.js';
+
 export declare const INVOICE_EDITOR_STORAGE_KEY: string;
 export declare const INVOICE_EDITOR_AUTOSAVE_MS: number;
 
@@ -18,7 +20,8 @@ export declare function createInvoiceEditor(deps: {
   isOpen: () => boolean;
   isDirty: () => boolean;
   getForm: () => HTMLFormElement | null;
-  buildPayload: () => unknown;
+  getState: () => InvoiceEditorState;
+  buildPayload: () => InvoiceCanonicalPayload;
   handleAction: (action: string) => Promise<unknown>;
   handleSubmit: (submitterAction?: string | null) => Promise<unknown>;
   clearLocal: () => void;
@@ -27,8 +30,10 @@ export declare function createInvoiceEditor(deps: {
 };
 
 export declare function buildEditorHtml(input: unknown): string;
-export declare function buildPayloadFromForm(form: unknown): unknown;
 export declare function lineRowHtml(item?: unknown, index?: number): string;
 export declare function snapshotRecoverable(snapshot: unknown): boolean;
 export declare function readInvoiceEditorLocal(storage?: Storage): unknown;
 export declare function clearInvoiceEditorLocal(storage?: Storage): void;
+export declare function buildInvoicePayload(state: InvoiceEditorState): InvoiceCanonicalPayload;
+export declare function hydrateEditorState(record: unknown): InvoiceEditorState;
+export declare function createEmptyEditorState(seed?: object): InvoiceEditorState;

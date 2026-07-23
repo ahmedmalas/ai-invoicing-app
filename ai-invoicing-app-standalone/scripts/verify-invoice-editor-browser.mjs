@@ -15,7 +15,7 @@ const AUTH_BYPASS_USER_ID = '00000000-0000-0000-0000-000000000001';
 const PORT = Number(process.env.VERIFY_PORT || 4191);
 const BASE = `http://127.0.0.1:${PORT}`;
 const CHROME = process.env.CHROME_PATH || '/usr/local/bin/google-chrome';
-const STORAGE_KEY = 'aleya-invoice-editor-v2';
+const STORAGE_KEY = 'aleya-invoice-editor-v3';
 const report = { ok: false, invoiceId: null, steps: [], checks: {} };
 
 function step(name, detail) {
@@ -259,7 +259,7 @@ async function main() {
   await price.click({ clickCount: 3 });
   await price.type('150');
 
-  // Disabled inputs must not drop the visible title from the payload builder.
+  // Disabled inputs must not drop the visible title from the state payload builder.
   const disabledPayload = await page.evaluate(async () => {
     const form = document.querySelector('#invoice-editor-form');
     const title = form.querySelector('[data-invoice-field="title"]');
@@ -268,7 +268,21 @@ async function main() {
       el.disabled = true;
     });
     const mod = await import('/assets/invoice-editor.js');
-    const body = mod.buildPayloadFromForm(form);
+    // Editor state is the source of truth — DOM disabled flags are irrelevant.
+    const editorMod = await import('/assets/invoice-model.js');
+    const state = editorMod.hydrateEditorState({
+      customerId: form.querySelector('[data-invoice-field="customerId"]')?.value || '',
+      title: visible,
+      issueDate: form.querySelector('[data-invoice-field="issueDate"]')?.value || '',
+      dueDate: form.querySelector('[data-invoice-field="dueDate"]')?.value || '',
+      lineItems: [...form.querySelectorAll('[data-invoice-line]')].map((row) => ({
+        description: row.querySelector('[data-invoice-field="description"]')?.value || '',
+        quantity: Number(row.querySelector('[data-invoice-field="quantity"]')?.value || 0),
+        unitPrice: Number(row.querySelector('[data-invoice-field="unitPrice"]')?.value || 0),
+        gstApplicable: row.querySelector('[data-invoice-field="gstApplicable"]')?.value === 'true',
+      })),
+    });
+    const body = mod.buildInvoicePayload(state);
     const formDataTitle = Object.fromEntries(new FormData(form)).title || null;
     form.querySelectorAll('input, select, textarea, button').forEach((el) => {
       el.disabled = false;

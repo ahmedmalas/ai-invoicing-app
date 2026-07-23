@@ -36,13 +36,3 @@ export function calculateInvoiceTotals(items) {
     totals: { subtotal, gstTotal, total },
   };
 }
-
-export function readLineItemsFromForm(form) {
-  if (!form) return [];
-  return [...form.querySelectorAll('[data-invoice-line]')].map((row) => ({
-    description: row.querySelector('[name="description"]')?.value.trim() || '',
-    quantity: Number(row.querySelector('[name="quantity"]')?.value || 0),
-    unitPrice: Number(row.querySelector('[name="unitPrice"]')?.value || 0),
-    gstApplicable: row.querySelector('[name="gstApplicable"]')?.value === 'true',
-  }));
-}

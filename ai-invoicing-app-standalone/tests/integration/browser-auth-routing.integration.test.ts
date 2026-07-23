@@ -80,6 +80,8 @@ describe('browser authentication and routing compatibility', () => {
       '/assets/form-interaction-guards.js',
       '/assets/business-profile-readiness.js',
       '/assets/invoice-totals.js',
+      '/assets/invoice-model.js',
+      '/assets/invoice-api.js',
       '/assets/invoice-editor.js',
       '/assets/logo-studio-ui.js',
       '/favicon.svg',

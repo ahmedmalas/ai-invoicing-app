@@ -1,23 +1,35 @@
 /**
- * Canonical invoice editor (rebuild).
+ * Canonical invoice editor UI.
  *
- * One source of truth while mounted:
- *   - editable fields: live control `.value` via data-invoice-field
- *   - invoice number: form.dataset.invoiceNumber (server-owned; never an input)
- * One payload builder (never FormData) — includes invoiceNumber for preview/save parity.
- * One serialised operation queue for autosave / save / preview / download.
- * Action buttons may disable; form fields never disable for payload collection.
+ * Source of truth: InvoiceEditorState (invoice-model.js).
+ * Payload builder: buildInvoicePayload(state) — used for every save / autosave / PDF path.
+ * API: createInvoiceApiClient — UI handlers do not invent fetch bodies.
+ *
+ * The DOM is a view of state. Disabling inputs never removes data from state.
+ * Never FormData. Never scrape the DOM to build network payloads.
  */
 
 import { calculateInvoiceTotals, calculateLineItem } from './invoice-totals.js';
 import {
-  assertPayloadMatchesVisibleInvoiceNumber,
   formatInvoiceNumberDisplay,
   normalizeInvoiceNumber,
+  assertPayloadMatchesVisibleInvoiceNumber,
 } from './invoice-number.js';
 import { logoSrcFromProfile } from './logo-studio-ui.js';
+import {
+  applySavedInvoice,
+  buildInvoicePayload,
+  createEmptyEditorState,
+  hydrateEditorState,
+  patchEditorState,
+  payloadReadyForAutosave,
+  snapshotRecoverable,
+  validateInvoiceForSave,
+  withRecalculatedTotals,
+} from './invoice-model.js';
+import { createInvoiceApiClient } from './invoice-api.js';
 
-export const INVOICE_EDITOR_STORAGE_KEY = 'aleya-invoice-editor-v2';
+export const INVOICE_EDITOR_STORAGE_KEY = 'aleya-invoice-editor-v3';
 export const INVOICE_EDITOR_AUTOSAVE_MS = 1200;
 
 const GST_RATE = 0.1;
@@ -34,16 +46,16 @@ const escapeHtml = (value) =>
 const money = (value) =>
   new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(Number(value || 0));
 
-const todayOffset = (offset = 0) => {
-  const value = new Date();
-  value.setDate(value.getDate() + offset);
-  return value.toISOString().slice(0, 10);
-};
-
 function readLocal(storage) {
   try {
     const raw = storage?.getItem?.(INVOICE_EDITOR_STORAGE_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      // Migration: recover v2 local drafts once.
+      const legacy = storage?.getItem?.('aleya-invoice-editor-v2');
+      if (!legacy) return null;
+      const parsed = JSON.parse(legacy);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    }
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
@@ -62,17 +74,10 @@ function writeLocal(storage, snapshot) {
 function clearLocal(storage) {
   try {
     storage?.removeItem?.(INVOICE_EDITOR_STORAGE_KEY);
+    storage?.removeItem?.('aleya-invoice-editor-v2');
   } catch {
     /* ignore */
   }
-}
-
-function snapshotRecoverable(snapshot) {
-  if (!snapshot) return false;
-  const hasTitle = Boolean(String(snapshot.title || '').trim());
-  const hasCustomer = Boolean(String(snapshot.customerId || '').trim());
-  const hasLine = (snapshot.lineItems || []).some((item) => String(item?.description || '').trim());
-  return hasTitle || hasCustomer || hasLine;
 }
 
 function lineRowHtml(item = {}, index = 0) {
@@ -139,33 +144,27 @@ function customerPreviewMarkup(customer) {
   );
 }
 
-function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
-  const lines = (record.lineItems?.length
-    ? record.lineItems
-    : [{ description: '', quantity: 1, unitPrice: 0, gstApplicable: true }]
-  )
-    .map((item, index) => lineRowHtml(item, index))
-    .join('');
-  const { totals } = calculateInvoiceTotals(
-    record.lineItems?.length
-      ? record.lineItems
-      : [{ quantity: 1, unitPrice: 0, gstApplicable: true }],
-  );
+function buildEditorHtml({ profile = {}, customers = [], state = null, record = null }) {
+  const resolved =
+    state ||
+    (record ? hydrateEditorState(record) : createEmptyEditorState());
+  const recordState = resolved;
+  const lines = recordState.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
+  const totals = recordState.totals || calculateInvoiceTotals(recordState.lineItems).totals;
   const logo = logoSrcFromProfile(profile);
-  const status = record.status || 'Draft';
-  const invoiceNumber = normalizeInvoiceNumber(record.invoiceNumber);
-  const invoiceNumberDisplay = formatInvoiceNumberDisplay(invoiceNumber);
+  const status = recordState.status || 'Draft';
+  const invoiceNumberDisplay = formatInvoiceNumberDisplay(recordState.invoiceNumber);
 
   return (
     '<div class="invoice-curtain" data-invoice-editor aria-hidden="true">' +
     '<form class="invoice-workspace" id="invoice-editor-form" novalidate data-record-id="' +
-    escapeHtml(record.id || '') +
+    escapeHtml(recordState.id || '') +
     '" data-payment-state="' +
-    escapeHtml(record.paymentState || 'Draft') +
+    escapeHtml(recordState.paymentState || 'Draft') +
     '" data-status="' +
     escapeHtml(status) +
     '" data-invoice-number="' +
-    escapeHtml(invoiceNumber || '') +
+    escapeHtml(recordState.invoiceNumber || '') +
     '">' +
     '<header class="invoice-toolbar">' +
     '<div class="invoice-toolbar-brand">' +
@@ -213,17 +212,17 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     escapeHtml(status) +
     '</span></dd></div>' +
     '<div><dt>Issue date</dt><dd><input data-invoice-field="issueDate" name="issueDate" type="date" required value="' +
-    escapeHtml(record.issueDate || '') +
+    escapeHtml(recordState.issueDate || '') +
     '"></dd></div>' +
     '<div><dt>Due date</dt><dd><input data-invoice-field="dueDate" name="dueDate" type="date" required value="' +
-    escapeHtml(record.dueDate || '') +
+    escapeHtml(recordState.dueDate || '') +
     '"></dd></div>' +
     '</dl></div></section>' +
     '<section class="invoice-section"><div class="invoice-section-grid">' +
     '<div><h2>Bill To</h2>' +
     '<label class="invoice-field">Customer<select data-invoice-field="customerId" name="customerId" required data-customer-select>' +
     '<option value="">Select customer</option>' +
-    customerOptionsHtml(customers, record.customerId || '') +
+    customerOptionsHtml(customers, recordState.customerId || '') +
     '</select></label>' +
     '<div class="invoice-billto-preview" data-customer-preview>' +
     customerPreviewMarkup(null) +
@@ -232,7 +231,7 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     '<label class="invoice-field" for="invoice-title-input">' +
     '<span class="invoice-field-label">Invoice title</span>' +
     '<input id="invoice-title-input" data-invoice-field="title" name="title" required value="' +
-    escapeHtml(record.title || '') +
+    escapeHtml(recordState.title || '') +
     '" placeholder="Short job or invoice title" autocomplete="off" spellcheck="true" ' +
     'aria-describedby="invoice-title-error">' +
     '<span class="invoice-field-error" id="invoice-title-error" data-invoice-field-error="title" hidden></span>' +
@@ -248,10 +247,10 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     '<section class="invoice-footer-grid">' +
     '<div class="invoice-notes-block">' +
     '<label class="invoice-field">Notes<textarea data-invoice-field="notes" name="notes" rows="4" placeholder="Notes for the customer">' +
-    escapeHtml(record.notes || '') +
+    escapeHtml(recordState.notes || '') +
     '</textarea></label>' +
     '<label class="invoice-field">Payment terms<input data-invoice-field="paymentTerms" name="paymentTerms" value="' +
-    escapeHtml(record.paymentTerms || '') +
+    escapeHtml(recordState.paymentTerms || '') +
     '" placeholder="e.g. Payment due within 14 days"></label>' +
     '</div>' +
     '<aside class="invoice-totals" aria-live="polite">' +
@@ -268,7 +267,7 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
     Math.round(GST_RATE * 100) +
     '%</p>' +
     '</aside></section>' +
-    (status === 'Draft' && record.id
+    (status === 'Draft' && recordState.id
       ? '<section class="invoice-danger-zone" aria-label="Danger zone">' +
         '<p class="muted">Delete permanently removes this draft and its line items. Finalised invoices cannot be deleted.</p>' +
         '<button type="button" class="button danger" data-invoice-action="delete">Delete invoice draft</button>' +
@@ -293,6 +292,14 @@ function buildEditorHtml({ profile = {}, customers = [], record = {} }) {
  */
 export function createInvoiceEditor(deps) {
   const storage = deps.storage ?? globalThis.localStorage;
+  const apiClient = createInvoiceApiClient({
+    api: deps.api,
+    previewPdf: deps.previewPdf,
+    downloadPdf: deps.downloadPdf,
+  });
+
+  /** @type {import('./invoice-model.js').InvoiceEditorState} */
+  let state = createEmptyEditorState();
   let root = null;
   let form = null;
   let opChain = Promise.resolve();
@@ -306,12 +313,6 @@ export function createInvoiceEditor(deps) {
 
   function field(name) {
     return form?.querySelector(`[data-invoice-field="${name}"]`) || null;
-  }
-
-  function fieldValue(name) {
-    const control = field(name);
-    // Always read live `.value` — never FormData. Disabled controls still expose value.
-    return control ? String(control.value ?? '') : '';
   }
 
   function setFieldError(fieldPath, message) {
@@ -339,84 +340,57 @@ export function createInvoiceEditor(deps) {
     });
   }
 
-  function readLineItems() {
-    if (!form) return [];
-    return [...form.querySelectorAll('[data-invoice-line]')].map((row) => ({
-      description: String(row.querySelector('[data-invoice-field="description"]')?.value || '').trim(),
-      quantity: Number(row.querySelector('[data-invoice-field="quantity"]')?.value || 0),
-      unitPrice: Number(row.querySelector('[data-invoice-field="unitPrice"]')?.value || 0),
-      gstApplicable: row.querySelector('[data-invoice-field="gstApplicable"]')?.value === 'true',
-    }));
-  }
-
-  function readCanonicalInvoiceNumber() {
-    return normalizeInvoiceNumber(form?.dataset.invoiceNumber);
-  }
-
-  function syncInvoiceNumberDisplay(invoiceNumber) {
+  /** Flush any focused control into editor state before building payloads. */
+  function commitPendingInput() {
     if (!form) return;
-    const normalized = normalizeInvoiceNumber(invoiceNumber);
-    form.dataset.invoiceNumber = normalized || '';
-    const display = form.querySelector('[data-invoice-number-display]');
-    if (display) display.textContent = formatInvoiceNumberDisplay(normalized);
-  }
-
-  /** Canonical payload — live control values + server-owned invoiceNumber. Never FormData. */
-  function buildPayload() {
-    const lineItems = readLineItems();
-    if (!lineItems.length) {
-      const error = new Error('Add at least one line item.');
-      error.fieldPath = 'lineItems';
-      throw error;
-    }
-    if (lineItems.some((item) => !item.description)) {
-      const error = new Error('Each line needs a description.');
-      error.fieldPath = 'lineItems';
-      throw error;
-    }
-    const notes = fieldValue('notes').trim();
-    const paymentTerms = fieldValue('paymentTerms').trim();
-    const invoiceNumber = readCanonicalInvoiceNumber();
-    return {
-      customerId: fieldValue('customerId'),
-      title: fieldValue('title').trim(),
-      issueDate: fieldValue('issueDate'),
-      dueDate: fieldValue('dueDate'),
-      invoiceNumber,
-      ...(notes ? { notes } : {}),
-      ...(paymentTerms ? { paymentTerms } : {}),
-      lineItems,
-    };
-  }
-
-  function payloadReady(body) {
-    return Boolean(
-      body?.customerId &&
-        String(body.title || '').trim() &&
-        Array.isArray(body.lineItems) &&
-        body.lineItems.length &&
-        body.lineItems.every(
-          (item) => String(item.description || '').trim() && Number(item.quantity) > 0,
-        ),
-    );
-  }
-
-  function requireTitle(body) {
-    if (String(body.title || '').trim()) {
-      setFieldError('title', '');
+    const active = form.ownerDocument?.activeElement;
+    if (!active || !form.contains(active)) return;
+    const path = active.getAttribute?.('data-invoice-field');
+    if (!path) return;
+    const row = active.closest?.('[data-invoice-line]');
+    if (row) {
+      const index = Number(row.dataset.lineIndex || 0);
+      const lines = state.lineItems.map((item) => ({ ...item }));
+      const current = { ...lines[index] };
+      if (path === 'description') current.description = String(active.value ?? '');
+      else if (path === 'quantity') current.quantity = Number(active.value || 0);
+      else if (path === 'unitPrice') current.unitPrice = Number(active.value || 0);
+      else if (path === 'gstApplicable') current.gstApplicable = active.value === 'true';
+      lines[index] = current;
+      state = withRecalculatedTotals({ ...state, lineItems: lines });
       return;
     }
-    const error = new Error('Invoice title is required.');
-    error.status = 400;
-    error.fieldPath = 'title';
-    setFieldError('title', error.message);
-    field('title')?.focus?.();
-    throw error;
+    if (path === 'title') state = patchEditorState(state, { title: String(active.value ?? '') });
+    else if (path === 'customerId')
+      state = patchEditorState(state, { customerId: String(active.value ?? '') });
+    else if (path === 'issueDate')
+      state = patchEditorState(state, { issueDate: String(active.value ?? '') });
+    else if (path === 'dueDate')
+      state = patchEditorState(state, { dueDate: String(active.value ?? '') });
+    else if (path === 'notes') state = patchEditorState(state, { notes: String(active.value ?? '') });
+    else if (path === 'paymentTerms')
+      state = patchEditorState(state, { paymentTerms: String(active.value ?? '') });
+  }
+
+  function syncFormMeta() {
+    if (!form) return;
+    form.dataset.recordId = state.id || '';
+    form.dataset.paymentState = state.paymentState || 'Draft';
+    form.dataset.status = state.status || 'Draft';
+    form.dataset.invoiceNumber = state.invoiceNumber || '';
+    const display = form.querySelector('[data-invoice-number-display]');
+    if (display) display.textContent = formatInvoiceNumberDisplay(state.invoiceNumber);
+  }
+
+  /** Canonical payload from editor state — never FormData / DOM scrape. */
+  function buildPayload() {
+    commitPendingInput();
+    return buildInvoicePayload(state);
   }
 
   function serializeState() {
     try {
-      return JSON.stringify(buildPayload());
+      return JSON.stringify(buildInvoicePayload(state));
     } catch {
       return '';
     }
@@ -424,6 +398,7 @@ export function createInvoiceEditor(deps) {
 
   function isDirty() {
     if (!form) return false;
+    commitPendingInput();
     return serializeState() !== baseline;
   }
 
@@ -431,7 +406,7 @@ export function createInvoiceEditor(deps) {
     baseline = serializeState();
   }
 
-  function refreshTotals() {
+  function refreshTotalsDisplay() {
     if (!form) return;
     const active = form.ownerDocument?.activeElement;
     const selection =
@@ -445,7 +420,11 @@ export function createInvoiceEditor(deps) {
             direction: active.selectionDirection || 'none',
           }
         : null;
-    const { calculatedItems, totals } = calculateInvoiceTotals(readLineItems());
+    const { calculatedItems, totals } = calculateInvoiceTotals(state.lineItems);
+    state = {
+      ...state,
+      totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total },
+    };
     form.querySelectorAll('[data-invoice-line]').forEach((row, index) => {
       const cell = row.querySelector('[data-line-total]');
       if (cell) cell.textContent = money(calculatedItems[index]?.lineTotal || 0);
@@ -467,68 +446,38 @@ export function createInvoiceEditor(deps) {
     }
   }
 
+  function renderLineRows() {
+    const body = form?.querySelector('[data-invoice-lines]');
+    if (!body) return;
+    body.innerHTML = state.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
+    refreshTotalsDisplay();
+  }
+
   function updateCustomerPreview() {
-    const select = field('customerId');
     const preview = form?.querySelector('[data-customer-preview]');
-    if (!select || !preview) return;
-    const customer = (deps.getCustomers() || []).find((item) => item.id === select.value);
+    if (!preview) return;
+    const customer = (deps.getCustomers() || []).find((item) => item.id === state.customerId);
     preview.innerHTML = customerPreviewMarkup(customer || null);
   }
 
   function captureLocal(recordId = null) {
-    if (!form) return null;
-    let body;
-    try {
-      body = buildPayload();
-    } catch {
-      body = {
-        customerId: fieldValue('customerId'),
-        title: fieldValue('title').trim(),
-        issueDate: fieldValue('issueDate'),
-        dueDate: fieldValue('dueDate'),
-        notes: fieldValue('notes'),
-        paymentTerms: fieldValue('paymentTerms'),
-        lineItems: readLineItems(),
-      };
-    }
+    commitPendingInput();
     const snapshot = {
-      version: 2,
+      version: 3,
       savedAt: new Date().toISOString(),
-      recordId: recordId || form.dataset.recordId || null,
-      ...body,
+      recordId: recordId || state.id || null,
+      id: recordId || state.id || null,
+      ...buildInvoicePayload(state),
+      status: state.status,
+      paymentState: state.paymentState,
     };
     writeLocal(storage, snapshot);
     return snapshot;
   }
 
-  function applyLocal(snapshot) {
-    if (!form || !snapshot) return;
-    const set = (name, value) => {
-      const control = field(name);
-      if (!control || value == null || value === '') return;
-      if (form.ownerDocument?.activeElement === control) return;
-      control.value = value;
-    };
-    set('customerId', snapshot.customerId);
-    set('title', snapshot.title);
-    set('issueDate', snapshot.issueDate);
-    set('dueDate', snapshot.dueDate);
-    set('notes', snapshot.notes);
-    set('paymentTerms', snapshot.paymentTerms);
-    if (snapshot.recordId) form.dataset.recordId = snapshot.recordId;
-    const body = form.querySelector('[data-invoice-lines]');
-    if (body && Array.isArray(snapshot.lineItems) && snapshot.lineItems.length) {
-      const active = form.ownerDocument?.activeElement;
-      if (!(active && body.contains(active))) {
-        body.innerHTML = snapshot.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
-      }
-    }
-  }
-
   function setActionsBusy(busy) {
-    // Only toolbar actions may disable. Never disable invoice fields — FormData (and
-    // some browsers) omit disabled controls, which previously surfaced a false
-    // "Invoice title is required." while the title was still visible.
+    // Only toolbar actions may disable. Never disable invoice fields for collection —
+    // state remains the source of truth regardless of control disabled flags.
     form?.querySelectorAll('[data-invoice-action]').forEach((button) => {
       if (busy) {
         button.dataset.wasDisabled = button.disabled ? '1' : '0';
@@ -550,54 +499,51 @@ export function createInvoiceEditor(deps) {
 
   async function persist({ quiet = false, source = 'manual' } = {}) {
     if (!form?.isConnected) throw new Error('Invoice form is no longer available. Refresh and try again.');
-    if (form.dataset.status === 'Finalised') {
+    commitPendingInput();
+    if (state.status === 'Finalised') {
       const error = new Error('Only draft invoices can be edited');
       error.status = 400;
       throw error;
     }
-    const body = buildPayload();
-    requireTitle(body);
-    assertPayloadMatchesVisibleInvoiceNumber(body, readCanonicalInvoiceNumber());
-    const recordId = form.dataset.recordId || '';
-    let saved;
-    if (recordId) {
-      const { customerId: _customerId, ...invoiceBody } = body;
-      saved = await deps.api('/api/invoices/' + recordId, {
-        method: 'PUT',
-        body: JSON.stringify({
-          ...invoiceBody,
-          paymentState: form.dataset.paymentState || 'Draft',
-        }),
-      });
-    } else {
-      saved = await deps.api('/api/invoices', { method: 'POST', body: JSON.stringify(body) });
+    const validated = validateInvoiceForSave(state);
+    if (!validated.ok) {
+      const error = new Error(validated.message);
+      error.status = 400;
+      error.fieldPath = validated.fieldPath;
+      setFieldError(validated.fieldPath, validated.message);
+      field(validated.fieldPath)?.focus?.();
+      throw error;
     }
-    if (!Array.isArray(saved.lineItems)) {
-      saved = await deps.api('/api/invoices/' + saved.id);
-    }
+    clearFieldErrors();
+    assertPayloadMatchesVisibleInvoiceNumber(validated.payload, state.invoiceNumber);
+    const wasNew = !state.id;
+    const saved = await apiClient.saveDraft(state);
+    state = applySavedInvoice(state, saved);
     if (form.isConnected) {
-      form.dataset.recordId = saved.id;
-      form.dataset.paymentState = saved.paymentState || 'Draft';
-      form.dataset.status = saved.status || 'Draft';
-      syncInvoiceNumberDisplay(saved.invoiceNumber);
+      syncFormMeta();
       markPristine();
       captureLocal(saved.id);
     } else {
       const previous = readLocal(storage);
-      if (previous) writeLocal(storage, { ...previous, recordId: saved.id, title: previous.title || body.title });
+      if (previous) {
+        writeLocal(storage, {
+          ...previous,
+          recordId: saved.id,
+          id: saved.id,
+          title: previous.title || validated.payload.title,
+        });
+      }
     }
     deps.invalidateCache();
     history.replaceState({}, '', '/workspace/invoices/' + saved.id + '/edit');
     if (!quiet && source === 'manual') {
-      deps.toast(recordId ? 'Draft saved.' : 'Invoice draft created.');
+      deps.toast(wasNew ? 'Invoice draft created.' : 'Draft saved.');
     }
     return saved;
   }
 
   function scheduleAutosave() {
-    captureLocal(form?.dataset.recordId || null);
-    // Test harness may set data-autosave-locked="true" to assert localStorage
-    // recovery before the first server draft exists.
+    captureLocal(state.id || null);
     if (form?.dataset.autosaveLocked === 'true') {
       if (autosaveTimer) {
         clearTimeout(autosaveTimer);
@@ -610,37 +556,62 @@ export function createInvoiceEditor(deps) {
       void enqueue(async () => {
         if (!form?.isConnected || destroyed) return;
         if (form.dataset.autosaveLocked === 'true') return;
-        let body;
+        commitPendingInput();
+        let payload;
         try {
-          body = buildPayload();
+          payload = buildInvoicePayload(state);
         } catch {
           return;
         }
-        if (!payloadReady(body)) return;
+        if (!payloadReadyForAutosave(payload)) return;
         try {
           await persist({ quiet: true, source: 'autosave' });
         } catch {
-          captureLocal(form?.dataset.recordId || null);
+          captureLocal(state.id || null);
         }
       });
     }, INVOICE_EDITOR_AUTOSAVE_MS);
   }
 
-  function reindexLines() {
-    form?.querySelectorAll('[data-invoice-line]').forEach((row, index) => {
-      row.dataset.lineIndex = String(index);
-    });
+  function applyFieldFromEvent(target) {
+    const path = target.getAttribute?.('data-invoice-field');
+    if (!path) return;
+    const row = target.closest?.('[data-invoice-line]');
+    if (row) {
+      const index = Number(row.dataset.lineIndex || 0);
+      const lines = state.lineItems.map((item) => ({ ...item }));
+      const current = { ...(lines[index] || {}) };
+      if (path === 'description') current.description = String(target.value ?? '');
+      else if (path === 'quantity') current.quantity = Number(target.value || 0);
+      else if (path === 'unitPrice') current.unitPrice = Number(target.value || 0);
+      else if (path === 'gstApplicable') current.gstApplicable = target.value === 'true';
+      lines[index] = current;
+      state = withRecalculatedTotals({ ...state, lineItems: lines });
+      return;
+    }
+    if (path === 'title') state = patchEditorState(state, { title: String(target.value ?? '') });
+    else if (path === 'customerId')
+      state = patchEditorState(state, { customerId: String(target.value ?? '') });
+    else if (path === 'issueDate')
+      state = patchEditorState(state, { issueDate: String(target.value ?? '') });
+    else if (path === 'dueDate')
+      state = patchEditorState(state, { dueDate: String(target.value ?? '') });
+    else if (path === 'notes') state = patchEditorState(state, { notes: String(target.value ?? '') });
+    else if (path === 'paymentTerms')
+      state = patchEditorState(state, { paymentTerms: String(target.value ?? '') });
   }
 
-  function moveLine(row, direction) {
-    const body = form?.querySelector('[data-invoice-lines]');
-    if (!body || !row) return;
-    if (direction < 0 && row.previousElementSibling) body.insertBefore(row, row.previousElementSibling);
-    else if (direction > 0 && row.nextElementSibling) body.insertBefore(row.nextElementSibling, row);
-    else return;
-    reindexLines();
-    refreshTotals();
-    row.querySelector('[data-invoice-field="description"]')?.focus();
+  function moveLine(index, direction) {
+    const next = index + direction;
+    if (next < 0 || next >= state.lineItems.length) return;
+    const lines = state.lineItems.map((item) => ({ ...item }));
+    const [row] = lines.splice(index, 1);
+    lines.splice(next, 0, row);
+    state = withRecalculatedTotals({ ...state, lineItems: lines });
+    renderLineRows();
+    form
+      ?.querySelector(`[data-invoice-line][data-line-index="${next}"] [data-invoice-field="description"]`)
+      ?.focus();
     scheduleAutosave();
   }
 
@@ -648,46 +619,59 @@ export function createInvoiceEditor(deps) {
     form.addEventListener('input', (event) => {
       const path = event.target?.getAttribute?.('data-invoice-field');
       if (path) setFieldError(path, '');
-      if (event.target.closest('[data-invoice-line], [data-invoice-field]')) refreshTotals();
+      applyFieldFromEvent(event.target);
+      if (event.target.closest('[data-invoice-line], [data-invoice-field]')) refreshTotalsDisplay();
       scheduleAutosave();
     });
     form.addEventListener('change', (event) => {
+      applyFieldFromEvent(event.target);
       if (event.target.matches('[data-invoice-field="customerId"]')) updateCustomerPreview();
       if (event.target.matches('[data-invoice-field="gstApplicable"], [data-invoice-field="customerId"]')) {
-        refreshTotals();
+        refreshTotalsDisplay();
       }
       scheduleAutosave();
     });
     form.addEventListener('click', (event) => {
       if (event.target.closest('[data-add-line]')) {
-        const body = form.querySelector('[data-invoice-lines]');
-        const index = body?.querySelectorAll('[data-invoice-line]').length || 0;
-        body?.insertAdjacentHTML('beforeend', lineRowHtml({}, index));
-        refreshTotals();
-        body?.querySelector('[data-invoice-line]:last-child [data-invoice-field="description"]')?.focus();
+        state = withRecalculatedTotals({
+          ...state,
+          lineItems: [
+            ...state.lineItems,
+            { description: '', quantity: 1, unitPrice: 0, gstApplicable: true },
+          ],
+        });
+        renderLineRows();
+        form
+          ?.querySelector('[data-invoice-line]:last-child [data-invoice-field="description"]')
+          ?.focus();
         scheduleAutosave();
         return;
       }
       const remove = event.target.closest('[data-remove-line]');
       if (remove) {
-        const rows = form.querySelectorAll('[data-invoice-line]');
-        if (rows.length <= 1) {
+        if (state.lineItems.length <= 1) {
           deps.toast('A tax invoice needs at least one line item.', true);
           return;
         }
-        remove.closest('[data-invoice-line]')?.remove();
-        reindexLines();
-        refreshTotals();
+        const row = remove.closest('[data-invoice-line]');
+        const index = Number(row?.dataset.lineIndex || 0);
+        const lines = state.lineItems.filter((_, i) => i !== index);
+        state = withRecalculatedTotals({ ...state, lineItems: lines });
+        renderLineRows();
         scheduleAutosave();
         return;
       }
       const up = event.target.closest('[data-line-up]');
       if (up) {
-        moveLine(up.closest('[data-invoice-line]'), -1);
+        const row = up.closest('[data-invoice-line]');
+        moveLine(Number(row?.dataset.lineIndex || 0), -1);
         return;
       }
       const down = event.target.closest('[data-line-down]');
-      if (down) moveLine(down.closest('[data-invoice-line]'), 1);
+      if (down) {
+        const row = down.closest('[data-invoice-line]');
+        moveLine(Number(row?.dataset.lineIndex || 0), 1);
+      }
     });
 
     form.addEventListener('keydown', (event) => {
@@ -699,12 +683,13 @@ export function createInvoiceEditor(deps) {
       }
       const row = event.target.closest?.('[data-invoice-line]');
       if (!row) return;
+      const index = Number(row.dataset.lineIndex || 0);
       if (event.altKey && event.key === 'ArrowUp') {
         event.preventDefault();
-        moveLine(row, -1);
+        moveLine(index, -1);
       } else if (event.altKey && event.key === 'ArrowDown') {
         event.preventDefault();
-        moveLine(row, 1);
+        moveLine(index, 1);
       }
     });
 
@@ -764,14 +749,13 @@ export function createInvoiceEditor(deps) {
       if (!dragRow || !over || over === dragRow) return;
       if (event.target.closest('input, textarea, select')) return;
       event.preventDefault();
-      const body = form.querySelector('[data-invoice-lines]');
-      const rows = [...body.querySelectorAll('[data-invoice-line]')];
-      const from = rows.indexOf(dragRow);
-      const to = rows.indexOf(over);
-      if (from < to) body.insertBefore(dragRow, over.nextElementSibling);
-      else body.insertBefore(dragRow, over);
-      reindexLines();
-      refreshTotals();
+      const from = Number(dragRow.dataset.lineIndex || 0);
+      const to = Number(over.dataset.lineIndex || 0);
+      const lines = state.lineItems.map((item) => ({ ...item }));
+      const [moved] = lines.splice(from, 1);
+      lines.splice(to, 0, moved);
+      state = withRecalculatedTotals({ ...state, lineItems: lines });
+      renderLineRows();
       scheduleAutosave();
     });
   }
@@ -819,6 +803,23 @@ export function createInvoiceEditor(deps) {
     });
   }
 
+  function applyReadOnlyUi() {
+    if (state.status !== 'Finalised' || !form) return;
+    form
+      .querySelectorAll(
+        '[data-invoice-field], [data-add-line], [data-remove-line], [data-line-up], [data-line-down]',
+      )
+      .forEach((control) => {
+        control.disabled = true;
+      });
+    form.querySelectorAll('[data-invoice-action="draft"], [data-invoice-action="save"]').forEach(
+      (control) => {
+        control.disabled = true;
+        control.hidden = true;
+      },
+    );
+  }
+
   async function open(record = null) {
     destroyed = false;
     document.querySelector('[data-invoice-editor]')?.remove();
@@ -833,12 +834,11 @@ export function createInvoiceEditor(deps) {
       history.replaceState({}, '', '/workspace/customers');
       return { redirected: 'customers' };
     }
-    // Finalised invoices stay open for PDF preview/download. Persist paths reject edits.
-    let seed = record;
+
     const local = !record?.id && snapshotRecoverable(readLocal(storage)) ? readLocal(storage) : null;
     if (!record?.id && local?.recordId) {
       try {
-        const persisted = await deps.api('/api/invoices/' + local.recordId);
+        const persisted = await apiClient.readInvoice(local.recordId);
         if (persisted?.id && persisted.status === 'Draft') {
           history.replaceState({}, '', '/workspace/invoices/' + persisted.id + '/edit');
           clearLocal(storage);
@@ -850,69 +850,32 @@ export function createInvoiceEditor(deps) {
       }
     }
 
-    const defaults = {
-      issueDate: seed?.issueDate || todayOffset(0),
-      dueDate: seed?.dueDate || todayOffset(14),
-      ...(seed || {}),
-    };
-    const recordForHtml = seed?.id
-      ? defaults
-      : {
-          issueDate: defaults.issueDate,
-          dueDate: defaults.dueDate,
-          ...(local
-            ? {
-                customerId: local.customerId,
-                title: local.title,
-                notes: local.notes,
-                paymentTerms: local.paymentTerms,
-                lineItems: local.lineItems,
-                id: local.recordId || '',
-              }
-            : {}),
-        };
+    if (record?.id) {
+      state = hydrateEditorState(record);
+      clearLocal(storage);
+    } else if (local) {
+      state = hydrateEditorState(local);
+      deps.toast('Restored unsaved invoice details from this browser session.');
+    } else {
+      state = createEmptyEditorState();
+    }
 
     document.body.insertAdjacentHTML(
       'beforeend',
       buildEditorHtml({
         profile: deps.getProfile() || {},
         customers,
-        record: recordForHtml,
+        state,
       }),
     );
     root = document.querySelector('[data-invoice-editor]');
     form = document.querySelector('#invoice-editor-form');
     if (!root || !form) return { redirected: null };
-    syncInvoiceNumberDisplay(recordForHtml.invoiceNumber);
-
-    if (form.dataset.status === 'Finalised') {
-      form.querySelectorAll('[data-invoice-field], [data-add-line], [data-remove-line], [data-line-up], [data-line-down]').forEach(
-        (control) => {
-          control.disabled = true;
-        },
-      );
-      form.querySelectorAll('[data-invoice-action="draft"], [data-invoice-action="save"]').forEach(
-        (control) => {
-          control.disabled = true;
-          control.hidden = true;
-        },
-      );
-    }
-
-    if (!seed?.id) {
-      field('issueDate').value = defaults.issueDate;
-      field('dueDate').value = defaults.dueDate;
-      if (local) {
-        applyLocal(local);
-        deps.toast('Restored unsaved invoice details from this browser session.');
-      }
-    } else {
-      clearLocal(storage);
-    }
-
+    syncFormMeta();
+    applyReadOnlyUi();
     bindInteractions();
     updateCustomerPreview();
-    refreshTotals();
+    refreshTotalsDisplay();
     markPristine();
     await animateOpen();
     const active = form.ownerDocument?.activeElement;
@@ -949,78 +912,59 @@ export function createInvoiceEditor(deps) {
 
   async function handleAction(action) {
     if (!form) return;
+    commitPendingInput();
     if (action === 'cancel') return { type: 'cancel' };
     if (action === 'draft' || action === 'save') {
       pendingSubmitAction = action;
       return { type: 'submit-pending', action };
     }
     if (action === 'delete') {
-      const recordId = form.dataset.recordId || '';
-      if (!recordId) {
+      if (!state.id) {
         throw new Error('Save the invoice draft before deleting it.');
       }
-      if (form.dataset.status !== 'Draft') {
+      if (state.status !== 'Draft') {
         throw new Error('Only draft invoices can be deleted');
       }
       return {
         type: 'delete-request',
-        invoiceId: recordId,
-        invoiceNumber: formatInvoiceNumberDisplay(readCanonicalInvoiceNumber()),
-        title: fieldValue('title').trim() || 'Untitled invoice',
-        customerId: fieldValue('customerId'),
+        invoiceId: state.id,
+        invoiceNumber: formatInvoiceNumberDisplay(state.invoiceNumber),
+        title: String(state.title || '').trim() || 'Untitled invoice',
+        customerId: state.customerId,
       };
     }
     if (action === 'preview' || action === 'download') {
-      let body;
-      try {
-        body = buildPayload();
-      } catch (error) {
-        error.fieldPath = error.fieldPath || 'lineItems';
-        throw error;
-      }
-      if (!payloadReady(body)) {
-        const missingTitle = !String(body.title || '').trim();
-        const error = new Error(
-          missingTitle
-            ? 'Invoice title is required.'
-            : 'Add a customer, title, and at least one line item before previewing.',
-        );
+      const validated = validateInvoiceForSave(state);
+      if (!validated.ok) {
+        const error = new Error(validated.message);
         error.status = 400;
-        error.fieldPath = missingTitle ? 'title' : 'customerId';
-        if (missingTitle) setFieldError('title', error.message);
-        field(error.fieldPath)?.focus?.();
+        error.fieldPath = validated.fieldPath;
+        setFieldError(validated.fieldPath, validated.message);
+        field(validated.fieldPath)?.focus?.();
         throw error;
       }
-      const visibleNumber = readCanonicalInvoiceNumber();
-      assertPayloadMatchesVisibleInvoiceNumber(body, visibleNumber);
+      assertPayloadMatchesVisibleInvoiceNumber(validated.payload, state.invoiceNumber);
       if (!deps.isProfileReady(deps.getProfile())) {
         throw new Error('Save your business name and address in Aleya Settings before generating PDFs.');
       }
       setActionsBusy(true);
       try {
-        const recordId = form.dataset.recordId || '';
-        const isFinalised = form.dataset.status === 'Finalised';
-        // Existing saved invoices (especially issued ones) must preview from the
-        // persisted record — never invent a number and never PUT a finalised invoice.
-        let saved;
-        if (recordId && (isFinalised || !isDirty())) {
-          saved = await enqueue(() => deps.api('/api/invoices/' + recordId));
-          syncInvoiceNumberDisplay(saved.invoiceNumber);
-          assertPayloadMatchesVisibleInvoiceNumber(
-            { ...body, invoiceNumber: normalizeInvoiceNumber(saved.invoiceNumber) },
-            normalizeInvoiceNumber(saved.invoiceNumber),
-          );
-        } else {
-          saved = await enqueue(() => persist({ quiet: true, source: 'preview' }));
-        }
+        const saved = await enqueue(() =>
+          apiClient.ensurePersistedForPdf(state, {
+            isDirty: isDirty(),
+            persist: () => persist({ quiet: true, source: 'preview' }),
+          }),
+        );
+        state = applySavedInvoice(state, saved);
+        syncFormMeta();
         if (action === 'preview') {
-          await deps.previewPdf(saved.id);
+          await apiClient.previewPdf(saved.id);
           deps.toast('PDF preview opened.');
         } else {
-          const name = await deps.downloadPdf(saved.id);
+          const name = await apiClient.downloadPdf(saved.id);
           deps.toast(name + ' downloaded.');
         }
-        return { type: action, saved, payload: body };
+        return { type: action, saved, payload: validated.payload };
       } finally {
         setActionsBusy(false);
       }
@@ -1031,7 +975,7 @@ export function createInvoiceEditor(deps) {
   async function handleSubmit(submitterAction) {
     const action = submitterAction || pendingSubmitAction || 'save';
     pendingSubmitAction = 'save';
-    const wasNew = !form?.dataset.recordId;
+    const wasNew = !state.id;
     setActionsBusy(true);
     try {
       const saved = await enqueue(() => persist({ quiet: true, source: 'manual' }));
@@ -1054,6 +998,10 @@ export function createInvoiceEditor(deps) {
     isOpen: () => Boolean(root && form),
     isDirty,
     getForm: () => form,
+    getState: () => {
+      commitPendingInput();
+      return state;
+    },
     buildPayload,
     handleAction,
     handleSubmit,
@@ -1071,7 +1019,6 @@ export function createInvoiceEditor(deps) {
 
 export {
   buildEditorHtml,
-  buildPayloadFromForm,
   lineRowHtml,
   snapshotRecoverable,
   readLocal as readInvoiceEditorLocal,
@@ -1079,25 +1026,7 @@ export {
   formatInvoiceNumberDisplay,
   normalizeInvoiceNumber,
   assertPayloadMatchesVisibleInvoiceNumber,
+  buildInvoicePayload,
+  hydrateEditorState,
+  createEmptyEditorState,
 };
-
-/** Test helper: payload from a mounted form element. */
-function buildPayloadFromForm(formEl) {
-  const read = (name) => String(formEl.querySelector(`[data-invoice-field="${name}"]`)?.value || '');
-  const lineItems = [...formEl.querySelectorAll('[data-invoice-line]')].map((row) => ({
-    description: String(row.querySelector('[data-invoice-field="description"]')?.value || '').trim(),
-    quantity: Number(row.querySelector('[data-invoice-field="quantity"]')?.value || 0),
-    unitPrice: Number(row.querySelector('[data-invoice-field="unitPrice"]')?.value || 0),
-    gstApplicable: row.querySelector('[data-invoice-field="gstApplicable"]')?.value === 'true',
-  }));
-  return {
-    customerId: read('customerId'),
-    title: read('title').trim(),
-    issueDate: read('issueDate'),
-    dueDate: read('dueDate'),
-    invoiceNumber: normalizeInvoiceNumber(formEl.dataset?.invoiceNumber),
-    ...(read('notes').trim() ? { notes: read('notes').trim() } : {}),
-    ...(read('paymentTerms').trim() ? { paymentTerms: read('paymentTerms').trim() } : {}),
-    lineItems,
-  };
-}

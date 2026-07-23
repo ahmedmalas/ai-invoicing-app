@@ -126,6 +126,12 @@ try {
   report.probes.push(editor);
   console.log('editor', { status: editor.status, ms: editor.ms, snippet: editor.body?.slice(0, 80) });
 
+  const modelAsset = timedFetch('/assets/invoice-model.js');
+  report.probes.push(modelAsset);
+  console.log('modelAsset', { status: modelAsset.status, ms: modelAsset.ms });
+  const apiAsset = timedFetch('/assets/invoice-api.js');
+  report.probes.push(apiAsset);
+  console.log('apiAsset', { status: apiAsset.status, ms: apiAsset.ms });
   const oldAsset = timedFetch('/assets/invoice-workspace.js');
   report.probes.push(oldAsset);
   console.log('oldAsset', { status: oldAsset.status, ms: oldAsset.ms });
@@ -146,15 +152,23 @@ try {
   const liveOk = live1.status === 200 && live2.status === 200 && /"status"\s*:\s*"ok"/.test(live1.body || '');
   const readyOk = ready.status === 200 && /"status"\s*:\s*"ready"/.test(ready.body || '');
   const editorOk =
-    editor.status === 200 && /createInvoiceEditor|data-invoice-field|INVOICE_EDITOR_STORAGE_KEY/.test(editor.body || '');
+    editor.status === 200 &&
+    /createInvoiceEditor|data-invoice-field|INVOICE_EDITOR_STORAGE_KEY/.test(editor.body || '') &&
+    /buildInvoicePayload\(state\)/.test(editor.body || '');
+  const modelOk =
+    modelAsset.status === 200 && /export function buildInvoicePayload/.test(modelAsset.body || '');
+  const apiOk =
+    apiAsset.status === 200 && /createInvoiceApiClient/.test(apiAsset.body || '');
   const oldGone =
     oldAsset.status === 404 || (oldAsset.status === 200 && !/mountInvoiceWorkspace/.test(oldAsset.body || ''));
 
-  report.ok = liveOk && readyOk && editorOk && !timedOut && !blockedBySso;
+  report.ok = liveOk && readyOk && editorOk && modelOk && apiOk && oldGone && !timedOut && !blockedBySso;
   report.checks = {
     liveOk,
     readyOk,
     editorOk,
+    modelOk,
+    apiOk,
     oldGone,
     timedOut,
     blockedBySso,

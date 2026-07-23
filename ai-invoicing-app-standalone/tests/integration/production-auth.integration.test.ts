@@ -232,7 +232,15 @@ describe('production account registration and recovery', () => {
     expect(editor.body).toContain('data-invoice-editor');
     expect(editor.body).toContain('createInvoiceEditor');
     expect(editor.body).toContain('data-invoice-field');
-    expect(editor.body).toContain('buildPayload');
+    expect(editor.body).toContain('buildInvoicePayload');
+    expect(editor.body).toContain('createInvoiceApiClient');
+    expect(editor.body).toContain('getState');
+    const model = await app.inject({ method: 'GET', url: '/assets/invoice-model.js' });
+    expect(model.statusCode).toBe(200);
+    expect(model.body).toContain('export function buildInvoicePayload');
+    const invoiceApi = await app.inject({ method: 'GET', url: '/assets/invoice-api.js' });
+    expect(invoiceApi.statusCode).toBe(200);
+    expect(invoiceApi.body).toContain('createInvoiceApiClient');
     expect(script.body).toContain('createInvoiceEditor');
     expect(script.body).toContain('ensureInvoiceEditor');
     const styles = await app.inject({ method: 'GET', url: '/assets/styles.css' });

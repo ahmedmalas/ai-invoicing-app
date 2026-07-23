@@ -9,7 +9,7 @@ import {
   assertCreateInvoiceNumber,
   assertUpdateInvoiceNumber,
 } from '../../src/domain/invoices/invoice-number.js';
-import { buildEditorHtml, buildPayloadFromForm } from '../../public/invoice-editor.js';
+import { buildEditorHtml, buildInvoicePayload, hydrateEditorState } from '../../public/invoice-editor.js';
 
 describe('canonical invoice number pathway', () => {
   it('normalizes empty values to null and formats display from that single value', () => {
@@ -42,36 +42,15 @@ describe('canonical invoice number pathway', () => {
   });
 
   it('includes the visible invoice number in the canonical payload builder', () => {
-    const form = {
-      dataset: { invoiceNumber: 'INV-2026-000042' },
-      querySelector(selector: string) {
-        if (selector.includes('data-invoice-field="title"')) return { value: 'Issued job' };
-        if (selector.includes('data-invoice-field="customerId"'))
-          return { value: '11111111-1111-4111-8111-111111111111' };
-        if (selector.includes('data-invoice-field="issueDate"')) return { value: '2026-07-22' };
-        if (selector.includes('data-invoice-field="dueDate"')) return { value: '2026-08-05' };
-        if (selector.includes('data-invoice-field="notes"')) return { value: '' };
-        if (selector.includes('data-invoice-field="paymentTerms"')) return { value: '' };
-        return null;
-      },
-      querySelectorAll(selector: string) {
-        if (selector === '[data-invoice-line]') {
-          return [
-            {
-              querySelector(inner: string) {
-                if (inner.includes('description')) return { value: 'Labour' };
-                if (inner.includes('quantity')) return { value: '1' };
-                if (inner.includes('unitPrice')) return { value: '100' };
-                if (inner.includes('gstApplicable')) return { value: 'true' };
-                return null;
-              },
-            },
-          ];
-        }
-        return [];
-      },
-    };
-    const payload = buildPayloadFromForm(form) as { invoiceNumber: string | null; title: string };
+    const state = hydrateEditorState({
+      invoiceNumber: 'INV-2026-000042',
+      title: 'Issued job',
+      customerId: '11111111-1111-4111-8111-111111111111',
+      issueDate: '2026-07-22',
+      dueDate: '2026-08-05',
+      lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
+    });
+    const payload = buildInvoicePayload(state);
     expect(payload.invoiceNumber).toBe('INV-2026-000042');
     expect(payload.title).toBe('Issued job');
     expect(() =>
@@ -98,21 +77,20 @@ describe('canonical invoice number pathway', () => {
   it('keeps draft payload invoiceNumber null and still surfaces missing-title validation', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const editorSource = readFileSync(
-      join(process.cwd(), 'public/invoice-editor.js'),
-      'utf8',
-    );
+    const editorSource = readFileSync(join(process.cwd(), 'public/invoice-editor.js'), 'utf8');
     expect(editorSource).not.toMatch(/new FormData\s*\(/);
-    expect(editorSource).toMatch(/function buildPayload\s*\(/);
-    expect(editorSource).toMatch(/Invoice title is required\./);
+    expect(editorSource).toMatch(/buildInvoicePayload\(state\)/);
+    expect(editorSource).toMatch(/validateInvoiceForSave\(state\)/);
     expect(editorSource).toMatch(/assertPayloadMatchesVisibleInvoiceNumber/);
-    // Preview collects payload before disabling action buttons.
+    const modelSource = readFileSync(join(process.cwd(), 'public/invoice-model.js'), 'utf8');
+    expect(modelSource).toMatch(/Invoice title is required\./);
+    // Preview validates from state before disabling action buttons.
     const previewIdx = editorSource.indexOf("if (action === 'preview' || action === 'download')");
-    const buildIdx = editorSource.indexOf('body = buildPayload()', previewIdx);
+    const validateIdx = editorSource.indexOf('validateInvoiceForSave(state)', previewIdx);
     const busyIdx = editorSource.indexOf('setActionsBusy(true)', previewIdx);
     expect(previewIdx).toBeGreaterThan(-1);
-    expect(buildIdx).toBeGreaterThan(previewIdx);
-    expect(busyIdx).toBeGreaterThan(buildIdx);
+    expect(validateIdx).toBeGreaterThan(previewIdx);
+    expect(busyIdx).toBeGreaterThan(validateIdx);
 
     const draftHtml = buildEditorHtml({
       profile: { companyName: 'Aleya Demo' },

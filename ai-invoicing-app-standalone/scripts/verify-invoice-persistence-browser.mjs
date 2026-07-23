@@ -333,7 +333,7 @@ async function main() {
   step('edit_refresh_from_api', descriptions.join(', '));
 
   // 5) Recovery before autosave on a new invoice
-  await page.evaluate(() => localStorage.removeItem('aleya-invoice-editor-v2'));
+  await page.evaluate(() => localStorage.removeItem('aleya-invoice-editor-v3'));
   await gotoApp('/workspace/invoices/new');
   await waitFor(page, async () => Boolean(await page.$('#invoice-editor-form')), 15000, 'new form');
   await page.select('[data-invoice-field="customerId"]', customerId);
@@ -348,7 +348,7 @@ async function main() {
   });
   await new Promise((r) => setTimeout(r, 150));
   const snapshotBeforeRefresh = await page.evaluate(() =>
-    localStorage.getItem('aleya-invoice-editor-v2'),
+    localStorage.getItem('aleya-invoice-editor-v3'),
   );
   if (!snapshotBeforeRefresh || !snapshotBeforeRefresh.includes('Pre-autosave recovery draft')) {
     throw new Error('localStorage snapshot missing before refresh');
@@ -372,7 +372,7 @@ async function main() {
       url: location.pathname,
       title: form?.querySelector('[name="title"]')?.value || '',
       line: form?.querySelector('[data-invoice-line] [name="description"]')?.value || '',
-      snapshot: localStorage.getItem('aleya-invoice-editor-v2'),
+      snapshot: localStorage.getItem('aleya-invoice-editor-v3'),
     };
   });
   if (recovered.url !== '/workspace/invoices/new') {
@@ -403,7 +403,7 @@ async function main() {
   );
   report.recoveryInvoiceId = page.url().match(/\/workspace\/invoices\/([^/]+)\/edit$/)?.[1];
   const afterSaveSnapshot = await page.evaluate(() =>
-    localStorage.getItem('aleya-invoice-editor-v2'),
+    localStorage.getItem('aleya-invoice-editor-v3'),
   );
   // Snapshot may still exist with recordId, or be cleared after Save Draft path — either way must not override DB.
   const recoveryGet = await page.evaluate(async (id) => {
