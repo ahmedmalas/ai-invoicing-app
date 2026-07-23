@@ -19,10 +19,14 @@ import {
   drawAlignedTotals,
   drawPaymentDetailsBlock,
   ensureContentFitsPage,
-  gstStatusLabel,
+  formatAustralianAbn,
+  formatAustralianDate,
+  formatAustralianPhone,
+  formatInvoiceNumberForPdf,
   pageContentRight,
   pageContentWidth,
   PDF_PAGE_MARGIN,
+  prepareBusinessNameForPdf,
   type InvoicePdfBankDetails,
   type InvoicePdfPageSize,
 } from './invoice-pdf-layout.js';
@@ -38,18 +42,20 @@ function writeBrandedHeader(
   const logoHeight = drawBusinessLogoMark(doc, profile, PDF_PAGE_MARGIN, PDF_PAGE_MARGIN, 44);
   const textX = logoHeight > 0 ? PDF_PAGE_MARGIN + 56 : PDF_PAGE_MARGIN;
   const textY = logoHeight > 0 ? PDF_PAGE_MARGIN + 4 : PDF_PAGE_MARGIN;
-  const nameWidth = Math.max(160, pageContentWidth(doc) - (textX - PDF_PAGE_MARGIN) - 160);
+  // Use the full remaining content width so typical AU legal names stay on one line.
+  const nameWidth = Math.max(200, pageContentWidth(doc) - (textX - PDF_PAGE_MARGIN));
+  const businessName = prepareBusinessNameForPdf(profile?.companyName ?? 'Business Name');
   doc
     .fillColor(brandPrimary)
     .fontSize(22)
     .font('Helvetica-Bold')
-    .text(profile?.companyName ?? 'Business Name', textX, textY, { width: nameWidth });
+    .text(businessName, textX, textY, { width: nameWidth, lineGap: 2 });
   doc.x = PDF_PAGE_MARGIN;
   doc.y = Math.max(doc.y, PDF_PAGE_MARGIN + (logoHeight || 28)) + 4;
   doc.font('Helvetica');
 }
 
-function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null, gstStatus: string): void {
+function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null): void {
   const width = pageContentWidth(doc);
   doc.fillColor('#111827').fontSize(11);
   doc.text(profile?.address?.trim() || 'Business address not set', PDF_PAGE_MARGIN, doc.y, {
@@ -58,15 +64,14 @@ function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null
     lineGap: 2,
   });
   if (profile?.abnTaxId?.trim()) {
-    doc.text(`ABN: ${profile.abnTaxId.trim()}`, { width, align: 'left' });
+    doc.text(`ABN: ${formatAustralianAbn(profile.abnTaxId)}`, { width, align: 'left' });
   }
   if (profile?.email?.trim()) {
     doc.text(`Email: ${profile.email.trim()}`, { width, align: 'left' });
   }
   if (profile?.phone?.trim()) {
-    doc.text(`Phone: ${profile.phone.trim()}`, { width, align: 'left' });
+    doc.text(`Phone: ${formatAustralianPhone(profile.phone)}`, { width, align: 'left' });
   }
-  doc.fillColor('#4b5563').fontSize(10).text(`GST status: ${gstStatus}`, { width, align: 'left' });
 }
 
 export function generateInvoicePdfBuffer(input: {
@@ -121,32 +126,41 @@ export function generateInvoicePdfBuffer(input: {
 
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
-    const gstStatus = gstStatusLabel(input.lineItems);
     const contentRight = () => pageContentRight(doc);
     const contentWidth = () => pageContentWidth(doc);
+    const invoiceMeta = formatInvoiceNumberForPdf(input.invoice.invoiceNumber);
 
     writeBrandedHeader(doc, profile, brandPrimary);
-    writeBusinessIdentityBlock(doc, profile, gstStatus);
+    writeBusinessIdentityBlock(doc, profile);
 
     doc.moveDown(1);
     doc.fontSize(18).fillColor('#111827').text('TAX INVOICE', {
       width: contentWidth(),
       align: 'right',
     });
-    doc.fontSize(11).text(`Invoice Number: ${input.invoice.invoiceNumber ?? 'Draft'}`, {
+    doc.fontSize(11);
+    if (invoiceMeta.statusLine) {
+      doc.text(invoiceMeta.statusLine, {
+        width: contentWidth(),
+        align: 'right',
+      });
+    }
+    doc.text(invoiceMeta.invoiceNumberLine, {
       width: contentWidth(),
       align: 'right',
     });
-    doc.text(`Issue Date: ${input.invoice.issueDate}`, {
+    doc.text(`Issue Date: ${formatAustralianDate(input.invoice.issueDate)}`, {
       width: contentWidth(),
       align: 'right',
     });
-    doc.text(`Due Date: ${input.invoice.dueDate}`, {
+    doc.text(`Due Date: ${formatAustralianDate(input.invoice.dueDate)}`, {
       width: contentWidth(),
       align: 'right',
     });
-    if (input.invoice.title) {
-      doc.text(`Title: ${input.invoice.title}`, {
+    // Title is always the stored invoice title — never derived from the invoice number.
+    const invoiceTitle = String(input.invoice.title ?? '').trim();
+    if (invoiceTitle) {
+      doc.text(`Title: ${invoiceTitle}`, {
         width: contentWidth(),
         align: 'right',
       });

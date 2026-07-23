@@ -45,9 +45,103 @@ export function formatMoney(amount: number): string {
   return Number(amount || 0).toFixed(2);
 }
 
-export function gstStatusLabel(lineItems: LineItemInput[]): string {
-  const chargesGst = lineItems.some((item) => item.gstApplicable);
-  return chargesGst ? 'GST registered - GST shown per line' : 'No GST charged on this invoice';
+/**
+ * @deprecated GST registration labels are no longer printed on invoice PDFs.
+ * Kept only so older imports fail closed to an empty string.
+ */
+export function gstStatusLabel(_lineItems: LineItemInput[]): string {
+  return '';
+}
+
+/** Format ISO `YYYY-MM-DD` (or Date) as Australian `DD/MM/YYYY`. */
+export function formatAustralianDate(value: string | null | undefined): string {
+  if (!value) return '';
+  const trimmed = String(value).trim();
+  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  }
+  const dmy = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) {
+    return `${dmy[1].padStart(2, '0')}/${dmy[2].padStart(2, '0')}/${dmy[3]}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Format Australian mobile / landline numbers for PDF display.
+ * Examples: +61410760760 → +61 410 760 760; 0410760760 → +61 410 760 760
+ */
+export function formatAustralianPhone(value: string | null | undefined): string {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const digits = raw.replace(/[^\d+]/g, '');
+  const onlyDigits = digits.replace(/\D/g, '');
+
+  // +61 / 61 mobile (4xxxxxxxx) or national 04xxxxxxxx
+  let nationalMobile: string | null = null;
+  if (onlyDigits.startsWith('61') && onlyDigits.length === 11 && onlyDigits[2] === '4') {
+    nationalMobile = onlyDigits.slice(2);
+  } else if (onlyDigits.startsWith('0') && onlyDigits.length === 10 && onlyDigits[1] === '4') {
+    nationalMobile = onlyDigits.slice(1);
+  } else if (onlyDigits.length === 9 && onlyDigits[0] === '4') {
+    nationalMobile = onlyDigits;
+  }
+
+  if (nationalMobile) {
+    return `+61 ${nationalMobile.slice(0, 3)} ${nationalMobile.slice(3, 6)} ${nationalMobile.slice(6)}`;
+  }
+
+  // +61 landline: +61 X XXXX XXXX (area code + 8 digits after 61)
+  if (onlyDigits.startsWith('61') && onlyDigits.length === 11) {
+    const rest = onlyDigits.slice(2);
+    return `+61 ${rest.slice(0, 1)} ${rest.slice(1, 5)} ${rest.slice(5)}`;
+  }
+  if (onlyDigits.startsWith('0') && onlyDigits.length === 10) {
+    return `${onlyDigits.slice(0, 2)} ${onlyDigits.slice(2, 6)} ${onlyDigits.slice(6)}`;
+  }
+
+  return raw;
+}
+
+/** Format an 11-digit ABN as `XX XXX XXX XXX`. */
+export function formatAustralianAbn(value: string | null | undefined): string {
+  if (!value) return '';
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length !== 11) return String(value).trim();
+  return `${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
+}
+
+/**
+ * Keep legal suffixes with the preceding word so PDFKit does not orphan
+ * "PTY LTD" on its own line when the name wraps.
+ */
+export function prepareBusinessNameForPdf(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return trimmed;
+  return trimmed.replace(
+    /\s+(PTY\.?\s*LTD\.?|PTY\.?|LIMITED|LTD\.?)\s*$/i,
+    (match) => match.replace(/\s+/g, '\u00A0'),
+  );
+}
+
+export function formatInvoiceNumberForPdf(
+  invoiceNumber: string | null | undefined,
+): { statusLine: string | null; invoiceNumberLine: string } {
+  const assigned = invoiceNumber != null && String(invoiceNumber).trim().length > 0
+    ? String(invoiceNumber).trim()
+    : null;
+  if (assigned) {
+    return {
+      statusLine: null,
+      invoiceNumberLine: `Invoice Number: ${assigned}`,
+    };
+  }
+  return {
+    statusLine: 'Status: Draft',
+    invoiceNumberLine: 'Invoice Number: Not assigned',
+  };
 }
 
 /**
@@ -114,14 +208,14 @@ export function drawPaymentDetailsBlock(
     lines.push(`Pay to: ${profile.companyName.trim()}`);
   }
   if (profile?.abnTaxId?.trim()) {
-    lines.push(`ABN: ${profile.abnTaxId.trim()}`);
+    lines.push(`ABN: ${formatAustralianAbn(profile.abnTaxId)}`);
   }
   if (profile?.email?.trim()) {
     // Email addresses must never be labelled "Accounts".
     lines.push(`Email: ${profile.email.trim()}`);
   }
   if (profile?.phone?.trim()) {
-    lines.push(`Phone: ${profile.phone.trim()}`);
+    lines.push(`Phone: ${formatAustralianPhone(profile.phone)}`);
   }
 
   const bankName = bankDetails?.bankName?.trim();
