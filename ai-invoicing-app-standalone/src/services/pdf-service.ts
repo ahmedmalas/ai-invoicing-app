@@ -15,6 +15,18 @@ import type {
   SupplierBillLineItemInput,
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
+import {
+  drawAlignedTotals,
+  drawInvoiceFooter,
+  drawPaymentDetailsBlock,
+  ensureContentAboveFooter,
+  gstStatusLabel,
+  pageContentRight,
+  pageContentWidth,
+  PDF_PAGE_MARGIN,
+  type InvoicePdfBankDetails,
+  type InvoicePdfPageSize,
+} from './invoice-pdf-layout.js';
 import { drawBusinessLogoMark } from './logo-pdf.js';
 
 type PdfDoc = InstanceType<typeof PDFDocument>;
@@ -24,17 +36,38 @@ function writeBrandedHeader(
   profile: BrandingProfile | null,
   brandPrimary: string,
 ): void {
-  const logoHeight = drawBusinessLogoMark(doc, profile, 48, 48, 44);
-  const textX = logoHeight > 0 ? 104 : 48;
-  const textY = logoHeight > 0 ? 52 : 48;
+  const logoHeight = drawBusinessLogoMark(doc, profile, PDF_PAGE_MARGIN, PDF_PAGE_MARGIN, 44);
+  const textX = logoHeight > 0 ? PDF_PAGE_MARGIN + 56 : PDF_PAGE_MARGIN;
+  const textY = logoHeight > 0 ? PDF_PAGE_MARGIN + 4 : PDF_PAGE_MARGIN;
+  const nameWidth = Math.max(160, pageContentWidth(doc) - (textX - PDF_PAGE_MARGIN) - 160);
   doc
     .fillColor(brandPrimary)
     .fontSize(22)
     .font('Helvetica-Bold')
-    .text(profile?.companyName ?? 'Business Name', textX, textY, { width: 280 });
-  doc.x = 48;
-  doc.y = Math.max(doc.y, 48 + (logoHeight || 28)) + 4;
+    .text(profile?.companyName ?? 'Business Name', textX, textY, { width: nameWidth });
+  doc.x = PDF_PAGE_MARGIN;
+  doc.y = Math.max(doc.y, PDF_PAGE_MARGIN + (logoHeight || 28)) + 4;
   doc.font('Helvetica');
+}
+
+function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null, gstStatus: string): void {
+  const width = pageContentWidth(doc);
+  doc.fillColor('#111827').fontSize(11);
+  doc.text(profile?.address?.trim() || 'Business address not set', PDF_PAGE_MARGIN, doc.y, {
+    width,
+    align: 'left',
+    lineGap: 2,
+  });
+  if (profile?.abnTaxId?.trim()) {
+    doc.text(`ABN: ${profile.abnTaxId.trim()}`, { width, align: 'left' });
+  }
+  if (profile?.email?.trim()) {
+    doc.text(`Email: ${profile.email.trim()}`, { width, align: 'left' });
+  }
+  if (profile?.phone?.trim()) {
+    doc.text(`Phone: ${profile.phone.trim()}`, { width, align: 'left' });
+  }
+  doc.fillColor('#4b5563').fontSize(10).text(`GST status: ${gstStatus}`, { width, align: 'left' });
 }
 
 export function generateInvoicePdfBuffer(input: {
@@ -42,11 +75,26 @@ export function generateInvoicePdfBuffer(input: {
   lineItems: LineItemInput[];
   customer: Customer;
   businessProfile: BrandingProfile | null;
+  /** Optional bank transfer details for future profile wiring. */
+  bankDetails?: InvoicePdfBankDetails | null;
+  /** Page size for export / print parity (default A4). */
+  pageSize?: InvoicePdfPageSize;
   timeoutMs?: number;
 }): Promise<Buffer> {
   const timeoutMs = Math.max(1_000, Math.trunc(input.timeoutMs ?? 20_000));
+  const pageSize = input.pageSize ?? 'A4';
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 48, size: 'A4' });
+    const doc = new PDFDocument({
+      size: pageSize,
+      margins: {
+        top: PDF_PAGE_MARGIN,
+        left: PDF_PAGE_MARGIN,
+        right: PDF_PAGE_MARGIN,
+        // Keep a standard bottom margin; the footer safe band is enforced manually
+        // via ensureContentAboveFooter / drawInvoiceFooter (avoids PDFKit page-break loops).
+        bottom: PDF_PAGE_MARGIN,
+      },
+    });
     const chunks: Buffer[] = [];
     let settled = false;
     const timer = setTimeout(() => {
@@ -76,125 +124,157 @@ export function generateInvoicePdfBuffer(input: {
 
     const profile = input.businessProfile;
     const brandPrimary = profile?.primaryColor ?? '#0f172a';
+    const gstStatus = gstStatusLabel(input.lineItems);
+    const contentRight = () => pageContentRight(doc);
+    const contentWidth = () => pageContentWidth(doc);
+
+    const paintFooter = () => {
+      drawInvoiceFooter(doc, profile, gstStatus);
+    };
+    // After a new page is created, paint the footer then restore the content cursor.
+    // Leaving the cursor in the footer band would immediately trigger another page.
+    doc.on('pageAdded', () => {
+      paintFooter();
+      doc.x = PDF_PAGE_MARGIN;
+      doc.y = PDF_PAGE_MARGIN;
+    });
 
     writeBrandedHeader(doc, profile, brandPrimary);
-    doc.fillColor('#111827').fontSize(11).text(profile?.address ?? 'Business address not set');
-    if (profile?.abnTaxId) {
-      doc.text(`ABN: ${profile.abnTaxId}`);
-    }
-    if (profile?.email) {
-      doc.text(`Email: ${profile.email}`);
-    }
-    if (profile?.phone) {
-      doc.text(`Phone: ${profile.phone}`);
-    }
+    writeBusinessIdentityBlock(doc, profile, gstStatus);
 
     doc.moveDown(1);
-    doc.fontSize(18).fillColor('#111827').text('TAX INVOICE', { align: 'right' });
-    doc.fontSize(11).text(`Invoice Number: ${input.invoice.invoiceNumber ?? 'Draft'}`, {
+    doc.fontSize(18).fillColor('#111827').text('TAX INVOICE', {
+      width: contentWidth(),
       align: 'right',
     });
-    doc.text(`Issue Date: ${input.invoice.issueDate}`, { align: 'right' });
-    doc.text(`Due Date: ${input.invoice.dueDate}`, { align: 'right' });
+    doc.fontSize(11).text(`Invoice Number: ${input.invoice.invoiceNumber ?? 'Draft'}`, {
+      width: contentWidth(),
+      align: 'right',
+    });
+    doc.text(`Issue Date: ${input.invoice.issueDate}`, {
+      width: contentWidth(),
+      align: 'right',
+    });
+    doc.text(`Due Date: ${input.invoice.dueDate}`, {
+      width: contentWidth(),
+      align: 'right',
+    });
     if (input.invoice.title) {
-      doc.text(`Title: ${input.invoice.title}`, { align: 'right' });
+      doc.text(`Title: ${input.invoice.title}`, {
+        width: contentWidth(),
+        align: 'right',
+      });
     }
 
     doc.moveDown(1);
-    doc.fontSize(12).fillColor('#111827').text('Bill To');
-    doc.fontSize(11).text(input.customer.displayName);
+    doc.fontSize(12).fillColor('#111827').text('Bill To', PDF_PAGE_MARGIN, doc.y, {
+      width: contentWidth(),
+      align: 'left',
+    });
+    doc.fontSize(11).text(input.customer.displayName, { width: contentWidth(), align: 'left' });
     if (input.customer.address) {
-      doc.text(input.customer.address);
+      doc.text(input.customer.address, { width: contentWidth(), align: 'left' });
     }
     if (input.customer.email) {
-      doc.text(input.customer.email);
+      doc.text(input.customer.email, { width: contentWidth(), align: 'left' });
     }
 
     doc.moveDown(1);
-    doc.fontSize(12).text('Line Items');
+    ensureContentAboveFooter(doc, 40);
+    doc.fontSize(12).fillColor('#111827').text('Line Items', PDF_PAGE_MARGIN, doc.y, {
+      width: contentWidth(),
+      align: 'left',
+    });
     doc.moveDown(0.4);
 
-    doc.fontSize(10).fillColor('#6b7280').text('Description', 50, doc.y, { width: 220 });
-    doc.text('Qty', 280, doc.y - 12, { width: 60, align: 'right' });
-    doc.text('Unit', 345, doc.y - 12, { width: 80, align: 'right' });
-    doc.text('GST', 430, doc.y - 12, { width: 50, align: 'right' });
-    doc.text('Total', 485, doc.y - 12, { width: 70, align: 'right' });
+    const col = {
+      description: { x: PDF_PAGE_MARGIN + 2, width: 220 },
+      qty: { x: PDF_PAGE_MARGIN + 230, width: 50 },
+      unit: { x: PDF_PAGE_MARGIN + 285, width: 70 },
+      gst: { x: PDF_PAGE_MARGIN + 360, width: 55 },
+      total: { x: contentRight() - 70, width: 70 },
+    };
+
+    const headerY = doc.y;
+    doc.fontSize(10).fillColor('#6b7280');
+    doc.text('Description', col.description.x, headerY, { width: col.description.width });
+    doc.text('Qty', col.qty.x, headerY, { width: col.qty.width, align: 'right' });
+    doc.text('Unit', col.unit.x, headerY, { width: col.unit.width, align: 'right' });
+    doc.text('GST', col.gst.x, headerY, { width: col.gst.width, align: 'right' });
+    doc.text('Total', col.total.x, headerY, { width: col.total.width, align: 'right' });
 
     doc.moveDown(0.4);
-    doc.strokeColor('#d1d5db').lineWidth(1).moveTo(48, doc.y).lineTo(548, doc.y).stroke();
+    doc
+      .strokeColor('#d1d5db')
+      .lineWidth(1)
+      .moveTo(PDF_PAGE_MARGIN, doc.y)
+      .lineTo(contentRight(), doc.y)
+      .stroke();
 
     for (const item of input.lineItems) {
       const lineSubtotal = item.quantity * item.unitPrice;
       const lineGst = item.gstApplicable ? lineSubtotal * 0.1 : 0;
       const lineTotal = lineSubtotal + lineGst;
 
-      doc.moveDown(0.6);
+      ensureContentAboveFooter(doc, 28);
+      doc.moveDown(0.55);
       const y = doc.y;
-      doc.fillColor('#111827').fontSize(10).text(item.description, 50, y, { width: 220 });
-      doc.text(item.quantity.toFixed(2), 280, y, { width: 60, align: 'right' });
-      doc.text(item.unitPrice.toFixed(2), 345, y, { width: 80, align: 'right' });
-      doc.text(lineGst.toFixed(2), 430, y, { width: 50, align: 'right' });
-      doc.text(lineTotal.toFixed(2), 485, y, { width: 70, align: 'right' });
+      doc.fillColor('#111827').fontSize(10).text(item.description, col.description.x, y, {
+        width: col.description.width,
+      });
+      const rowBottom = doc.y;
+      doc.text(item.quantity.toFixed(2), col.qty.x, y, { width: col.qty.width, align: 'right' });
+      doc.text(item.unitPrice.toFixed(2), col.unit.x, y, { width: col.unit.width, align: 'right' });
+      doc.text(lineGst.toFixed(2), col.gst.x, y, { width: col.gst.width, align: 'right' });
+      doc.text(lineTotal.toFixed(2), col.total.x, y, { width: col.total.width, align: 'right' });
+      doc.y = Math.max(rowBottom, doc.y);
+      doc.x = PDF_PAGE_MARGIN;
     }
 
-    doc.moveDown(1.2);
-    doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(330, doc.y).lineTo(548, doc.y).stroke();
-    doc.moveDown(0.5);
-    doc.fontSize(11).text(`Subtotal: ${input.invoice.totals.subtotal.toFixed(2)}`, 380, doc.y, {
-      width: 168,
-      align: 'right',
-    });
-    doc.text(`GST: ${input.invoice.totals.gstTotal.toFixed(2)}`, 380, doc.y + 2, {
-      width: 168,
-      align: 'right',
-    });
-    doc
-      .fontSize(13)
-      .fillColor(brandPrimary)
-      .text(`Total: ${input.invoice.totals.total.toFixed(2)}`, 380, doc.y + 4, {
-        width: 168,
-        align: 'right',
-      });
+    doc.moveDown(1);
+    ensureContentAboveFooter(doc, 70);
+    drawAlignedTotals(
+      doc,
+      [
+        { label: 'Subtotal', amount: input.invoice.totals.subtotal },
+        { label: 'GST', amount: input.invoice.totals.gstTotal },
+        { label: 'Total', amount: input.invoice.totals.total, emphasis: true },
+      ],
+      brandPrimary,
+    );
 
     if (input.invoice.notes) {
-      doc.moveDown(1.4);
-      doc.fillColor('#111827').fontSize(11).text('Notes');
-      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.notes, { width: 500 });
+      ensureContentAboveFooter(doc, 40);
+      doc.moveDown(1.1);
+      doc.fillColor('#111827').fontSize(11).text('Notes', PDF_PAGE_MARGIN, doc.y, {
+        width: contentWidth(),
+        align: 'left',
+      });
+      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.notes, {
+        width: contentWidth(),
+        align: 'left',
+        lineGap: 3,
+      });
     }
 
     if (input.invoice.paymentTerms) {
-      doc.moveDown(1);
-      doc.fillColor('#111827').fontSize(11).text('Payment terms');
-      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.paymentTerms, { width: 500 });
+      ensureContentAboveFooter(doc, 36);
+      doc.moveDown(0.9);
+      doc.fillColor('#111827').fontSize(11).text('Payment terms', PDF_PAGE_MARGIN, doc.y, {
+        width: contentWidth(),
+        align: 'left',
+      });
+      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.paymentTerms, {
+        width: contentWidth(),
+        align: 'left',
+        lineGap: 3,
+      });
     }
 
-    doc.moveDown(1.2);
-    doc.fillColor('#111827').fontSize(11).text('Payment details');
-    const paymentLines = [
-      profile?.companyName ? `Pay to: ${profile.companyName}` : null,
-      profile?.abnTaxId ? `ABN: ${profile.abnTaxId}` : null,
-      profile?.email ? `Accounts: ${profile.email}` : null,
-      profile?.phone ? `Phone: ${profile.phone}` : null,
-    ].filter((line): line is string => Boolean(line));
-    doc
-      .fontSize(10)
-      .fillColor('#4b5563')
-      .text(
-        paymentLines.length
-          ? paymentLines.join('\n')
-          : 'Configure business contact details in Aleya Settings.',
-        { width: 500 },
-      );
+    drawPaymentDetailsBlock(doc, profile, input.bankDetails);
 
-    doc.moveDown(1.4);
-    doc
-      .fontSize(9)
-      .fillColor('#6b7280')
-      .text(
-        `Generated by Aleya Invoicing · GST shown per line · ${profile?.companyName ?? 'Business'}`,
-        { width: 500, align: 'center' },
-      );
-
+    // Footer on the final page (pageAdded covers earlier pages only).
+    paintFooter();
     doc.end();
   });
 }
