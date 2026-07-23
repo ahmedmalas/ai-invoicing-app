@@ -103,7 +103,14 @@ function buildIdentityModuleSource(): string {
   );
 }
 
-function sendJs(reply: { type: (v: string) => { header: (n: string, v: string) => { send: (v: string) => unknown } } }, body: string) {
+function sendJs(reply: {
+  type: (v: string) => {
+    header: (n: string, v: string) => {
+      header: (n: string, v: string) => { send: (v: string) => unknown };
+      send: (v: string) => unknown;
+    };
+  };
+}, body: string) {
   return reply
     .type('application/javascript; charset=utf-8')
     .header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -190,7 +197,10 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     _request: unknown,
     reply: {
       type: (value: string) => {
-        header: (name: string, value: string) => { send: (value: string) => unknown };
+        header: (name: string, value: string) => {
+          header: (name: string, value: string) => { send: (value: string) => unknown };
+          send: (value: string) => unknown;
+        };
       };
     },
   ) =>
