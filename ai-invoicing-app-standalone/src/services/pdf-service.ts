@@ -16,6 +16,7 @@ import type {
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
 import {
+  displayLineNumber,
   drawAlignedTotals,
   drawPaymentDetailsBlock,
   ensureContentFitsPage,
@@ -23,6 +24,7 @@ import {
   formatAustralianDate,
   formatAustralianPhone,
   formatInvoiceNumberForPdf,
+  formatLineItemCountLabel,
   pageContentRight,
   pageContentWidth,
   PDF_PAGE_MARGIN,
@@ -181,14 +183,24 @@ export function generateInvoicePdfBuffer(input: {
 
     doc.moveDown(1);
     ensureContentFitsPage(doc, 40);
-    doc.fontSize(12).fillColor('#111827').text('Line Items', PDF_PAGE_MARGIN, doc.y, {
-      width: contentWidth(),
+    const lineItemsHeadingY = doc.y;
+    doc.fontSize(12).fillColor('#111827').text('Line Items', PDF_PAGE_MARGIN, lineItemsHeadingY, {
+      width: contentWidth() - 120,
       align: 'left',
     });
-    doc.moveDown(0.4);
+    doc
+      .fontSize(9)
+      .fillColor('#6b7280')
+      .text(formatLineItemCountLabel(input.lineItems.length), PDF_PAGE_MARGIN, lineItemsHeadingY + 2, {
+        width: contentWidth(),
+        align: 'right',
+      });
+    doc.y = Math.max(doc.y, lineItemsHeadingY + 14);
+    doc.moveDown(0.35);
 
     const col = {
-      description: { x: PDF_PAGE_MARGIN + 2, width: 220 },
+      number: { x: PDF_PAGE_MARGIN, width: 22 },
+      description: { x: PDF_PAGE_MARGIN + 28, width: 194 },
       qty: { x: PDF_PAGE_MARGIN + 230, width: 50 },
       unit: { x: PDF_PAGE_MARGIN + 285, width: 70 },
       gst: { x: PDF_PAGE_MARGIN + 360, width: 55 },
@@ -197,6 +209,7 @@ export function generateInvoicePdfBuffer(input: {
 
     const headerY = doc.y;
     doc.fontSize(10).fillColor('#6b7280');
+    doc.text('#', col.number.x, headerY, { width: col.number.width, align: 'right' });
     doc.text('Description', col.description.x, headerY, { width: col.description.width });
     doc.text('Qty', col.qty.x, headerY, { width: col.qty.width, align: 'right' });
     doc.text('Unit', col.unit.x, headerY, { width: col.unit.width, align: 'right' });
@@ -211,14 +224,20 @@ export function generateInvoicePdfBuffer(input: {
       .lineTo(contentRight(), doc.y)
       .stroke();
 
-    for (const item of input.lineItems) {
+    // Sequential presentation numbers continue across page breaks (never restart at 1).
+    input.lineItems.forEach((item, index) => {
       const lineSubtotal = item.quantity * item.unitPrice;
       const lineGst = item.gstApplicable ? lineSubtotal * 0.1 : 0;
       const lineTotal = lineSubtotal + lineGst;
+      const number = displayLineNumber(index);
 
       ensureContentFitsPage(doc, 28);
       doc.moveDown(0.55);
       const y = doc.y;
+      doc.fillColor('#6b7280').fontSize(10).text(String(number), col.number.x, y, {
+        width: col.number.width,
+        align: 'right',
+      });
       doc.fillColor('#111827').fontSize(10).text(item.description, col.description.x, y, {
         width: col.description.width,
       });
@@ -229,7 +248,7 @@ export function generateInvoicePdfBuffer(input: {
       doc.text(lineTotal.toFixed(2), col.total.x, y, { width: col.total.width, align: 'right' });
       doc.y = Math.max(rowBottom, doc.y);
       doc.x = PDF_PAGE_MARGIN;
-    }
+    });
 
     doc.moveDown(1);
     ensureContentFitsPage(doc, 70);

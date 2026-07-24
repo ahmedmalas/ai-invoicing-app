@@ -46,6 +46,20 @@ export function formatMoney(amount: number): string {
 }
 
 /**
+ * Presentation-only line number from the visible row order.
+ * Never use this as a persistence key, React key, or API identifier.
+ */
+export function displayLineNumber(visibleRowIndex: number): number {
+  return Math.max(0, Number(visibleRowIndex) || 0) + 1;
+}
+
+/** Subtle singular/plural line-count label for editor/PDF summaries. */
+export function formatLineItemCountLabel(count: number): string {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  return n === 1 ? '1 line item' : `${n} line items`;
+}
+
+/**
  * @deprecated GST registration labels are no longer printed on invoice PDFs.
  * Kept only so older imports fail closed to an empty string.
  */

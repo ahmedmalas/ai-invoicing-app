@@ -5,6 +5,20 @@
 
 export const LINE_FIELD_ORDER = ['description', 'quantity', 'unitPrice', 'gstApplicable'];
 
+/**
+ * Presentation-only line number from the visible row order.
+ * Never use this as a DB id, client key, React key, or API identifier.
+ */
+export function displayLineNumber(visibleRowIndex) {
+  return Math.max(0, Number(visibleRowIndex) || 0) + 1;
+}
+
+/** Subtle singular/plural line-count label shown near the line table. */
+export function formatLineItemCountLabel(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  return n === 1 ? '1 line item' : `${n} line items`;
+}
+
 export function createLineClientKey() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

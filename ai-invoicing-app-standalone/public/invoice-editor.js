@@ -31,7 +31,9 @@ import { createInvoiceApiClient } from './invoice-api.js';
 import {
   applyLinePaste,
   blankLineItem,
+  displayLineNumber,
   ensureLineClientKeys,
+  formatLineItemCountLabel,
   parseLineNumericInput,
   resolveEnterNavigation,
   resolveTabNavigation,
@@ -101,14 +103,21 @@ function clearLocal(storage) {
 function lineRowHtml(item = {}, index = 0) {
   const calculated = calculateLineItem(item);
   const lineId = String(item.clientKey || item.id || `line-index-${index}`);
+  const number = displayLineNumber(index);
   return (
     '<tr class="invoice-line" data-invoice-line data-line-id="' +
     escapeHtml(lineId) +
     '" data-line-index="' +
     index +
     '">' +
-    '<td class="invoice-line-handle">' +
-    '<span class="invoice-line-drag-handle" data-invoice-drag-handle role="button" tabindex="-1" aria-label="Reorder line">⋮⋮</span>' +
+    '<td class="invoice-line-number-cell">' +
+    '<span class="invoice-line-number" data-line-number data-invoice-drag-handle ' +
+    'role="presentation" tabindex="-1" title="Drag to reorder" aria-hidden="true">' +
+    escapeHtml(number) +
+    '</span>' +
+    '<span class="sr-only">Line ' +
+    escapeHtml(number) +
+    '</span>' +
     '</td>' +
     '<td><input data-invoice-field="description" name="description" value="' +
     escapeHtml(calculated.description) +
@@ -259,9 +268,14 @@ function buildEditorHtml({ profile = {}, customers = [], state = null, record = 
     '</label></div></div></section>' +
     '<section class="invoice-section">' +
     '<div class="invoice-section-head"><h2>Line items</h2>' +
-    '<button type="button" class="button secondary small" data-add-line>Add line</button></div>' +
+    '<div class="invoice-section-head-actions">' +
+    '<span class="invoice-line-count muted" data-line-count>' +
+    escapeHtml(formatLineItemCountLabel(recordState.lineItems.length)) +
+    '</span>' +
+    '<button type="button" class="button secondary small" data-add-line>Add line</button></div></div>' +
     '<div class="invoice-table-wrap"><table class="invoice-lines-table"><thead><tr>' +
-    '<th class="narrow"></th><th>Description</th><th>Qty</th><th>Unit Price</th><th>GST</th><th>Total</th><th class="narrow"></th>' +
+    '<th class="invoice-line-number-col" scope="col" title="Line number">#</th>' +
+    '<th>Description</th><th>Qty</th><th>Unit Price</th><th>GST</th><th>Total</th><th class="narrow"></th>' +
     '</tr></thead><tbody data-invoice-lines>' +
     lines +
     '</tbody></table></div></section>' +
@@ -582,7 +596,14 @@ export function createInvoiceEditor(deps) {
       const cell = row.querySelector('[data-line-total]');
       if (cell) cell.textContent = money(calculatedItems[index]?.lineTotal || 0);
       row.dataset.lineIndex = String(index);
+      const number = displayLineNumber(index);
+      const numberEl = row.querySelector('[data-line-number]');
+      if (numberEl) numberEl.textContent = String(number);
+      const sr = row.querySelector('.sr-only');
+      if (sr) sr.textContent = 'Line ' + number;
     });
+    const countEl = form.querySelector('[data-line-count]');
+    if (countEl) countEl.textContent = formatLineItemCountLabel(state.lineItems.length);
     const sub = form.querySelector('[data-total-subtotal]');
     const gst = form.querySelector('[data-total-gst]');
     const grand = form.querySelector('[data-total-grand]');

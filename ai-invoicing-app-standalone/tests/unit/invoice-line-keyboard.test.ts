@@ -120,16 +120,18 @@ describe('invoice line keyboard navigation helpers', () => {
     expect(shouldHandleLineTab(unitPrice)).toBe(true);
   });
 
-  it('renders stable data-line-id and keeps action buttons out of tab order', () => {
+  it('renders stable data-line-id, line numbers, and keeps actions out of tab order', () => {
     const html = lineRowHtml(
       { ...blankLineItem(), description: 'Paint', quantity: 1, unitPrice: 40, clientKey: 'stable-key-1' },
       0,
     );
     expect(html).toContain('data-line-id="stable-key-1"');
+    expect(html).toContain('data-line-number');
     expect(html).toContain('data-invoice-drag-handle');
     expect(html).toMatch(/data-invoice-drag-handle[^>]*tabindex="-1"/);
     expect(html).toMatch(/data-line-up[^>]*tabindex="-1"/);
     expect(html).toMatch(/data-remove-line[^>]*tabindex="-1"/);
+    expect(html).not.toContain('⋮⋮');
   });
 
   it('wires Enter/Tab handlers into the canonical invoice editor', () => {

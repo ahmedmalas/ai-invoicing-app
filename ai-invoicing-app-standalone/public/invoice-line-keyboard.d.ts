@@ -5,6 +5,10 @@ export const LINE_FIELD_ORDER: readonly [
   'gstApplicable',
 ];
 
+export function displayLineNumber(visibleRowIndex: number): number;
+
+export function formatLineItemCountLabel(count: number): string;
+
 export function createLineClientKey(): string;
 
 export function ensureLineClientKeys<T extends Record<string, unknown>>(

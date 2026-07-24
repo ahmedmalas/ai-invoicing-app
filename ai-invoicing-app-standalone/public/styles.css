@@ -1185,22 +1185,45 @@ td.primary-cell {
 .invoice-lines-table input[name='description'] {
   cursor: text;
 }
-.invoice-line-handle,
-.invoice-line-drag-handle {
+.invoice-line-number-cell,
+.invoice-line-number {
   -webkit-user-select: none;
   user-select: none;
   cursor: grab;
   touch-action: none;
 }
-.invoice-line-drag-handle {
+.invoice-line-number {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 34px;
+  justify-content: flex-end;
+  min-width: 2.75ch;
   min-height: 34px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
 }
-.invoice-line.is-dragging .invoice-line-drag-handle {
+.invoice-line.is-dragging .invoice-line-number {
   cursor: grabbing;
+}
+.invoice-section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.invoice-line-count {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .invoice-field textarea {
   min-height: 96px;
@@ -1244,10 +1267,20 @@ td.primary-cell {
   background: #f3f5f0;
 }
 .invoice-lines-table th.narrow,
-.invoice-lines-table td.invoice-line-handle,
 .invoice-lines-table td.invoice-line-actions {
   width: 1%;
   white-space: nowrap;
+}
+.invoice-lines-table th.invoice-line-number-col,
+.invoice-lines-table td.invoice-line-number-cell {
+  width: 4.5ch;
+  min-width: 4.5ch;
+  max-width: 5.5ch;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .invoice-line-total {
   font-weight: 700;
