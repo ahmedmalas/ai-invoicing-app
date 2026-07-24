@@ -153,7 +153,7 @@ describe('Cart N Tip #107 Quantum Hire recreation', () => {
     // Keep reference PDF path documented for side-by-side
     expect(
       readFileSync(
-        join(process.cwd(), 'fixtures/reference-invoices/Cart_N_Tip_107.pdf'),
+        join(process.cwd(), 'tests/fixtures/reference-invoices/Cart_N_Tip_107.pdf'),
       ).length,
     ).toBeGreaterThan(1000);
   });

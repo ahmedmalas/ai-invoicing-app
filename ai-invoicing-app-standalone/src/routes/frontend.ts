@@ -205,6 +205,14 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .send(asset('favicon.svg')),
   );
 
+  // Never expose reference invoices or private branding files over HTTP.
+  app.get('/fixtures/*', async (_request, reply) =>
+    reply.code(404).type('application/json').send({ message: 'NOT_FOUND' }),
+  );
+  app.get('/src/*', async (_request, reply) =>
+    reply.code(404).type('application/json').send({ message: 'NOT_FOUND' }),
+  );
+
   const shell = async (
     _request: unknown,
     reply: {

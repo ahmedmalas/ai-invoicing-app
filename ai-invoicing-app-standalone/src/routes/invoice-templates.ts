@@ -67,8 +67,7 @@ export const invoiceTemplateRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(result.installed ? 201 : 200).send({
       ...result,
       template,
-      referenceSource:
-        'fixtures/reference-invoices/Cart_N_Tip_107.pdf (from Cursor upload Cart_N_Tip__107_e19b.pdf)',
+      referenceSource: 'tests/fixtures/reference-invoices/Cart_N_Tip_107.pdf (not publicly served)',
     });
   });
 

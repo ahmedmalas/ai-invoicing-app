@@ -1,0 +1,9 @@
+# Keep test/reference material out of the public Vercel static output.
+# Branding marks are still bundled into the serverless function via includeFiles.
+fixtures/**
+tests/**
+coverage/**
+**/*.test.ts
+**/*.integration.test.ts
+docs/**
+scripts/tmp-*
