@@ -18,6 +18,7 @@ const tracedAssets = {
   'invoice-number.js': new URL('../../public/invoice-number.js', import.meta.url),
   'invoice-model.js': new URL('../../public/invoice-model.js', import.meta.url),
   'invoice-api.js': new URL('../../public/invoice-api.js', import.meta.url),
+  'invoice-line-keyboard.js': new URL('../../public/invoice-line-keyboard.js', import.meta.url),
   'invoice-editor.js': new URL('../../public/invoice-editor.js', import.meta.url),
   'logo-studio-ui.js': new URL('../../public/logo-studio-ui.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
@@ -169,6 +170,9 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     sendJs(reply, asset('invoice-model.js')),
   );
   app.get('/assets/invoice-api.js', async (_request, reply) => sendJs(reply, asset('invoice-api.js')));
+  app.get('/assets/invoice-line-keyboard.js', async (_request, reply) =>
+    sendJs(reply, asset('invoice-line-keyboard.js')),
+  );
   app.get('/assets/invoice-editor.js', async (_request, reply) =>
     sendJs(reply, asset('invoice-editor.js')),
   );

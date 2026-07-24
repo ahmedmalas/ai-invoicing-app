@@ -28,9 +28,25 @@ import {
   withRecalculatedTotals,
 } from './invoice-model.js';
 import { createInvoiceApiClient } from './invoice-api.js';
+import {
+  blankLineItem,
+  ensureLineClientKeys,
+  parseLineNumericInput,
+  resolveEnterNavigation,
+  resolveTabNavigation,
+  shouldHandleLineEnter,
+  shouldHandleLineTab,
+} from './invoice-line-keyboard.js';
 
 export const INVOICE_EDITOR_STORAGE_KEY = 'aleya-invoice-editor-v3';
 export const INVOICE_EDITOR_AUTOSAVE_MS = 1200;
+
+function withLineClientKeys(editorState) {
+  return {
+    ...editorState,
+    lineItems: ensureLineClientKeys(editorState?.lineItems || []),
+  };
+}
 
 const GST_RATE = 0.1;
 const OPEN_MS = 320;
@@ -82,20 +98,23 @@ function clearLocal(storage) {
 
 function lineRowHtml(item = {}, index = 0) {
   const calculated = calculateLineItem(item);
+  const lineId = String(item.clientKey || item.id || `line-index-${index}`);
   return (
-    '<tr class="invoice-line" data-invoice-line data-line-index="' +
+    '<tr class="invoice-line" data-invoice-line data-line-id="' +
+    escapeHtml(lineId) +
+    '" data-line-index="' +
     index +
     '">' +
     '<td class="invoice-line-handle">' +
-    '<span class="invoice-line-drag-handle" data-invoice-drag-handle role="button" tabindex="0" aria-label="Reorder line">⋮⋮</span>' +
+    '<span class="invoice-line-drag-handle" data-invoice-drag-handle role="button" tabindex="-1" aria-label="Reorder line">⋮⋮</span>' +
     '</td>' +
     '<td><input data-invoice-field="description" name="description" value="' +
     escapeHtml(calculated.description) +
     '" required placeholder="Description of work or goods" autocomplete="off" spellcheck="true"></td>' +
-    '<td><input data-invoice-field="quantity" name="quantity" type="number" min="0.01" step="0.01" value="' +
+    '<td><input data-invoice-field="quantity" name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" value="' +
     escapeHtml(calculated.quantity || 1) +
     '" required></td>' +
-    '<td><input data-invoice-field="unitPrice" name="unitPrice" type="number" min="0" step="0.01" value="' +
+    '<td><input data-invoice-field="unitPrice" name="unitPrice" type="number" min="0" step="0.01" inputmode="decimal" value="' +
     escapeHtml(calculated.unitPrice || 0) +
     '" required></td>' +
     '<td><select data-invoice-field="gstApplicable" name="gstApplicable">' +
@@ -109,9 +128,9 @@ function lineRowHtml(item = {}, index = 0) {
     money(calculated.lineTotal) +
     '</td>' +
     '<td class="invoice-line-actions">' +
-    '<button type="button" class="icon-button" data-line-up aria-label="Move line up">↑</button>' +
-    '<button type="button" class="icon-button" data-line-down aria-label="Move line down">↓</button>' +
-    '<button type="button" class="icon-button" data-remove-line aria-label="Delete line">×</button>' +
+    '<button type="button" class="icon-button" data-line-up tabindex="-1" aria-label="Move line up">↑</button>' +
+    '<button type="button" class="icon-button" data-line-down tabindex="-1" aria-label="Move line down">↓</button>' +
+    '<button type="button" class="icon-button" data-remove-line tabindex="-1" aria-label="Delete line">×</button>' +
     '</td></tr>'
   );
 }
@@ -145,9 +164,9 @@ function customerPreviewMarkup(customer) {
 }
 
 function buildEditorHtml({ profile = {}, customers = [], state = null, record = null }) {
-  const resolved =
-    state ||
-    (record ? hydrateEditorState(record) : createEmptyEditorState());
+  const resolved = withLineClientKeys(
+    state || (record ? hydrateEditorState(record) : createEmptyEditorState()),
+  );
   const recordState = resolved;
   const lines = recordState.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
   const totals = recordState.totals || calculateInvoiceTotals(recordState.lineItems).totals;
@@ -299,7 +318,7 @@ export function createInvoiceEditor(deps) {
   });
 
   /** @type {import('./invoice-model.js').InvoiceEditorState} */
-  let state = createEmptyEditorState();
+  let state = withLineClientKeys(createEmptyEditorState());
   let root = null;
   let form = null;
   let opChain = Promise.resolve();
@@ -340,6 +359,39 @@ export function createInvoiceEditor(deps) {
     });
   }
 
+  function lineIndexFromRow(row) {
+    if (!row) return -1;
+    const lineId = row.getAttribute('data-line-id');
+    if (lineId) {
+      const byId = state.lineItems.findIndex((item) => String(item.clientKey || item.id) === lineId);
+      if (byId >= 0) return byId;
+    }
+    return Number(row.dataset.lineIndex || 0);
+  }
+
+  function focusLineField(lineIndex, fieldName, { select = true } = {}) {
+    if (!form) return null;
+    const lines = ensureLineClientKeys(state.lineItems);
+    const target = lines[lineIndex];
+    if (!target) return null;
+    const lineId = String(target.clientKey || target.id || '');
+    const row =
+      Array.from(form.querySelectorAll('[data-invoice-line]')).find(
+        (node) => node.getAttribute('data-line-id') === lineId,
+      ) || form.querySelector(`[data-invoice-line][data-line-index="${lineIndex}"]`);
+    const control = row?.querySelector?.(`[data-invoice-field="${fieldName}"]`);
+    if (!control) return null;
+    control.focus({ preventScroll: true });
+    if (select && typeof control.select === 'function' && control.tagName === 'INPUT') {
+      try {
+        control.select();
+      } catch {
+        /* ignore */
+      }
+    }
+    return control;
+  }
+
   /** Flush any focused control into editor state before building payloads. */
   function commitPendingInput() {
     if (!form) return;
@@ -349,12 +401,15 @@ export function createInvoiceEditor(deps) {
     if (!path) return;
     const row = active.closest?.('[data-invoice-line]');
     if (row) {
-      const index = Number(row.dataset.lineIndex || 0);
-      const lines = state.lineItems.map((item) => ({ ...item }));
-      const current = { ...lines[index] };
+      const index = lineIndexFromRow(row);
+      if (index < 0) return;
+      const lines = ensureLineClientKeys(state.lineItems).map((item) => ({ ...item }));
+      const current = { ...(lines[index] || blankLineItem()) };
       if (path === 'description') current.description = String(active.value ?? '');
-      else if (path === 'quantity') current.quantity = Number(active.value || 0);
-      else if (path === 'unitPrice') current.unitPrice = Number(active.value || 0);
+      else if (path === 'quantity')
+        current.quantity = parseLineNumericInput(active.value, current.quantity);
+      else if (path === 'unitPrice')
+        current.unitPrice = parseLineNumericInput(active.value, current.unitPrice);
       else if (path === 'gstApplicable') current.gstApplicable = active.value === 'true';
       lines[index] = current;
       state = withRecalculatedTotals({ ...state, lineItems: lines });
@@ -370,6 +425,52 @@ export function createInvoiceEditor(deps) {
     else if (path === 'notes') state = patchEditorState(state, { notes: String(active.value ?? '') });
     else if (path === 'paymentTerms')
       state = patchEditorState(state, { paymentTerms: String(active.value ?? '') });
+  }
+
+  function commitLineControl(target) {
+    if (!target) return;
+    const path = target.getAttribute?.('data-invoice-field');
+    if (!path) return;
+    const row = target.closest?.('[data-invoice-line]');
+    if (!row) return;
+    const index = lineIndexFromRow(row);
+    if (index < 0) return;
+    const lines = ensureLineClientKeys(state.lineItems).map((item) => ({ ...item }));
+    const current = { ...(lines[index] || blankLineItem()) };
+    if (path === 'description') current.description = String(target.value ?? '');
+    else if (path === 'quantity')
+      current.quantity = parseLineNumericInput(target.value, current.quantity);
+    else if (path === 'unitPrice')
+      current.unitPrice = parseLineNumericInput(target.value, current.unitPrice);
+    else if (path === 'gstApplicable') current.gstApplicable = target.value === 'true';
+    // Write the committed numeric value back into the control so it never snaps to 0.
+    if (path === 'quantity') target.value = String(current.quantity);
+    if (path === 'unitPrice') target.value = String(current.unitPrice);
+    lines[index] = current;
+    state = withRecalculatedTotals({ ...state, lineItems: lines });
+    refreshTotalsDisplay();
+  }
+
+  function navigateLineKeyboard(plan) {
+    if (!plan || plan.action === 'native') return;
+    if (plan.action === 'add-row') {
+      state = withRecalculatedTotals({
+        ...state,
+        lineItems: [...ensureLineClientKeys(state.lineItems), blankLineItem()],
+      });
+      renderLineRows();
+      // Focus after DOM replacement completes.
+      queueMicrotask(() => {
+        focusLineField(plan.lineIndex, plan.field);
+        scheduleAutosave();
+      });
+      return;
+    }
+    if (plan.action === 'focus') {
+      queueMicrotask(() => {
+        focusLineField(plan.lineIndex, plan.field);
+      });
+    }
   }
 
   function syncFormMeta() {
@@ -517,8 +618,16 @@ export function createInvoiceEditor(deps) {
     clearFieldErrors();
     assertPayloadMatchesVisibleInvoiceNumber(validated.payload, state.invoiceNumber);
     const wasNew = !state.id;
+    const previousKeys = ensureLineClientKeys(state.lineItems).map((item) => item.clientKey);
     const saved = await apiClient.saveDraft(state);
-    state = applySavedInvoice(state, saved);
+    state = withLineClientKeys(applySavedInvoice(state, saved));
+    state = {
+      ...state,
+      lineItems: state.lineItems.map((item, index) => ({
+        ...item,
+        clientKey: previousKeys[index] || item.clientKey,
+      })),
+    };
     if (form.isConnected) {
       syncFormMeta();
       markPristine();
@@ -578,12 +687,15 @@ export function createInvoiceEditor(deps) {
     if (!path) return;
     const row = target.closest?.('[data-invoice-line]');
     if (row) {
-      const index = Number(row.dataset.lineIndex || 0);
-      const lines = state.lineItems.map((item) => ({ ...item }));
-      const current = { ...(lines[index] || {}) };
+      const index = lineIndexFromRow(row);
+      if (index < 0) return;
+      const lines = ensureLineClientKeys(state.lineItems).map((item) => ({ ...item }));
+      const current = { ...(lines[index] || blankLineItem()) };
       if (path === 'description') current.description = String(target.value ?? '');
-      else if (path === 'quantity') current.quantity = Number(target.value || 0);
-      else if (path === 'unitPrice') current.unitPrice = Number(target.value || 0);
+      else if (path === 'quantity')
+        current.quantity = parseLineNumericInput(target.value, current.quantity);
+      else if (path === 'unitPrice')
+        current.unitPrice = parseLineNumericInput(target.value, current.unitPrice);
       else if (path === 'gstApplicable') current.gstApplicable = target.value === 'true';
       lines[index] = current;
       state = withRecalculatedTotals({ ...state, lineItems: lines });
@@ -604,14 +716,12 @@ export function createInvoiceEditor(deps) {
   function moveLine(index, direction) {
     const next = index + direction;
     if (next < 0 || next >= state.lineItems.length) return;
-    const lines = state.lineItems.map((item) => ({ ...item }));
+    const lines = ensureLineClientKeys(state.lineItems).map((item) => ({ ...item }));
     const [row] = lines.splice(index, 1);
     lines.splice(next, 0, row);
     state = withRecalculatedTotals({ ...state, lineItems: lines });
     renderLineRows();
-    form
-      ?.querySelector(`[data-invoice-line][data-line-index="${next}"] [data-invoice-field="description"]`)
-      ?.focus();
+    queueMicrotask(() => focusLineField(next, 'description'));
     scheduleAutosave();
   }
 
@@ -635,15 +745,10 @@ export function createInvoiceEditor(deps) {
       if (event.target.closest('[data-add-line]')) {
         state = withRecalculatedTotals({
           ...state,
-          lineItems: [
-            ...state.lineItems,
-            { description: '', quantity: 1, unitPrice: 0, gstApplicable: true },
-          ],
+          lineItems: [...ensureLineClientKeys(state.lineItems), blankLineItem()],
         });
         renderLineRows();
-        form
-          ?.querySelector('[data-invoice-line]:last-child [data-invoice-field="description"]')
-          ?.focus();
+        queueMicrotask(() => focusLineField(state.lineItems.length - 1, 'description'));
         scheduleAutosave();
         return;
       }
@@ -654,8 +759,8 @@ export function createInvoiceEditor(deps) {
           return;
         }
         const row = remove.closest('[data-invoice-line]');
-        const index = Number(row?.dataset.lineIndex || 0);
-        const lines = state.lineItems.filter((_, i) => i !== index);
+        const index = lineIndexFromRow(row);
+        const lines = ensureLineClientKeys(state.lineItems).filter((_, i) => i !== index);
         state = withRecalculatedTotals({ ...state, lineItems: lines });
         renderLineRows();
         scheduleAutosave();
@@ -664,13 +769,13 @@ export function createInvoiceEditor(deps) {
       const up = event.target.closest('[data-line-up]');
       if (up) {
         const row = up.closest('[data-invoice-line]');
-        moveLine(Number(row?.dataset.lineIndex || 0), -1);
+        moveLine(lineIndexFromRow(row), -1);
         return;
       }
       const down = event.target.closest('[data-line-down]');
       if (down) {
         const row = down.closest('[data-invoice-line]');
-        moveLine(Number(row?.dataset.lineIndex || 0), 1);
+        moveLine(lineIndexFromRow(row), 1);
       }
     });
 
@@ -681,15 +786,51 @@ export function createInvoiceEditor(deps) {
       ) {
         return;
       }
-      const row = event.target.closest?.('[data-invoice-line]');
+      const target = event.target;
+      const row = target?.closest?.('[data-invoice-line]');
       if (!row) return;
-      const index = Number(row.dataset.lineIndex || 0);
+      const index = lineIndexFromRow(row);
+      const fieldName = target.getAttribute?.('data-invoice-field') || '';
+
       if (event.altKey && event.key === 'ArrowUp') {
         event.preventDefault();
         moveLine(index, -1);
-      } else if (event.altKey && event.key === 'ArrowDown') {
+        return;
+      }
+      if (event.altKey && event.key === 'ArrowDown') {
         event.preventDefault();
         moveLine(index, 1);
+        return;
+      }
+
+      if (event.key === 'Enter' && shouldHandleLineEnter(target)) {
+        // Commit + recalculate before navigation; never submit the invoice form.
+        event.preventDefault();
+        event.stopPropagation();
+        commitLineControl(target);
+        const plan = resolveEnterNavigation({
+          field: fieldName,
+          lineIndex: index,
+          lineCount: state.lineItems.length,
+        });
+        navigateLineKeyboard(plan);
+        scheduleAutosave();
+        return;
+      }
+
+      if (event.key === 'Tab' && shouldHandleLineTab(target)) {
+        const plan = resolveTabNavigation({
+          field: fieldName,
+          lineIndex: index,
+          lineCount: state.lineItems.length,
+          shiftKey: Boolean(event.shiftKey),
+        });
+        if (plan.action === 'native') return;
+        event.preventDefault();
+        event.stopPropagation();
+        commitLineControl(target);
+        navigateLineKeyboard(plan);
+        scheduleAutosave();
       }
     });
 
@@ -749,9 +890,9 @@ export function createInvoiceEditor(deps) {
       if (!dragRow || !over || over === dragRow) return;
       if (event.target.closest('input, textarea, select')) return;
       event.preventDefault();
-      const from = Number(dragRow.dataset.lineIndex || 0);
-      const to = Number(over.dataset.lineIndex || 0);
-      const lines = state.lineItems.map((item) => ({ ...item }));
+      const from = lineIndexFromRow(dragRow);
+      const to = lineIndexFromRow(over);
+      const lines = ensureLineClientKeys(state.lineItems).map((item) => ({ ...item }));
       const [moved] = lines.splice(from, 1);
       lines.splice(to, 0, moved);
       state = withRecalculatedTotals({ ...state, lineItems: lines });
@@ -851,13 +992,13 @@ export function createInvoiceEditor(deps) {
     }
 
     if (record?.id) {
-      state = hydrateEditorState(record);
+      state = withLineClientKeys(hydrateEditorState(record));
       clearLocal(storage);
     } else if (local) {
-      state = hydrateEditorState(local);
+      state = withLineClientKeys(hydrateEditorState(local));
       deps.toast('Restored unsaved invoice details from this browser session.');
     } else {
-      state = createEmptyEditorState();
+      state = withLineClientKeys(createEmptyEditorState());
     }
 
     document.body.insertAdjacentHTML(
@@ -949,13 +1090,21 @@ export function createInvoiceEditor(deps) {
       }
       setActionsBusy(true);
       try {
+        const previousKeys = ensureLineClientKeys(state.lineItems).map((item) => item.clientKey);
         const saved = await enqueue(() =>
           apiClient.ensurePersistedForPdf(state, {
             isDirty: isDirty(),
             persist: () => persist({ quiet: true, source: 'preview' }),
           }),
         );
-        state = applySavedInvoice(state, saved);
+        state = withLineClientKeys(applySavedInvoice(state, saved));
+        state = {
+          ...state,
+          lineItems: state.lineItems.map((item, index) => ({
+            ...item,
+            clientKey: previousKeys[index] || item.clientKey,
+          })),
+        };
         syncFormMeta();
         if (action === 'preview') {
           await apiClient.previewPdf(saved.id);
@@ -1029,4 +1178,5 @@ export {
   buildInvoicePayload,
   hydrateEditorState,
   createEmptyEditorState,
+  withLineClientKeys,
 };
