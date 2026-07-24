@@ -137,16 +137,21 @@ export function generateInvoicePdfBuffer(input: {
   const timeoutMs = Math.max(1_000, Math.trunc(input.timeoutMs ?? 20_000));
   const pageSize = input.pageSize ?? 'A4';
   const design = input.templateDesign || null;
-  const margin = design?.layout.margins.left ?? PDF_PAGE_MARGIN;
+  // Quantum Hire uses a dedicated near-bleed coordinate system (≈12pt edges).
+  // Do not bootstrap that renderer with Aleya PDF_PAGE_MARGIN (48) or template guesses.
+  const quantumHire = design?.layout.layoutPreset === 'quantum-hire';
+  const margin = quantumHire ? 0 : (design?.layout.margins.left ?? PDF_PAGE_MARGIN);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: pageSize,
-      margins: {
-        top: design?.layout.margins.top ?? PDF_PAGE_MARGIN,
-        left: margin,
-        right: design?.layout.margins.right ?? PDF_PAGE_MARGIN,
-        bottom: design?.layout.margins.bottom ?? PDF_PAGE_MARGIN,
-      },
+      margins: quantumHire
+        ? { top: 0, left: 0, right: 0, bottom: 0 }
+        : {
+            top: design?.layout.margins.top ?? PDF_PAGE_MARGIN,
+            left: margin,
+            right: design?.layout.margins.right ?? PDF_PAGE_MARGIN,
+            bottom: design?.layout.margins.bottom ?? PDF_PAGE_MARGIN,
+          },
     });
     const chunks: Buffer[] = [];
     let settled = false;

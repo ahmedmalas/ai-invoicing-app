@@ -31,7 +31,9 @@ export function createCartNTipReferenceDesign(): InvoiceTemplateDesign {
       bodySize: 9,
     },
     layout: {
-      margins: { top: 36, right: 40, bottom: 36, left: 40 },
+      // Schema floor is 24; the quantum-hire renderer ignores these and uses
+      // measured Cart N Tip coordinates from quantum-hire-layout.ts (≈12pt edges).
+      margins: { top: 24, right: 24, bottom: 24, left: 24 },
       headerStyle: 'split-bill-from',
       logoPosition: 'left',
       layoutPreset: 'quantum-hire',
