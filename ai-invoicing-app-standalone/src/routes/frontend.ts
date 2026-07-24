@@ -22,6 +22,7 @@ const tracedAssets = {
   'invoice-line-clipboard.js': new URL('../../public/invoice-line-clipboard.js', import.meta.url),
   'invoice-editor.js': new URL('../../public/invoice-editor.js', import.meta.url),
   'logo-studio-ui.js': new URL('../../public/logo-studio-ui.js', import.meta.url),
+  'invoice-templates-ui.js': new URL('../../public/invoice-templates-ui.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
@@ -180,6 +181,9 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
   app.get('/assets/invoice-editor.js', async (_request, reply) =>
     sendJs(reply, asset('invoice-editor.js')),
   );
+  app.get('/assets/invoice-templates-ui.js', async (_request, reply) =>
+    sendJs(reply, asset('invoice-templates-ui.js')),
+  );
   app.get('/assets/logo-studio-ui.js', async (_request, reply) =>
     sendJs(reply, asset('logo-studio-ui.js')),
   );
@@ -239,6 +243,8 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/timeline',
     '/settings',
     '/logo-creator',
+    '/templates',
+    '/templates/import',
   ]) {
     app.get(path, shell);
   }

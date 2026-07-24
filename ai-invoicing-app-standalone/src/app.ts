@@ -29,6 +29,7 @@ import { productRoutes } from './routes/products.js';
 import { reportRoutes } from './routes/reports.js';
 import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 import { createSystemRoutes } from './routes/system.js';
+import { invoiceTemplateRoutes } from './routes/invoice-templates.js';
 import { frontendRoutes } from './routes/frontend.js';
 import { enterWorkspaceContext, runWithWorkspaceContext } from './auth/workspace-context.js';
 
@@ -106,7 +107,8 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: loggerConfig,
     logController: new LogController({ disableRequestLogging: true }),
-    bodyLimit: options.requestBodyLimit ?? 1_048_576,
+    // Raised so invoice template PDF/image analyse payloads can be accepted.
+    bodyLimit: options.requestBodyLimit ?? 4_194_304,
     // Fail requests well under the Vercel 300s hard limit so handlers cannot hang forever.
     requestTimeout: options.requestTimeoutMs ?? 55_000,
     connectionTimeout: options.connectionTimeoutMs ?? 20_000,
@@ -272,6 +274,8 @@ export async function buildApp(options: BuildAppOptions) {
       '/reports',
       '/timeline',
       '/settings',
+      '/templates',
+      '/templates/import',
       '/favicon.svg',
       '/assets/styles.css',
       '/assets/app.js',
@@ -282,6 +286,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/invoice-model.js',
       '/assets/invoice-api.js',
       '/assets/invoice-editor.js',
+      '/assets/invoice-templates-ui.js',
       '/assets/build-identity.js',
       '/assets/logo-studio-ui.js',
       '/assets/launch-app.js',
@@ -950,6 +955,7 @@ export async function buildApp(options: BuildAppOptions) {
     logoStudioRoutes,
     preferenceRoutes,
     invoiceRoutes,
+    invoiceTemplateRoutes,
     quoteRoutes,
     jobRoutes,
     roleRoutes,

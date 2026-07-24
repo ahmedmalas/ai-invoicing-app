@@ -15,6 +15,7 @@ import type {
   SupplierBillLineItemInput,
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
+import type { InvoiceTemplateDesign } from '../domain/templates/invoice-template-design.js';
 import {
   displayLineNumber,
   drawAlignedTotals,
@@ -40,26 +41,51 @@ function writeBrandedHeader(
   doc: PdfDoc,
   profile: BrandingProfile | null,
   brandPrimary: string,
+  design?: InvoiceTemplateDesign | null,
 ): void {
+  const logoPosition = design?.layout.logoPosition ?? 'left';
+  const headingFont = design?.typography.headingFont ?? 'Helvetica-Bold';
+  const titleSize = design?.typography.titleSize ?? 22;
+  if (logoPosition === 'none') {
+    const businessName = prepareBusinessNameForPdf(profile?.companyName ?? 'Business Name');
+    doc
+      .fillColor(brandPrimary)
+      .fontSize(titleSize)
+      .font(headingFont)
+      .text(businessName, PDF_PAGE_MARGIN, PDF_PAGE_MARGIN, {
+        width: pageContentWidth(doc),
+        lineGap: 2,
+      });
+    doc.x = PDF_PAGE_MARGIN;
+    doc.y = Math.max(doc.y, PDF_PAGE_MARGIN + 28) + 4;
+    doc.font(design?.typography.bodyFont ?? 'Helvetica');
+    return;
+  }
+
   const logoHeight = drawBusinessLogoMark(doc, profile, PDF_PAGE_MARGIN, PDF_PAGE_MARGIN, 44);
   const textX = logoHeight > 0 ? PDF_PAGE_MARGIN + 56 : PDF_PAGE_MARGIN;
   const textY = logoHeight > 0 ? PDF_PAGE_MARGIN + 4 : PDF_PAGE_MARGIN;
-  // Use the full remaining content width so typical AU legal names stay on one line.
   const nameWidth = Math.max(200, pageContentWidth(doc) - (textX - PDF_PAGE_MARGIN));
   const businessName = prepareBusinessNameForPdf(profile?.companyName ?? 'Business Name');
   doc
     .fillColor(brandPrimary)
-    .fontSize(22)
-    .font('Helvetica-Bold')
+    .fontSize(titleSize)
+    .font(headingFont)
     .text(businessName, textX, textY, { width: nameWidth, lineGap: 2 });
   doc.x = PDF_PAGE_MARGIN;
   doc.y = Math.max(doc.y, PDF_PAGE_MARGIN + (logoHeight || 28)) + 4;
-  doc.font('Helvetica');
+  doc.font(design?.typography.bodyFont ?? 'Helvetica');
 }
 
-function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null): void {
+function writeBusinessIdentityBlock(
+  doc: PdfDoc,
+  profile: BrandingProfile | null,
+  design?: InvoiceTemplateDesign | null,
+): void {
   const width = pageContentWidth(doc);
-  doc.fillColor('#111827').fontSize(11);
+  const textColor = design?.colors.text ?? '#111827';
+  const bodySize = design?.typography.bodySize ?? 11;
+  doc.fillColor(textColor).fontSize(bodySize);
   doc.text(profile?.address?.trim() || 'Business address not set', PDF_PAGE_MARGIN, doc.y, {
     width,
     align: 'left',
@@ -76,6 +102,24 @@ function writeBusinessIdentityBlock(doc: PdfDoc, profile: BrandingProfile | null
   }
 }
 
+function columnVisible(
+  design: InvoiceTemplateDesign | null | undefined,
+  id: string,
+  fallback = true,
+): boolean {
+  const col = design?.layout.tableColumns?.find((item) => item.id === id);
+  return col ? col.visible : fallback;
+}
+
+function columnLabel(
+  design: InvoiceTemplateDesign | null | undefined,
+  id: string,
+  fallback: string,
+): string {
+  const col = design?.layout.tableColumns?.find((item) => item.id === id);
+  return col?.label || fallback;
+}
+
 export function generateInvoicePdfBuffer(input: {
   invoice: InvoiceDraft;
   lineItems: LineItemInput[];
@@ -83,20 +127,24 @@ export function generateInvoicePdfBuffer(input: {
   businessProfile: BrandingProfile | null;
   /** Optional bank transfer details for future profile wiring. */
   bankDetails?: InvoicePdfBankDetails | null;
+  /** Editable template design recreated from an uploaded invoice. */
+  templateDesign?: InvoiceTemplateDesign | null;
   /** Page size for export / print parity (default A4). */
   pageSize?: InvoicePdfPageSize;
   timeoutMs?: number;
 }): Promise<Buffer> {
   const timeoutMs = Math.max(1_000, Math.trunc(input.timeoutMs ?? 20_000));
   const pageSize = input.pageSize ?? 'A4';
+  const design = input.templateDesign || null;
+  const margin = design?.layout.margins.left ?? PDF_PAGE_MARGIN;
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: pageSize,
       margins: {
-        top: PDF_PAGE_MARGIN,
-        left: PDF_PAGE_MARGIN,
-        right: PDF_PAGE_MARGIN,
-        bottom: PDF_PAGE_MARGIN,
+        top: design?.layout.margins.top ?? PDF_PAGE_MARGIN,
+        left: margin,
+        right: design?.layout.margins.right ?? PDF_PAGE_MARGIN,
+        bottom: design?.layout.margins.bottom ?? PDF_PAGE_MARGIN,
       },
     });
     const chunks: Buffer[] = [];
@@ -127,20 +175,37 @@ export function generateInvoicePdfBuffer(input: {
     });
 
     const profile = input.businessProfile;
-    const brandPrimary = profile?.primaryColor ?? '#0f172a';
+    const brandPrimary = design?.colors.primary ?? profile?.primaryColor ?? '#0f172a';
+    const textColor = design?.colors.text ?? '#111827';
+    const mutedColor = design?.colors.muted ?? '#6b7280';
+    const borderColor = design?.colors.border ?? '#d1d5db';
+    const bodyFont = design?.typography.bodyFont ?? 'Helvetica';
+    const headingFont = design?.typography.headingFont ?? 'Helvetica-Bold';
+    const bodySize = design?.typography.bodySize ?? 10;
+    const headingSize = design?.typography.headingSize ?? 12;
     const contentRight = () => pageContentRight(doc);
     const contentWidth = () => pageContentWidth(doc);
     const invoiceMeta = formatInvoiceNumberForPdf(input.invoice.invoiceNumber);
+    const documentTitle = design?.documentTitle || 'TAX INVOICE';
+    const bankDetails =
+      input.bankDetails ||
+      (design?.bankDetails
+        ? {
+            accountName: design.bankDetails.accountName,
+            bsb: design.bankDetails.bsb,
+            accountNumber: design.bankDetails.accountNumber,
+          }
+        : null);
 
-    writeBrandedHeader(doc, profile, brandPrimary);
-    writeBusinessIdentityBlock(doc, profile);
+    writeBrandedHeader(doc, profile, brandPrimary, design);
+    writeBusinessIdentityBlock(doc, profile, design);
 
     doc.moveDown(1);
-    doc.fontSize(18).fillColor('#111827').text('TAX INVOICE', {
+    doc.font(headingFont).fontSize(18).fillColor(textColor).text(documentTitle, {
       width: contentWidth(),
-      align: 'right',
+      align: design?.layout.headerStyle === 'stacked' ? 'left' : 'right',
     });
-    doc.fontSize(11);
+    doc.font(bodyFont).fontSize(bodySize + 1);
     if (invoiceMeta.statusLine) {
       doc.text(invoiceMeta.statusLine, {
         width: contentWidth(),
@@ -159,7 +224,6 @@ export function generateInvoicePdfBuffer(input: {
       width: contentWidth(),
       align: 'right',
     });
-    // Title is always the stored invoice title — never derived from the invoice number.
     const invoiceTitle = String(input.invoice.title ?? '').trim();
     if (invoiceTitle) {
       doc.text(`Title: ${invoiceTitle}`, {
@@ -169,85 +233,171 @@ export function generateInvoicePdfBuffer(input: {
     }
 
     doc.moveDown(1);
-    doc.fontSize(12).fillColor('#111827').text('Bill To', PDF_PAGE_MARGIN, doc.y, {
-      width: contentWidth(),
-      align: 'left',
-    });
-    doc.fontSize(11).text(input.customer.displayName, { width: contentWidth(), align: 'left' });
-    if (input.customer.address) {
-      doc.text(input.customer.address, { width: contentWidth(), align: 'left' });
-    }
-    if (input.customer.email) {
-      doc.text(input.customer.email, { width: contentWidth(), align: 'left' });
+    const billLabel =
+      design?.layout.sections.find((section) => section.type === 'customer')?.label || 'Bill To';
+
+    if (design?.layout.headerStyle === 'split-bill-from') {
+      const half = contentWidth() / 2 - 8;
+      const topY = doc.y;
+      doc.font(headingFont).fontSize(headingSize).fillColor(textColor).text(billLabel, margin, topY, {
+        width: half,
+        align: 'left',
+      });
+      doc.font(bodyFont).fontSize(bodySize).text(input.customer.displayName, {
+        width: half,
+        align: 'left',
+      });
+      if (input.customer.address) doc.text(input.customer.address, { width: half, align: 'left' });
+      if (input.customer.email) doc.text(input.customer.email, { width: half, align: 'left' });
+      const leftBottom = doc.y;
+
+      doc.font(headingFont).fontSize(headingSize).fillColor(textColor).text('From', margin + half + 16, topY, {
+        width: half,
+        align: 'left',
+      });
+      doc
+        .font(bodyFont)
+        .fontSize(bodySize)
+        .text(profile?.companyName || 'Business Name', { width: half, align: 'left' });
+      if (profile?.email) doc.text(profile.email, { width: half, align: 'left' });
+      if (profile?.phone) doc.text(formatAustralianPhone(profile.phone), { width: half, align: 'left' });
+      if (profile?.abnTaxId) {
+        doc.text(`ABN: ${formatAustralianAbn(profile.abnTaxId)}`, { width: half, align: 'left' });
+      }
+      doc.y = Math.max(leftBottom, doc.y);
+      doc.x = margin;
+    } else {
+      doc.font(headingFont).fontSize(headingSize).fillColor(textColor).text(billLabel, margin, doc.y, {
+        width: contentWidth(),
+        align: 'left',
+      });
+      doc.font(bodyFont).fontSize(bodySize).text(input.customer.displayName, {
+        width: contentWidth(),
+        align: 'left',
+      });
+      if (input.customer.address) {
+        doc.text(input.customer.address, { width: contentWidth(), align: 'left' });
+      }
+      if (input.customer.email) {
+        doc.text(input.customer.email, { width: contentWidth(), align: 'left' });
+      }
     }
 
     doc.moveDown(1);
     ensureContentFitsPage(doc, 40);
     const lineItemsHeadingY = doc.y;
-    doc.fontSize(12).fillColor('#111827').text('Line Items', PDF_PAGE_MARGIN, lineItemsHeadingY, {
+    doc.font(headingFont).fontSize(headingSize).fillColor(textColor).text('Line Items', margin, lineItemsHeadingY, {
       width: contentWidth() - 120,
       align: 'left',
     });
     doc
+      .font(bodyFont)
       .fontSize(9)
-      .fillColor('#6b7280')
-      .text(formatLineItemCountLabel(input.lineItems.length), PDF_PAGE_MARGIN, lineItemsHeadingY + 2, {
+      .fillColor(mutedColor)
+      .text(formatLineItemCountLabel(input.lineItems.length), margin, lineItemsHeadingY + 2, {
         width: contentWidth(),
         align: 'right',
       });
     doc.y = Math.max(doc.y, lineItemsHeadingY + 14);
     doc.moveDown(0.35);
 
+    const showNumber = columnVisible(design, 'lineNumber', true);
+    const showDate = columnVisible(design, 'date', false);
+    const showGst = columnVisible(design, 'gst', true);
+
     const col = {
-      number: { x: PDF_PAGE_MARGIN, width: 22 },
-      description: { x: PDF_PAGE_MARGIN + 28, width: 194 },
-      qty: { x: PDF_PAGE_MARGIN + 230, width: 50 },
-      unit: { x: PDF_PAGE_MARGIN + 285, width: 70 },
-      gst: { x: PDF_PAGE_MARGIN + 360, width: 55 },
+      number: { x: margin, width: showNumber ? 22 : 0 },
+      date: { x: margin + (showNumber ? 28 : 0), width: showDate ? 62 : 0 },
+      description: {
+        x: margin + (showNumber ? 28 : 0) + (showDate ? 66 : 0),
+        width: showDate ? 150 : 194,
+      },
+      qty: { x: margin + 230, width: 50 },
+      unit: { x: margin + 285, width: 70 },
+      gst: { x: margin + 360, width: showGst ? 55 : 0 },
       total: { x: contentRight() - 70, width: 70 },
     };
 
     const headerY = doc.y;
-    doc.fontSize(10).fillColor('#6b7280');
-    doc.text('#', col.number.x, headerY, { width: col.number.width, align: 'right' });
-    doc.text('Description', col.description.x, headerY, { width: col.description.width });
-    doc.text('Qty', col.qty.x, headerY, { width: col.qty.width, align: 'right' });
-    doc.text('Unit', col.unit.x, headerY, { width: col.unit.width, align: 'right' });
-    doc.text('GST', col.gst.x, headerY, { width: col.gst.width, align: 'right' });
-    doc.text('Total', col.total.x, headerY, { width: col.total.width, align: 'right' });
+    doc.font(bodyFont).fontSize(bodySize).fillColor(mutedColor);
+    if (showNumber) {
+      doc.text(columnLabel(design, 'lineNumber', '#'), col.number.x, headerY, {
+        width: col.number.width,
+        align: 'right',
+      });
+    }
+    if (showDate) {
+      doc.text(columnLabel(design, 'date', 'Date'), col.date.x, headerY, {
+        width: col.date.width,
+      });
+    }
+    doc.text(columnLabel(design, 'description', 'Description'), col.description.x, headerY, {
+      width: col.description.width,
+    });
+    doc.text(columnLabel(design, 'quantity', 'Qty'), col.qty.x, headerY, {
+      width: col.qty.width,
+      align: 'right',
+    });
+    doc.text(columnLabel(design, 'unitPrice', 'Unit'), col.unit.x, headerY, {
+      width: col.unit.width,
+      align: 'right',
+    });
+    if (showGst) {
+      doc.text(columnLabel(design, 'gst', 'GST'), col.gst.x, headerY, {
+        width: col.gst.width,
+        align: 'right',
+      });
+    }
+    doc.text(columnLabel(design, 'amount', 'Total'), col.total.x, headerY, {
+      width: col.total.width,
+      align: 'right',
+    });
 
     doc.moveDown(0.4);
-    doc
-      .strokeColor('#d1d5db')
-      .lineWidth(1)
-      .moveTo(PDF_PAGE_MARGIN, doc.y)
-      .lineTo(contentRight(), doc.y)
-      .stroke();
+    if (design?.borders.headerRule !== false) {
+      doc
+        .strokeColor(borderColor)
+        .lineWidth(design?.borders.width ?? 1)
+        .moveTo(margin, doc.y)
+        .lineTo(contentRight(), doc.y)
+        .stroke();
+    }
 
-    // Sequential presentation numbers continue across page breaks (never restart at 1).
     input.lineItems.forEach((item, index) => {
       const lineSubtotal = item.quantity * item.unitPrice;
       const lineGst = item.gstApplicable ? lineSubtotal * 0.1 : 0;
-      const lineTotal = lineSubtotal + lineGst;
+      const lineTotal = showGst ? lineSubtotal + lineGst : lineSubtotal;
       const number = displayLineNumber(index);
 
       ensureContentFitsPage(doc, 28);
       doc.moveDown(0.55);
       const y = doc.y;
-      doc.fillColor('#6b7280').fontSize(10).text(String(number), col.number.x, y, {
-        width: col.number.width,
-        align: 'right',
-      });
-      doc.fillColor('#111827').fontSize(10).text(item.description, col.description.x, y, {
+      if (showNumber) {
+        doc.fillColor(mutedColor).fontSize(bodySize).text(String(number), col.number.x, y, {
+          width: col.number.width,
+          align: 'right',
+        });
+      }
+      if (showDate) {
+        doc
+          .fillColor(textColor)
+          .fontSize(bodySize)
+          .text(formatAustralianDate(input.invoice.issueDate), col.date.x, y, {
+            width: col.date.width,
+          });
+      }
+      doc.fillColor(textColor).fontSize(bodySize).text(item.description, col.description.x, y, {
         width: col.description.width,
       });
       const rowBottom = doc.y;
       doc.text(item.quantity.toFixed(2), col.qty.x, y, { width: col.qty.width, align: 'right' });
       doc.text(item.unitPrice.toFixed(2), col.unit.x, y, { width: col.unit.width, align: 'right' });
-      doc.text(lineGst.toFixed(2), col.gst.x, y, { width: col.gst.width, align: 'right' });
+      if (showGst) {
+        doc.text(lineGst.toFixed(2), col.gst.x, y, { width: col.gst.width, align: 'right' });
+      }
       doc.text(lineTotal.toFixed(2), col.total.x, y, { width: col.total.width, align: 'right' });
       doc.y = Math.max(rowBottom, doc.y);
-      doc.x = PDF_PAGE_MARGIN;
+      doc.x = margin;
     });
 
     doc.moveDown(1);
@@ -262,36 +412,59 @@ export function generateInvoicePdfBuffer(input: {
       brandPrimary,
     );
 
-    if (input.invoice.notes) {
+    const notesText = input.invoice.notes || design?.notesPlaceholder || '';
+    if (notesText) {
       ensureContentFitsPage(doc, 40);
       doc.moveDown(1.1);
-      doc.fillColor('#111827').fontSize(11).text('Notes', PDF_PAGE_MARGIN, doc.y, {
+      const notesLabel =
+        design?.layout.sections.find((section) => section.type === 'notes')?.label || 'Notes';
+      doc.font(headingFont).fillColor(textColor).fontSize(headingSize).text(notesLabel, margin, doc.y, {
         width: contentWidth(),
         align: 'left',
       });
-      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.notes, {
+      doc.font(bodyFont).fontSize(bodySize).fillColor('#4b5563').text(notesText, {
         width: contentWidth(),
         align: 'left',
         lineGap: 3,
       });
     }
 
-    if (input.invoice.paymentTerms) {
+    const paymentTerms = input.invoice.paymentTerms || design?.termsAndConditions || '';
+    if (paymentTerms) {
       ensureContentFitsPage(doc, 36);
       doc.moveDown(0.9);
-      doc.fillColor('#111827').fontSize(11).text('Payment terms', PDF_PAGE_MARGIN, doc.y, {
+      const termsLabel =
+        design?.layout.sections.find((section) => section.type === 'terms')?.label ||
+        'Payment terms';
+      doc.font(headingFont).fillColor(textColor).fontSize(headingSize).text(termsLabel, margin, doc.y, {
         width: contentWidth(),
         align: 'left',
       });
-      doc.fontSize(10).fillColor('#4b5563').text(input.invoice.paymentTerms, {
+      doc.font(bodyFont).fontSize(bodySize).fillColor('#4b5563').text(paymentTerms, {
         width: contentWidth(),
         align: 'left',
         lineGap: 3,
       });
     }
 
-    // Invoice ends after business / payment information — no generated-by branding footer.
-    drawPaymentDetailsBlock(doc, profile, input.bankDetails);
+    if (design?.paymentDetails && !bankDetails?.bsb) {
+      ensureContentFitsPage(doc, 40);
+      doc.moveDown(0.9);
+      const paymentLabel =
+        design.layout.sections.find((section) => section.type === 'payment')?.label ||
+        'Payment details';
+      doc.font(headingFont).fillColor(textColor).fontSize(headingSize).text(paymentLabel, margin, doc.y, {
+        width: contentWidth(),
+        align: 'left',
+      });
+      doc.font(bodyFont).fontSize(bodySize).fillColor('#4b5563').text(design.paymentDetails, {
+        width: contentWidth(),
+        align: 'left',
+        lineGap: 3,
+      });
+    }
+
+    drawPaymentDetailsBlock(doc, profile, bankDetails);
     doc.end();
   });
 }
