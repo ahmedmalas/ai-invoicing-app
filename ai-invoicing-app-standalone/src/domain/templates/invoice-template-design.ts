@@ -56,6 +56,8 @@ export const invoiceTemplateDesignSchema = z.object({
     /** Cart N Tip style uses split Bill To / From columns. */
     headerStyle: z.enum(['stacked', 'split-bill-from', 'meta-right']).default('meta-right'),
     logoPosition: z.enum(['left', 'right', 'none']).default('left'),
+    /** Named layout engine. quantum-hire matches the supplied Cart N Tip #107 invoice. */
+    layoutPreset: z.enum(['standard', 'quantum-hire']).default('standard'),
     sections: z.array(
       z.object({
         id: z.string().min(1),
@@ -132,6 +134,7 @@ export function defaultInvoiceTemplateDesign(
       margins: { top: 48, right: 48, bottom: 48, left: 48 },
       headerStyle: 'meta-right',
       logoPosition: 'left',
+      layoutPreset: 'standard',
       sections: [
         { id: 'logo', type: 'logo', order: 0, align: 'left', visible: true },
         { id: 'business', type: 'businessDetails', order: 1, align: 'left', visible: true },

@@ -135,11 +135,13 @@ describe('invoice template recreate pathway', () => {
     expect(pdf.headers['content-type']).toMatch(/pdf/);
     const text = extractPdfText(Buffer.from(pdf.rawPayload));
     expect(text).toContain('TAX INVOICE');
-    expect(text).toContain('Bill To');
-    expect(text).toContain('From');
-    expect(text).toContain('Rate');
+    expect(text).toMatch(/BILL TO/i);
+    expect(text).toMatch(/FROM/i);
+    expect(text).toMatch(/RATE/i);
     expect(text).toContain('012347');
     expect(text).toContain('814027296');
     expect(text).toContain('Labour Hire - Day Shift');
+    expect(text).toContain('AMOUNT (EX GST)');
+    expect(text).toContain('PAYMENT DETAILS');
   });
 });

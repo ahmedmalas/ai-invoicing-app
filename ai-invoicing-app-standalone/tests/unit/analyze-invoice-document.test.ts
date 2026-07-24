@@ -37,7 +37,8 @@ describe('analyzeInvoiceDocument', () => {
     expect(result.design.documentTitle).toBe('TAX INVOICE');
     expect(result.design.layout.headerStyle).toBe('split-bill-from');
     expect(result.design.layout.tableColumns.find((c) => c.id === 'date')?.visible).toBe(true);
-    expect(result.design.layout.tableColumns.find((c) => c.id === 'unitPrice')?.label).toBe('Rate');
+    expect(result.design.layout.tableColumns.find((c) => c.id === 'unitPrice')?.label).toMatch(/RATE/i);
+    expect(result.design.layout.layoutPreset).toBe('quantum-hire');
     expect(result.design.layout.tableColumns.find((c) => c.id === 'gst')?.visible).toBe(false);
     expect(result.design.businessDefaults.companyName).toMatch(/Quantum Hire/i);
     expect(result.design.businessDefaults.email).toBe('info@quantumhireservices.com.au');

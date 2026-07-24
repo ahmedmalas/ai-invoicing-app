@@ -16,6 +16,7 @@ import type {
 } from '../types/entities.js';
 import type { CustomerStatementReport } from '../db/database.js';
 import type { InvoiceTemplateDesign } from '../domain/templates/invoice-template-design.js';
+import { renderQuantumHireInvoice } from './quantum-hire-pdf.js';
 import {
   displayLineNumber,
   drawAlignedTotals,
@@ -196,6 +197,20 @@ export function generateInvoicePdfBuffer(input: {
             accountNumber: design.bankDetails.accountNumber,
           }
         : null);
+
+    if (design?.layout.layoutPreset === 'quantum-hire') {
+      renderQuantumHireInvoice({
+        doc,
+        invoice: input.invoice,
+        lineItems: input.lineItems,
+        customer: input.customer,
+        businessProfile: profile,
+        design,
+        bankDetails,
+      });
+      doc.end();
+      return;
+    }
 
     writeBrandedHeader(doc, profile, brandPrimary, design);
     writeBusinessIdentityBlock(doc, profile, design);

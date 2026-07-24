@@ -2,6 +2,9 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 import {
+  ensureCartNTipReferenceTemplate,
+} from '../domain/templates/cart-n-tip-reference.js';
+import {
   analyzeInvoiceDocument,
   isSupportedImportMime,
 } from '../domain/templates/analyze-invoice-document.js';
@@ -39,6 +42,7 @@ const previewSchema = z.object({
 
 export const invoiceTemplateRoutes: FastifyPluginAsync = async (app) => {
   app.get('/invoice-templates', async () => {
+    await ensureCartNTipReferenceTemplate(app.db);
     const templates = await listInvoiceTemplates(app.db);
     return {
       templates: templates.map((item) => ({
@@ -48,6 +52,24 @@ export const invoiceTemplateRoutes: FastifyPluginAsync = async (app) => {
       })),
       count: templates.length,
     };
+  });
+
+  app.post('/invoice-templates/install-reference', async (request, reply) => {
+    const body = z
+      .object({ force: z.boolean().optional() })
+      .parse(request.body ?? {});
+    const result = await ensureCartNTipReferenceTemplate(app.db, { force: body.force === true });
+    const templates = await listInvoiceTemplates(app.db);
+    const template =
+      templates.find((item) => item.id === result.templateId) ||
+      templates.find((item) => item.isDefault) ||
+      null;
+    return reply.code(result.installed ? 201 : 200).send({
+      ...result,
+      template,
+      referenceSource:
+        'fixtures/reference-invoices/Cart_N_Tip_107.pdf (from Cursor upload Cart_N_Tip__107_e19b.pdf)',
+    });
   });
 
   app.get('/invoice-templates/default', async () => {

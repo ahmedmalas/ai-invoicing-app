@@ -52,6 +52,20 @@ function designFormHtml(design = {}, analysis = {}) {
       )
       .join('') +
     '</select></label>' +
+    '<label>Layout preset<select name="layoutPreset">' +
+    ['quantum-hire', 'standard']
+      .map(
+        (value) =>
+          '<option value="' +
+          value +
+          '"' +
+          ((design.layout?.layoutPreset || 'standard') === value ? ' selected' : '') +
+          '>' +
+          (value === 'quantum-hire' ? 'Quantum Hire / Cart N Tip' : 'Standard Aleya') +
+          '</option>',
+      )
+      .join('') +
+    '</select></label>' +
     '<label>Logo position<select name="logoPosition">' +
     ['left', 'right', 'none']
       .map(
@@ -174,6 +188,7 @@ function readDesignFromForm(form, baseDesign) {
       ...baseDesign.layout,
       headerStyle: String(data.get('headerStyle') || baseDesign.layout.headerStyle),
       logoPosition: String(data.get('logoPosition') || baseDesign.layout.logoPosition),
+      layoutPreset: String(data.get('layoutPreset') || baseDesign.layout.layoutPreset || 'standard'),
       tableColumns,
     },
     businessDefaults: {
@@ -209,8 +224,9 @@ export function createInvoiceTemplatesUi(deps) {
     const templates = payload.templates || [];
     setContent(
       '<section class="page-hero"><div><p class="eyebrow">Invoice templates</p><h1>Recreate your invoice design</h1>' +
-        '<p class="lede">Upload an existing invoice PDF or image. Aleya rebuilds it as editable fields you can save as your default template.</p></div>' +
-        '<div class="hero-actions"><a class="button" href="/templates/import" data-route>Upload invoice</a></div></section>' +
+        '<p class="lede">Your supplied Cart N Tip #107 invoice is installed as the Quantum Hire editable template. Upload another PDF only if you need a different design.</p></div>' +
+        '<div class="hero-actions"><a class="button" href="/templates/import" data-route>Upload invoice</a> ' +
+        '<button type="button" class="button secondary" id="template-install-reference">Install Cart N Tip reference</button></div></section>' +
         '<section class="panel"><header class="panel-head"><h2>Saved templates</h2></header><div class="panel-body">' +
         (templates.length
           ? '<table class="data-table"><thead><tr><th>Name</th><th>Source</th><th>Default</th><th></th></tr></thead><tbody>' +
@@ -238,6 +254,23 @@ export function createInvoiceTemplatesUi(deps) {
           : '<p class="muted">No templates yet. Upload a PDF or image invoice to create one.</p>') +
         '</div></section>',
     );
+
+    document.getElementById('template-install-reference')?.addEventListener('click', async () => {
+      try {
+        const result = await api('/api/invoice-templates/install-reference', {
+          method: 'POST',
+          body: JSON.stringify({ force: true }),
+        });
+        toast(
+          result.installed
+            ? 'Cart N Tip #107 installed as your default Quantum Hire template.'
+            : 'Reference template already available.',
+        );
+        templatesListPage();
+      } catch (error) {
+        toast(error?.message || 'Could not install reference template', true);
+      }
+    });
 
     document.querySelectorAll('[data-template-default]').forEach((button) => {
       button.addEventListener('click', async () => {

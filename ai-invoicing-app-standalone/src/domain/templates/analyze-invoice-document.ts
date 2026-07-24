@@ -312,27 +312,45 @@ function buildDesignFromText(
     .filter(Boolean)
     .join('\n');
 
+  const quantumLike = /quantum\s*hire|cart\s*and\s*tip/i.test(text);
   const design = defaultInvoiceTemplateDesign({
     documentTitle: /tax\s*invoice/i.test(text) ? 'TAX INVOICE' : 'INVOICE',
+    ...(quantumLike
+      ? {
+          colors: {
+            primary: '#00162b',
+            secondary: '#7eb6d9',
+            accent: '#00162b',
+            text: '#111111',
+            muted: '#4b5563',
+            border: '#c5c9d0',
+            background: '#ffffff',
+          },
+        }
+      : {}),
     layout: {
-      margins: { top: 48, right: 48, bottom: 48, left: 48 },
+      margins: { top: 40, right: 42, bottom: 40, left: 42 },
       headerStyle: splitBillFrom ? 'split-bill-from' : 'meta-right',
       logoPosition: 'left',
+      layoutPreset:
+        /quantum\s*hire|amount\s*\(ex\s*gst\)|cart\s*and\s*tip/i.test(text)
+          ? 'quantum-hire'
+          : 'standard',
       sections: defaultInvoiceTemplateDesign().layout.sections,
       tableColumns: [
         { id: 'lineNumber', label: '#', visible: !hasDateColumn },
-        { id: 'date', label: 'Date', visible: hasDateColumn },
-        { id: 'description', label: 'Description', visible: true },
-        { id: 'quantity', label: 'Qty', visible: true },
+        { id: 'date', label: hasDateColumn ? 'DATE' : 'Date', visible: hasDateColumn },
+        { id: 'description', label: hasDateColumn ? 'DESCRIPTION' : 'Description', visible: true },
+        { id: 'quantity', label: hasDateColumn ? 'QTY' : 'Qty', visible: true },
         {
           id: 'unitPrice',
-          label: /\bRATE\b/i.test(text) ? 'Rate' : 'Unit',
+          label: /\bRATE\b/i.test(text) ? 'RATE' : 'Unit',
           visible: true,
         },
         { id: 'gst', label: 'GST', visible: !/AMOUNT\s*\(EX\s*GST\)/i.test(text) },
         {
           id: 'amount',
-          label: /AMOUNT\s*\(EX\s*GST\)/i.test(text) ? 'Amount (ex GST)' : 'Total',
+          label: /AMOUNT\s*\(EX\s*GST\)/i.test(text) ? 'AMOUNT (EX GST)' : 'Total',
           visible: true,
         },
       ],

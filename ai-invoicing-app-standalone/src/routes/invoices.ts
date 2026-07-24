@@ -7,6 +7,9 @@ import {
 } from '../domain/invoices/invoice-number.js';
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
 import {
+  ensureCartNTipReferenceTemplate,
+} from '../domain/templates/cart-n-tip-reference.js';
+import {
   getInvoiceTemplateBinding,
   resolveInvoiceTemplateForPdf,
   setInvoiceTemplateBinding,
@@ -218,6 +221,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
       const frozenBranding =
         invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
       const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
+      await ensureCartNTipReferenceTemplate(app.db);
       const resolvedTemplate = await resolveInvoiceTemplateForPdf(app.db, invoice.id);
       const templateDesign = resolvedTemplate?.design ?? null;
       const profileForPdf =
