@@ -24,9 +24,11 @@ describe('invoice line keyboard navigation helpers', () => {
     expect(lines[1]?.clientKey).toBeTruthy();
     expect(lines[0]?.clientKey).not.toBe(lines[1]?.clientKey);
 
-    const reordered = ensureLineClientKeys([lines[1], lines[0]]);
-    expect(reordered[0]?.clientKey).toBe(lines[1]?.clientKey);
-    expect(reordered[1]?.clientKey).toBe(lines[0]?.clientKey);
+    const first = lines[0]!;
+    const second = lines[1]!;
+    const reordered = ensureLineClientKeys([second, first]);
+    expect(reordered[0]?.clientKey).toBe(second.clientKey);
+    expect(reordered[1]?.clientKey).toBe(first.clientKey);
   });
 
   it('parses unit price without resetting typed values to zero', () => {
