@@ -205,8 +205,12 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .send(asset('favicon.svg')),
   );
 
-  // Never expose reference invoices or private branding files over HTTP.
+  // Never expose reference invoices, tests, or private branding files over HTTP.
+  // (Also rely on vercel.json outputDirectory=public so these paths are not CDN-static.)
   app.get('/fixtures/*', async (_request, reply) =>
+    reply.code(404).type('application/json').send({ message: 'NOT_FOUND' }),
+  );
+  app.get('/tests/*', async (_request, reply) =>
     reply.code(404).type('application/json').send({ message: 'NOT_FOUND' }),
   );
   app.get('/src/*', async (_request, reply) =>
