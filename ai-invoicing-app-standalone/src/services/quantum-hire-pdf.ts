@@ -67,7 +67,7 @@ function drawMetaRow(
     align: 'right',
     lineBreak: false,
   });
-  return y + 14;
+  return y + 16;
 }
 
 function ensureRoom(doc: PdfDoc, y: number, needed: number, top: number): number {
@@ -124,9 +124,10 @@ export function renderQuantumHireInvoice(input: {
   const logoBytes = readQuantumHireLogoBytes();
   let headerBottom = top;
   if (logoBytes && design.layout.logoPosition !== 'none') {
-    const logoW = 112;
-    const logoH = 78;
-    doc.image(logoBytes, margin, top, { width: logoW, height: logoH, fit: [logoW, logoH] });
+    // Match the supplied Cart N Tip #107 logo footprint (~130×90pt).
+    const logoW = 128;
+    const logoH = 90;
+    doc.image(logoBytes, margin, top - 2, { width: logoW, height: logoH, fit: [logoW, logoH] });
     headerBottom = Math.max(headerBottom, top + logoH);
   } else {
     doc
@@ -147,9 +148,9 @@ export function renderQuantumHireInvoice(input: {
     headerBottom = top + 78;
   }
 
-  const metaX = margin + width * 0.48;
-  const metaWidth = width * 0.52;
-  const dividerX = metaX - 10;
+  const metaX = margin + width * 0.5;
+  const metaWidth = width * 0.5;
+  const dividerX = metaX - 14;
   doc
     .strokeColor(border)
     .lineWidth(0.8)
@@ -230,9 +231,9 @@ export function renderQuantumHireInvoice(input: {
     'Business Name';
   doc.font('Helvetica-Bold').fontSize(10).text(fromName, fromX, y + 14, { width: half });
   let rightY = y + 28;
-  const phone = profile?.phone?.trim() || null;
-  const email = profile?.email?.trim() || null;
-  const abn = profile?.abnTaxId?.trim() || null;
+  const phone = profile?.phone?.trim() || design.businessDefaults.phone?.trim() || null;
+  const email = profile?.email?.trim() || design.businessDefaults.email?.trim() || null;
+  const abn = profile?.abnTaxId?.trim() || design.businessDefaults.abnTaxId?.trim() || null;
   doc.font('Helvetica').fontSize(9).fillColor(text);
   if (phone) {
     const digits = phone.replace(/\D/g, '');
@@ -248,25 +249,25 @@ export function renderQuantumHireInvoice(input: {
       mobile = `${national.slice(0, 4)} ${national.slice(4, 7)} ${national.slice(7)}`;
     }
     doc.text(`M: ${mobile}`, fromX, rightY, { width: half });
-    rightY += 12;
+    rightY += 14;
   }
   if (email) {
     doc.text(`E: ${email}`, fromX, rightY, { width: half });
-    rightY += 12;
+    rightY += 14;
   }
   if (abn) {
     doc.text(`ABN: ${formatAustralianAbn(abn)}`, fromX, rightY, { width: half });
-    rightY += 12;
+    rightY += 14;
   }
-  y = Math.max(leftY, rightY) + 16;
+  y = Math.max(leftY, rightY) + 20;
 
   // —— Line table ——
   const cols = {
-    date: { x: margin, w: 70 },
-    description: { x: margin + 70, w: 208 },
-    qty: { x: margin + 278, w: 42 },
-    rate: { x: margin + 320, w: 78 },
-    amount: { x: margin + 398, w: Math.max(70, right - (margin + 398)) },
+    date: { x: margin, w: 78 },
+    description: { x: margin + 78, w: 210 },
+    qty: { x: margin + 288, w: 40 },
+    rate: { x: margin + 328, w: 72 },
+    amount: { x: margin + 400, w: Math.max(70, right - (margin + 400)) },
   };
 
   y = ensureRoom(doc, y, 40, top);
@@ -281,7 +282,7 @@ export function renderQuantumHireInvoice(input: {
       width: cols.description.w - 8,
       lineGap: 1,
     });
-    const rowH = Math.max(20, descHeight + 10);
+    const rowH = Math.max(24, descHeight + 12);
     y = ensureRoom(doc, y, rowH + 4, top);
     // Repeat header after page break
     if (y === top) {
@@ -346,16 +347,19 @@ export function renderQuantumHireInvoice(input: {
   });
   let py = footerTop + 16;
   const bank = input.bankDetails || design.bankDetails;
+  const rawInvoiceNo = String(invoice.invoiceNumber || '')
+    .trim()
+    .replace(/^#/, '');
+  const paymentReference = rawInvoiceNo
+    ? rawInvoiceNo.toUpperCase().startsWith('INV')
+      ? rawInvoiceNo
+      : `INV-${rawInvoiceNo}`
+    : '';
   const paymentRows: Array<[string, string]> = [
     ['Account Name:', bank?.accountName?.trim() || profile?.companyName?.trim() || ''],
     ['BSB:', bank?.bsb?.trim() || ''],
     ['Account Number:', bank?.accountNumber?.trim() || ''],
-    [
-      'Reference:',
-      invoice.invoiceNumber?.trim()
-        ? `INV-${String(invoice.invoiceNumber).replace(/^#/, '')}`
-        : '',
-    ],
+    ['Reference:', paymentReference],
   ];
   for (const [label, value] of paymentRows) {
     if (!value) continue;
