@@ -7,6 +7,7 @@ const publicDir = path.join(root, 'public');
 const invoicePublicFiles = [
   'invoice-editor.js',
   'invoice-line-keyboard.js',
+  'invoice-line-clipboard.js',
   'invoice-model.js',
   'invoice-api.js',
   'invoice-number.js',
@@ -60,6 +61,7 @@ describe('invoice architecture regression', () => {
     expect(frontend).toContain('invoice-model.js');
     expect(frontend).toContain('invoice-api.js');
     expect(frontend).toContain('invoice-line-keyboard.js');
+    expect(frontend).toContain('invoice-line-clipboard.js');
     expect(frontend).toContain('invoice-editor.js');
     expect(frontend).toContain('build-identity.js');
     // Must not serve deleted files as live tracedAssets.

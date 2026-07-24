@@ -41,6 +41,18 @@ import {
   shouldHandleLinePaste,
   shouldHandleLineTab,
 } from './invoice-line-keyboard.js';
+import {
+  cloneLineItem,
+  formatLinesAsTsv,
+  formatSelectedCountLabel,
+  insertLinesAfter,
+  isMultiRowClipboardText,
+  linesFromSelectedIndexes,
+  parseClipboardRows,
+  resolveRowSelection,
+  resolveSelectAll,
+  shouldHandleBulkRowCopy,
+} from './invoice-line-clipboard.js';
 
 export const INVOICE_EDITOR_STORAGE_KEY = 'aleya-invoice-editor-v3';
 export const INVOICE_EDITOR_AUTOSAVE_MS = 1200;
@@ -100,16 +112,28 @@ function clearLocal(storage) {
   }
 }
 
-function lineRowHtml(item = {}, index = 0) {
+function lineRowHtml(item = {}, index = 0, { selected = false } = {}) {
   const calculated = calculateLineItem(item);
   const lineId = String(item.clientKey || item.id || `line-index-${index}`);
   const number = displayLineNumber(index);
   return (
-    '<tr class="invoice-line" data-invoice-line data-line-id="' +
+    '<tr class="invoice-line' +
+    (selected ? ' is-selected' : '') +
+    '" data-invoice-line data-line-id="' +
     escapeHtml(lineId) +
     '" data-line-index="' +
     index +
-    '">' +
+    '"' +
+    (selected ? ' aria-selected="true"' : '') +
+    '>' +
+    '<td class="invoice-line-select-cell">' +
+    '<input type="checkbox" class="invoice-line-select" data-line-select tabindex="-1" ' +
+    'aria-label="Select line ' +
+    escapeHtml(number) +
+    '"' +
+    (selected ? ' checked' : '') +
+    '>' +
+    '</td>' +
     '<td class="invoice-line-number-cell">' +
     '<span class="invoice-line-number" data-line-number data-invoice-drag-handle ' +
     'role="presentation" tabindex="-1" title="Drag to reorder" aria-hidden="true">' +
@@ -139,6 +163,7 @@ function lineRowHtml(item = {}, index = 0) {
     money(calculated.lineTotal) +
     '</td>' +
     '<td class="invoice-line-actions">' +
+    '<button type="button" class="icon-button" data-line-duplicate tabindex="-1" aria-label="Duplicate line">⧉</button>' +
     '<button type="button" class="icon-button" data-line-up tabindex="-1" aria-label="Move line up">↑</button>' +
     '<button type="button" class="icon-button" data-line-down tabindex="-1" aria-label="Move line down">↓</button>' +
     '<button type="button" class="icon-button" data-remove-line tabindex="-1" aria-label="Delete line">×</button>' +
@@ -272,13 +297,21 @@ function buildEditorHtml({ profile = {}, customers = [], state = null, record = 
     '<span class="invoice-line-count muted" data-line-count>' +
     escapeHtml(formatLineItemCountLabel(recordState.lineItems.length)) +
     '</span>' +
+    '<span class="invoice-selection-count muted" data-selection-count hidden></span>' +
+    '<button type="button" class="button secondary small" data-duplicate-selected hidden>Duplicate selected</button>' +
     '<button type="button" class="button secondary small" data-add-line>Add line</button></div></div>' +
     '<div class="invoice-table-wrap"><table class="invoice-lines-table"><thead><tr>' +
+    '<th class="invoice-line-select-col" scope="col">' +
+    '<input type="checkbox" class="invoice-line-select-all" data-select-all-lines tabindex="-1" ' +
+    'aria-label="Select all line items" title="Select all">' +
+    '</th>' +
     '<th class="invoice-line-number-col" scope="col" title="Line number">#</th>' +
     '<th>Description</th><th>Qty</th><th>Unit Price</th><th>GST</th><th>Total</th><th class="narrow"></th>' +
     '</tr></thead><tbody data-invoice-lines>' +
     lines +
-    '</tbody></table></div></section>' +
+    '</tbody></table></div>' +
+    '<p class="invoice-clipboard-hint muted" data-clipboard-errors hidden></p>' +
+    '</section>' +
     '<section class="invoice-footer-grid">' +
     '<div class="invoice-notes-block">' +
     '<label class="invoice-field">Notes<textarea data-invoice-field="notes" name="notes" rows="4" placeholder="Notes for the customer">' +
@@ -345,6 +378,11 @@ export function createInvoiceEditor(deps) {
   let pendingSubmitAction = 'save';
   let dragRow = null;
   let armedRow = null;
+  /** @type {number[]} selected row indexes in current visible order */
+  let selectedIndexes = [];
+  let selectionAnchorIndex = null;
+  /** @type {Array<{description:string,quantity:number,unitPrice:number,gstApplicable:boolean}>} */
+  let rowClipboard = [];
 
   function field(name) {
     return form?.querySelector(`[data-invoice-field="${name}"]`) || null;
@@ -620,11 +658,182 @@ export function createInvoiceEditor(deps) {
     }
   }
 
+  function pruneSelection() {
+    const count = state.lineItems.length;
+    selectedIndexes = selectedIndexes.filter((index) => index >= 0 && index < count);
+    if (selectionAnchorIndex != null && (selectionAnchorIndex < 0 || selectionAnchorIndex >= count)) {
+      selectionAnchorIndex = selectedIndexes[0] ?? null;
+    }
+  }
+
+  function syncSelectionUi() {
+    if (!form) return;
+    pruneSelection();
+    const selectedSet = new Set(selectedIndexes);
+    form.querySelectorAll('[data-invoice-line]').forEach((row, index) => {
+      const on = selectedSet.has(index);
+      row.classList.toggle('is-selected', on);
+      row.setAttribute('aria-selected', on ? 'true' : 'false');
+      const box = row.querySelector('[data-line-select]');
+      if (box) box.checked = on;
+    });
+    const all = form.querySelector('[data-select-all-lines]');
+    if (all) {
+      const total = state.lineItems.length;
+      all.checked = total > 0 && selectedIndexes.length === total;
+      all.indeterminate = selectedIndexes.length > 0 && selectedIndexes.length < total;
+    }
+    const label = formatSelectedCountLabel(selectedIndexes.length);
+    const countEl = form.querySelector('[data-selection-count]');
+    if (countEl) {
+      countEl.textContent = label;
+      countEl.hidden = !label;
+    }
+    const dup = form.querySelector('[data-duplicate-selected]');
+    if (dup) dup.hidden = selectedIndexes.length < 1;
+  }
+
+  function clearRowSelection() {
+    selectedIndexes = [];
+    selectionAnchorIndex = null;
+    syncSelectionUi();
+  }
+
+  function setClipboardErrors(messages = []) {
+    const el = form?.querySelector('[data-clipboard-errors]');
+    if (!el) return;
+    if (!messages.length) {
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }
+    el.hidden = false;
+    el.textContent = messages.join(' ');
+  }
+
+  function activeLineIndex() {
+    const active = form?.ownerDocument?.activeElement;
+    const row = active?.closest?.('[data-invoice-line]');
+    if (row) return lineIndexFromRow(row);
+    if (selectedIndexes.length) return selectedIndexes[selectedIndexes.length - 1];
+    return state.lineItems.length - 1;
+  }
+
+  function hasTextSelectionInTarget(target) {
+    if (!target) return false;
+    const tag = String(target.tagName || '').toUpperCase();
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA') return false;
+    if (typeof target.selectionStart !== 'number' || typeof target.selectionEnd !== 'number') {
+      return false;
+    }
+    return target.selectionEnd > target.selectionStart;
+  }
+
+  function copySelectedRowsToClipboard(event) {
+    commitPendingInput();
+    const payload = linesFromSelectedIndexes(state.lineItems, selectedIndexes);
+    if (!payload.length) return false;
+    rowClipboard = payload.map((item) => ({ ...item }));
+    const tsv = formatLinesAsTsv(payload);
+    if (event?.clipboardData) {
+      event.clipboardData.setData('text/plain', tsv);
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(tsv).catch(() => {});
+    }
+    deps.toast(
+      payload.length === 1 ? 'Copied 1 line.' : `Copied ${payload.length} lines.`,
+    );
+    return true;
+  }
+
+  function pasteRowsFromText(text, { insertAfterIndex = activeLineIndex() } = {}) {
+    const parsed = parseClipboardRows(text);
+    if (parsed.errors.length) setClipboardErrors(parsed.errors.map((item) => item.message));
+    else setClipboardErrors([]);
+    if (!parsed.lines.length) {
+      if (parsed.errors.length) deps.toast(parsed.errors[0].message, true);
+      return false;
+    }
+    const inserted = insertLinesAfter({
+      lineItems: state.lineItems,
+      insertAfterIndex,
+      newLines: parsed.lines,
+    });
+    state = withRecalculatedTotals({ ...state, lineItems: inserted.lineItems });
+    selectedIndexes = inserted.insertedIndexes;
+    selectionAnchorIndex = selectedIndexes[0] ?? null;
+    renderLineRows();
+    queueMicrotask(() => {
+      if (selectedIndexes[0] != null) focusLineField(selectedIndexes[0], 'description', { select: false });
+    });
+    scheduleAutosave();
+    deps.toast(
+      parsed.lines.length === 1 ? 'Pasted 1 line.' : `Pasted ${parsed.lines.length} lines.`,
+    );
+    return true;
+  }
+
+  function pasteClipboardRows(event) {
+    commitPendingInput();
+    const text = event?.clipboardData?.getData('text/plain') ?? '';
+    if (text && isMultiRowClipboardText(text)) {
+      return pasteRowsFromText(text, { insertAfterIndex: activeLineIndex() });
+    }
+    if (rowClipboard.length) {
+      return pasteRowsFromText(formatLinesAsTsv(rowClipboard), {
+        insertAfterIndex: activeLineIndex(),
+      });
+    }
+    if (text.trim()) {
+      // Single-line spreadsheet-like paste with tabs still creates a row block when not in a field handler.
+      if (text.includes('\t')) {
+        return pasteRowsFromText(text, { insertAfterIndex: activeLineIndex() });
+      }
+    }
+    return false;
+  }
+
+  function duplicateSelectedRows() {
+    commitPendingInput();
+    const payload = linesFromSelectedIndexes(state.lineItems, selectedIndexes);
+    if (!payload.length) {
+      deps.toast('Select one or more lines to duplicate.', true);
+      return;
+    }
+    rowClipboard = payload.map((item) => ({ ...item }));
+    pasteRowsFromText(formatLinesAsTsv(payload), {
+      insertAfterIndex: Math.max(...selectedIndexes),
+    });
+  }
+
+  function duplicateSingleRow(index) {
+    commitPendingInput();
+    const lines = ensureLineClientKeys(state.lineItems);
+    const source = lines[index];
+    if (!source) return;
+    const inserted = insertLinesAfter({
+      lineItems: lines,
+      insertAfterIndex: index,
+      newLines: [cloneLineItem(source)],
+    });
+    state = withRecalculatedTotals({ ...state, lineItems: inserted.lineItems });
+    selectedIndexes = inserted.insertedIndexes;
+    selectionAnchorIndex = selectedIndexes[0] ?? null;
+    renderLineRows();
+    queueMicrotask(() => focusLineField(inserted.insertedIndexes[0], 'description', { select: false }));
+    scheduleAutosave();
+  }
+
   function renderLineRows() {
     const body = form?.querySelector('[data-invoice-lines]');
     if (!body) return;
-    body.innerHTML = state.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
+    pruneSelection();
+    const selectedSet = new Set(selectedIndexes);
+    body.innerHTML = state.lineItems
+      .map((item, index) => lineRowHtml(item, index, { selected: selectedSet.has(index) }))
+      .join('');
     refreshTotalsDisplay();
+    syncSelectionUi();
   }
 
   function updateCustomerPreview() {
@@ -795,6 +1004,8 @@ export function createInvoiceEditor(deps) {
     const [row] = lines.splice(index, 1);
     lines.splice(next, 0, row);
     state = withRecalculatedTotals({ ...state, lineItems: lines });
+    selectedIndexes = [next];
+    selectionAnchorIndex = next;
     renderLineRows();
     queueMicrotask(() => focusLineField(next, 'description'));
     scheduleAutosave();
@@ -827,6 +1038,27 @@ export function createInvoiceEditor(deps) {
     form.addEventListener('paste', (event) => {
       const target = event.target;
       const text = event.clipboardData?.getData('text/plain') ?? '';
+
+      // Multi-row spreadsheet / internal bulk paste takes priority over single-field paste.
+      if (isMultiRowClipboardText(text)) {
+        event.preventDefault();
+        event.stopPropagation();
+        pasteRowsFromText(text, { insertAfterIndex: activeLineIndex() });
+        return;
+      }
+
+      // Ctrl/Cmd+V with an internal multi-row clipboard and no text selection in a field.
+      if (
+        rowClipboard.length > 0 &&
+        !hasTextSelectionInTarget(target) &&
+        !shouldHandleLinePaste(target, text)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        pasteRowsFromText(formatLinesAsTsv(rowClipboard), { insertAfterIndex: activeLineIndex() });
+        return;
+      }
+
       if (!shouldHandleLinePaste(target, text)) return;
       // Intercept before type=number rejects "$350" / "350,00" / multi-cell sheets.
       event.preventDefault();
@@ -857,6 +1089,45 @@ export function createInvoiceEditor(deps) {
         scheduleAutosave();
         return;
       }
+      if (event.target.closest('[data-duplicate-selected]')) {
+        event.preventDefault();
+        duplicateSelectedRows();
+        return;
+      }
+      const selectAll = event.target.closest('[data-select-all-lines]');
+      if (selectAll) {
+        selectedIndexes = resolveSelectAll({
+          lineCount: state.lineItems.length,
+          currentlySelectedCount: selectedIndexes.length,
+        });
+        selectionAnchorIndex = selectedIndexes[0] ?? null;
+        syncSelectionUi();
+        return;
+      }
+      const selectBox = event.target.closest('[data-line-select]');
+      if (selectBox) {
+        const row = selectBox.closest('[data-invoice-line]');
+        const index = lineIndexFromRow(row);
+        const next = resolveRowSelection({
+          selectedIndexes,
+          clickedIndex: index,
+          shiftKey: Boolean(event.shiftKey),
+          metaKey: Boolean(event.metaKey),
+          ctrlKey: Boolean(event.ctrlKey),
+          anchorIndex: selectionAnchorIndex,
+          lineCount: state.lineItems.length,
+        });
+        selectedIndexes = next.selectedIndexes;
+        selectionAnchorIndex = next.anchorIndex;
+        syncSelectionUi();
+        return;
+      }
+      const duplicateOne = event.target.closest('[data-line-duplicate]');
+      if (duplicateOne) {
+        const row = duplicateOne.closest('[data-invoice-line]');
+        duplicateSingleRow(lineIndexFromRow(row));
+        return;
+      }
       const remove = event.target.closest('[data-remove-line]');
       if (remove) {
         if (state.lineItems.length <= 1) {
@@ -867,6 +1138,8 @@ export function createInvoiceEditor(deps) {
         const index = lineIndexFromRow(row);
         const lines = ensureLineClientKeys(state.lineItems).filter((_, i) => i !== index);
         state = withRecalculatedTotals({ ...state, lineItems: lines });
+        selectedIndexes = [];
+        selectionAnchorIndex = null;
         renderLineRows();
         scheduleAutosave();
         return;
@@ -885,13 +1158,42 @@ export function createInvoiceEditor(deps) {
     });
 
     form.addEventListener('keydown', (event) => {
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        ['a', 'c', 'x', 'v', 'z', 'y'].includes(String(event.key || '').toLowerCase())
-      ) {
+      const key = String(event.key || '').toLowerCase();
+      const mod = event.ctrlKey || event.metaKey;
+      const target = event.target;
+
+      if (event.key === 'Escape') {
+        if (selectedIndexes.length) {
+          event.preventDefault();
+          clearRowSelection();
+        }
         return;
       }
-      const target = event.target;
+
+      if (mod && key === 'c') {
+        // Bulk copy is handled on the 'copy' event so clipboardData is writable.
+        return;
+      }
+
+      if (mod && key === 'v') {
+        // When the OS clipboard is empty/unavailable but we have an internal row clipboard,
+        // paste it directly (paste event may not include our proprietary payload).
+        if (
+          rowClipboard.length > 0 &&
+          !hasTextSelectionInTarget(target) &&
+          !shouldHandleLinePaste(target, '')
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          pasteRowsFromText(formatLinesAsTsv(rowClipboard), { insertAfterIndex: activeLineIndex() });
+          return;
+        }
+      }
+
+      if (mod && ['a', 'c', 'v', 'x', 'z', 'y'].includes(key)) {
+        return;
+      }
+
       const row = target?.closest?.('[data-invoice-line]');
       if (!row) return;
       const index = lineIndexFromRow(row);
@@ -936,6 +1238,20 @@ export function createInvoiceEditor(deps) {
         commitLineControl(target);
         navigateLineKeyboard(plan);
         scheduleAutosave();
+      }
+    });
+
+    // Capture-phase copy so selected-row copy wins over native when appropriate.
+    form.addEventListener('copy', (event) => {
+      if (
+        shouldHandleBulkRowCopy({
+          selectedCount: selectedIndexes.length,
+          target: event.target,
+          textSelected: hasTextSelectionInTarget(event.target),
+        })
+      ) {
+        event.preventDefault();
+        copySelectedRowsToClipboard(event);
       }
     });
 

@@ -1185,6 +1185,38 @@ td.primary-cell {
 .invoice-lines-table input[name='description'] {
   cursor: text;
 }
+.invoice-line-select-col,
+.invoice-line-select-cell {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  text-align: center;
+  vertical-align: middle;
+}
+.invoice-line-select,
+.invoice-line-select-all {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  accent-color: var(--forest);
+  cursor: pointer;
+}
+.invoice-line.is-selected {
+  background: rgba(154, 230, 200, 0.28);
+}
+.invoice-line.is-selected input,
+.invoice-line.is-selected select {
+  background: #fff;
+}
+.invoice-selection-count {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.invoice-clipboard-hint {
+  margin: 8px 2px 0;
+  font-size: 13px;
+  color: var(--danger);
+}
 .invoice-line-number-cell,
 .invoice-line-number {
   -webkit-user-select: none;
