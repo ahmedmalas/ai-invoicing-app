@@ -88,7 +88,8 @@ export function serializeNaturalSelection(
   selection: {
     isCollapsed?: boolean;
     containsNode?: (node: unknown, allowPartial?: boolean) => boolean;
-    anchorNode?: { ownerDocument?: Document } | null;
+    anchorNode?: unknown;
+    focusNode?: unknown;
   } | null,
   root?: ParentNode | null,
 ): string | null;

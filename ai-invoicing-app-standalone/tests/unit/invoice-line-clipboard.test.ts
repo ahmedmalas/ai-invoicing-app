@@ -83,51 +83,71 @@ describe('invoice line clipboard (natural text selection)', () => {
   });
 
   it('serializes natural multi-description selection with line breaks only', () => {
+    type DisplayNode = {
+      textContent: string;
+      getAttribute: () => string;
+      closest: (sel: string) => DisplayNode | RowNode | null;
+    };
+    type RowNode = {
+      querySelector: (fieldSelector: string) => DisplayNode | null;
+    };
+
     const rowNodes = sample.map((item) => {
-      const displays = {
+      const displays: Record<'description' | 'quantity' | 'unitPrice', DisplayNode> = {
         description: {
           textContent: item.description,
           getAttribute: () => 'description',
-          closest: (sel) => (sel === '[data-invoice-display]' ? displays.description : null),
+          closest: () => null,
         },
         quantity: {
           textContent: String(item.quantity),
           getAttribute: () => 'quantity',
-          closest: (sel) => (sel === '[data-invoice-display]' ? displays.quantity : null),
+          closest: () => null,
         },
         unitPrice: {
           textContent: String(item.unitPrice),
           getAttribute: () => 'unitPrice',
-          closest: (sel) => (sel === '[data-invoice-display]' ? displays.unitPrice : null),
+          closest: () => null,
         },
       };
-      const row = {
-        querySelector(fieldSelector) {
+      const row: RowNode = {
+        querySelector(fieldSelector: string) {
           const match = String(fieldSelector).match(
             /data-invoice-display="(description|quantity|unitPrice)"/,
           );
-          return match ? displays[match[1]] : null;
+          const key = match?.[1] as 'description' | 'quantity' | 'unitPrice' | undefined;
+          return key ? displays[key] : null;
         },
       };
-      displays.description.closest = (sel) => {
+      displays.description.closest = (sel: string) => {
         if (sel === '[data-invoice-display]') return displays.description;
+        if (sel === '[data-invoice-line]') return row;
+        return null;
+      };
+      displays.quantity.closest = (sel: string) => {
+        if (sel === '[data-invoice-display]') return displays.quantity;
+        if (sel === '[data-invoice-line]') return row;
+        return null;
+      };
+      displays.unitPrice.closest = (sel: string) => {
+        if (sel === '[data-invoice-display]') return displays.unitPrice;
         if (sel === '[data-invoice-line]') return row;
         return null;
       };
       return { row, displays };
     });
     const root = {
-      querySelectorAll(selector) {
+      querySelectorAll(selector: string) {
         if (selector !== '[data-invoice-line]') return [];
         return rowNodes.map((item) => item.row);
       },
     };
     const selection = {
       isCollapsed: false,
-      anchorNode: rowNodes[0].displays.description,
-      focusNode: rowNodes[2].displays.description,
+      anchorNode: rowNodes[0]!.displays.description,
+      focusNode: rowNodes[2]!.displays.description,
     };
-    expect(serializeNaturalSelection(selection, root)).toBe(
+    expect(serializeNaturalSelection(selection as never, root as never)).toBe(
       sample.map((item) => item.description).join('\n'),
     );
   });
