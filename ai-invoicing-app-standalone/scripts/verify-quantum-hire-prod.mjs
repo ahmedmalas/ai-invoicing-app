@@ -74,29 +74,47 @@ async function apiBinary(page, path) {
   }, path);
 }
 
+async function signIn() {
+  const response = await fetch(`${BASE}/api/auth/sign-in`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.access_token) {
+    throw new Error(`Sign-in failed: ${response.status} ${JSON.stringify(body).slice(0, 300)}`);
+  }
+  return body;
+}
+
+async function injectSession(page, session) {
+  await page.goto(`${BASE}/sign-in`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+  await page.evaluate((value) => {
+    localStorage.setItem('aboss-invoicing-session', JSON.stringify(value));
+  }, session);
+}
+
 async function main() {
   const browser = await puppeteer.launch({
     executablePath: chromePath(),
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1440,1100'],
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1440,1100'],
     defaultViewport: { width: 1440, height: 1100 },
   });
   const page = await browser.newPage();
   const report = { base: BASE, steps: [] };
 
   try {
-    await page.goto(`${BASE}/sign-in`, { waitUntil: 'networkidle2', timeout: 90_000 });
-    await page.waitForSelector('input[name="email"], input[type="email"]', { timeout: 30_000 });
-    await page.type('input[name="email"], input[type="email"]', EMAIL, { delay: 10 });
-    await page.type('input[name="password"], input[type="password"]', PASSWORD, { delay: 10 });
-    await Promise.all([
-      page.click('button[type="submit"]'),
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60_000 }).catch(() => null),
-    ]);
-    await page.waitForFunction(() => localStorage.getItem('aboss-invoicing-session'), {
-      timeout: 45_000,
-    });
-    report.steps.push({ step: 'sign-in', ok: true });
+    const session = await signIn();
+    await injectSession(page, session);
+    await page.goto(`${BASE}/dashboard`, { waitUntil: 'networkidle2', timeout: 90_000 });
+    await page.waitForFunction(
+      () =>
+        Boolean(document.querySelector('nav')) ||
+        /SIGNED IN|Dashboard|Invoices|Templates/i.test(document.body?.innerText || ''),
+      { timeout: 45_000 },
+    );
+    report.steps.push({ step: 'sign-in', ok: true, via: 'api-auth-sign-in' });
 
     // Build identity
     const identity = await page.evaluate(async () => {

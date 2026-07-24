@@ -31,7 +31,7 @@ export function createCartNTipReferenceDesign(): InvoiceTemplateDesign {
       bodySize: 9,
     },
     layout: {
-      margins: { top: 40, right: 42, bottom: 40, left: 42 },
+      margins: { top: 36, right: 40, bottom: 36, left: 40 },
       headerStyle: 'split-bill-from',
       logoPosition: 'left',
       layoutPreset: 'quantum-hire',
