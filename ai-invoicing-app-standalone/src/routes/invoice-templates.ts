@@ -169,13 +169,13 @@ export const invoiceTemplateRoutes: FastifyPluginAsync = async (app) => {
       },
       lineItems: [
         {
-          description: 'Labour Hire - Day Shift',
+          description: 'Sample service line',
           quantity: 1,
           unitPrice: 350,
           gstApplicable: true,
         },
         {
-          description: 'Labour Hire - Night Shift',
+          description: 'Sample materials line',
           quantity: 1,
           unitPrice: 350,
           gstApplicable: true,

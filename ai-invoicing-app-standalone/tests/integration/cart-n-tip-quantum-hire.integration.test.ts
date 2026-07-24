@@ -40,6 +40,7 @@ describe('Cart N Tip #107 Quantum Hire recreation', () => {
     const template = installed.json().template;
     expect(template.design.layout.layoutPreset).toBe('quantum-hire');
     expect(template.isDefault).toBe(true);
+    expect(template.name).toMatch(/Quantum Hire/i);
     expect(template.design.bankDetails.bsb).toBe('012347');
 
     const customer = await app.inject({

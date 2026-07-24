@@ -1,6 +1,6 @@
-# Reference invoices
+# Reference invoices (dev/test only — not served by the production HTTP app)
 
-- `Cart_N_Tip_107.pdf` — supplied by the user (Cursor upload `Cart_N_Tip__107_e19b.pdf`).
-  Source path outside git: `/home/ubuntu/.cursor/projects/workspace/uploads/Cart_N_Tip__107_e19b.pdf`
-- Used to seed the default **Quantum Hire / Cart N Tip** editable template and for layout comparison tests.
-- Branding assets extracted for PDF components live in `public/branding/quantum-hire-*.png` (logo + thank-you mark — not a full-page background).
+- `Cart_N_Tip_107.pdf` — user-supplied layout reference (Cursor upload `Cart_N_Tip__107_e19b.pdf`).
+- Used only by automated tests and as documentation for the Quantum Hire layout preset.
+- **Not** included in the Vercel function `includeFiles` bundle, and there is no public route that serves this file.
+- Runtime branding marks for PDF generation live in `src/assets/branding/` (private to the server bundle).

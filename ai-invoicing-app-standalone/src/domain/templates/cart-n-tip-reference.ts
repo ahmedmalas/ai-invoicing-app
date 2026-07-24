@@ -83,9 +83,11 @@ export function createCartNTipReferenceDesign(): InvoiceTemplateDesign {
 function brandingAsset(name: string): string | null {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    join(process.cwd(), 'src', 'assets', 'branding', name),
+    join(process.cwd(), 'ai-invoicing-app-standalone', 'src', 'assets', 'branding', name),
+    join(here, '../../assets/branding', name),
+    // Legacy path (pre-move out of public/)
     join(process.cwd(), 'public', 'branding', name),
-    join(process.cwd(), 'ai-invoicing-app-standalone', 'public', 'branding', name),
-    join(here, '../../../public/branding', name),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
@@ -128,9 +130,10 @@ export async function ensureCartNTipReferenceTemplate(
     return { installed: false };
   }
   const template = await createInvoiceTemplate(db, {
-    name: 'Cart N Tip #107 — Quantum Hire',
+    name: 'Quantum Hire invoice layout',
     isDefault: true,
-    applyBusinessDefaults: true,
+    // Never overwrite a live business profile with seed defaults.
+    applyBusinessDefaults: false,
     source: 'imported',
     originalFilename: 'Cart_N_Tip_107.pdf',
     originalMimeType: 'application/pdf',
