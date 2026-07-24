@@ -80,13 +80,18 @@ export function linesFromSelectedIndexes(
   gstApplicable: boolean;
 }>;
 
-export function shouldHandleBulkRowCopy(input?: {
-  selectedCount?: number;
-  target?: { tagName?: string } | null;
-  textSelected?: boolean;
-}): boolean;
-
 export function isMultiRowClipboardText(text?: string): boolean;
+
+export function shouldInsertClipboardAsRows(text?: string, target?: { tagName?: string; closest?: (selector: string) => unknown } | null): boolean;
+
+export function serializeNaturalSelection(
+  selection: {
+    isCollapsed?: boolean;
+    containsNode?: (node: unknown, allowPartial?: boolean) => boolean;
+    anchorNode?: { ownerDocument?: Document } | null;
+  } | null,
+  root?: ParentNode | null,
+): string | null;
 
 export function blankSelectableLine(): {
   clientKey: string;

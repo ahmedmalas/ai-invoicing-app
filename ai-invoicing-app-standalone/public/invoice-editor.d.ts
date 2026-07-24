@@ -30,11 +30,7 @@ export declare function createInvoiceEditor(deps: {
 };
 
 export declare function buildEditorHtml(input: unknown): string;
-export declare function lineRowHtml(
-  item?: unknown,
-  index?: number,
-  options?: { selected?: boolean },
-): string;
+export declare function lineRowHtml(item?: unknown, index?: number): string;
 export declare function snapshotRecoverable(snapshot: unknown): boolean;
 export declare function readInvoiceEditorLocal(storage?: Storage): unknown;
 export declare function clearInvoiceEditorLocal(storage?: Storage): void;

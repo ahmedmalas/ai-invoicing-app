@@ -1,6 +1,6 @@
 /**
- * Multi-row selection, copy, paste and duplication helpers for invoice lines.
- * Presentation-only selection; never treats display line numbers as IDs.
+ * Invoice line clipboard helpers: natural text / spreadsheet copy-paste.
+ * Row checkboxes are not used — selection is standard browser text selection.
  */
 
 import {
@@ -244,29 +244,102 @@ export function linesFromSelectedIndexes(lineItems = [], selectedIndexes = []) {
     .map((index) => serializeLineForClipboard(lines[index]));
 }
 
-/** True when Ctrl/Cmd+C should copy selected rows instead of native text copy. */
-export function shouldHandleBulkRowCopy({
-  selectedCount = 0,
-  target = null,
-  textSelected = false,
-} = {}) {
-  if (selectedCount < 1) return false;
-  if (textSelected) return false;
-  const tag = String(target?.tagName || '').toUpperCase();
-  if (tag === 'TEXTAREA') return false;
-  // Allow bulk copy from checkboxes, row chrome, or when focus is on a line control
-  // without an active text selection.
-  return true;
-}
-
-/** Detect multi-row spreadsheet paste that should create/insert whole rows. */
+/** Detect spreadsheet/grid clipboard text that can create invoice rows. */
 export function isMultiRowClipboardText(text = '') {
   const raw = String(text ?? '');
   if (!raw.trim()) return false;
-  if (raw.includes('\n') || raw.includes('\r')) return true;
-  // Header + single data row still counts as spreadsheet paste when tabs present.
-  const grid = parseSpreadsheetPaste(raw);
-  return grid.length > 1 || (grid[0] || []).length >= 3;
+  if (raw.includes('\t')) {
+    const grid = parseSpreadsheetPaste(raw);
+    return grid.length >= 1 && ((grid[0] || []).length >= 2 || grid.length > 1);
+  }
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  // Newline-only description lists are plain text — not automatic row inserts.
+  if (lines.length >= 2 && /^description$/i.test(lines[0])) return true;
+  return false;
+}
+
+/**
+ * Insert clipboard text as invoice rows only for spreadsheet/grid pastes.
+ * Plain multi-line description selections paste natively into focused fields.
+ */
+export function shouldInsertClipboardAsRows(text = '', target = null) {
+  const raw = String(text ?? '');
+  if (!raw.trim()) return false;
+  const tag = String(target?.tagName || '').toUpperCase();
+  const inField =
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    Boolean(target?.closest?.('[data-invoice-field]'));
+  if (raw.includes('\t')) return isMultiRowClipboardText(raw);
+  if (inField) return false;
+  return isMultiRowClipboardText(raw);
+}
+
+const SELECTABLE_LINE_FIELDS = ['description', 'quantity', 'unitPrice'];
+
+function fieldFromSelectionNode(node) {
+  if (!node) return null;
+  const el = node.nodeType === 3 ? node.parentElement : node;
+  return el?.closest?.('[data-invoice-display]')?.getAttribute?.('data-invoice-display') || null;
+}
+
+function lineRowFromSelectionNode(node) {
+  if (!node) return null;
+  const el = node.nodeType === 3 ? node.parentElement : node;
+  return el?.closest?.('[data-invoice-line]') || null;
+}
+
+/**
+ * Build clean clipboard text from a native DOM selection over invoice cells.
+ * Uses selection anchor/focus fields so a vertical drag in Description copies
+ * only descriptions (newline-separated). Multi-column drags become TSV.
+ */
+export function serializeNaturalSelection(selection, root = null) {
+  if (!selection || selection.isCollapsed) return null;
+  const scope =
+    root ||
+    selection.anchorNode?.ownerDocument?.querySelector?.('[data-invoice-lines]')?.closest('form') ||
+    selection.anchorNode?.ownerDocument?.body;
+  if (!scope?.querySelectorAll) return null;
+
+  const anchorField = fieldFromSelectionNode(selection.anchorNode);
+  const focusField = fieldFromSelectionNode(selection.focusNode);
+  const anchorIdx = SELECTABLE_LINE_FIELDS.indexOf(anchorField);
+  const focusIdx = SELECTABLE_LINE_FIELDS.indexOf(focusField);
+  if (anchorIdx < 0 || focusIdx < 0) return null;
+
+  const fields = SELECTABLE_LINE_FIELDS.slice(
+    Math.min(anchorIdx, focusIdx),
+    Math.max(anchorIdx, focusIdx) + 1,
+  );
+  const allRows = [...scope.querySelectorAll('[data-invoice-line]')];
+  const anchorRow = lineRowFromSelectionNode(selection.anchorNode);
+  const focusRow = lineRowFromSelectionNode(selection.focusNode);
+  const anchorRowIdx = allRows.indexOf(anchorRow);
+  const focusRowIdx = allRows.indexOf(focusRow);
+  if (anchorRowIdx < 0 || focusRowIdx < 0) return null;
+
+  const rowStart = Math.min(anchorRowIdx, focusRowIdx);
+  const rowEnd = Math.max(anchorRowIdx, focusRowIdx);
+  const lines = [];
+  for (let i = rowStart; i <= rowEnd; i += 1) {
+    const row = allRows[i];
+    const values = fields.map((field) => {
+      const el = row?.querySelector?.(`[data-invoice-display="${field}"]`);
+      return String(el?.textContent || '').trim();
+    });
+    lines.push(values);
+  }
+  if (!lines.length) return null;
+
+  if (fields.length === 1 && fields[0] === 'description') {
+    return lines.map((values) => values[0]).join('\n');
+  }
+  return lines.map((values) => values.join('\t')).join('\n');
 }
 
 export function blankSelectableLine() {

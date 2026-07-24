@@ -184,11 +184,12 @@ export function applyLinePaste({
   const rowsTouched = new Set();
   let lastFocus = { lineIndex: startIndex, field: startField };
 
-  // Single plain description paste: let the browser handle caret/selection natively
-  // unless the clipboard is multi-cell / multi-row.
-  const isMulti =
-    grid.length > 1 || (grid[0] && grid[0].length > 1) || /[\t\n]/.test(String(pastedText));
-  if (startField === 'description' && !isMulti) {
+  // Description: only intercept tab-separated spreadsheet pastes. Plain multi-line
+  // description lists stay native so Ctrl+C / Ctrl+V preserve line breaks elsewhere.
+  const text = String(pastedText ?? '');
+  const isGridPaste =
+    text.includes('\t') && (grid.length > 1 || (grid[0] && grid[0].length > 1));
+  if (startField === 'description' && !isGridPaste) {
     return {
       handled: false,
       lineItems: lines,
@@ -294,6 +295,6 @@ export function shouldHandleLinePaste(target, pastedText = '') {
   if (!text) return false;
   if (field === 'quantity' || field === 'unitPrice') return true;
   if (field === 'gstApplicable') return /[\t\n]/.test(text) || text.trim().length > 0;
-  // Description: only intercept multi-cell spreadsheet pastes.
-  return /[\t\n]/.test(text);
+  // Description: only intercept tab-separated spreadsheet pastes.
+  return text.includes('\t');
 }

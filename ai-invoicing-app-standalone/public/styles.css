@@ -1185,44 +1185,58 @@ td.primary-cell {
 .invoice-lines-table input[name='description'] {
   cursor: text;
 }
-.invoice-line-select-col,
-.invoice-line-select-cell {
-  width: 2.75rem;
-  min-width: 2.75rem;
-  text-align: center;
-  vertical-align: middle;
-}
-.invoice-line-select,
-.invoice-line-select-all {
-  width: 16px;
-  height: 16px;
-  min-height: 16px;
-  margin: 0;
-  accent-color: var(--forest);
-  cursor: pointer;
-}
-.invoice-line.is-selected {
-  background: rgba(154, 230, 200, 0.28);
-}
-.invoice-line.is-selected input,
-.invoice-line.is-selected select {
-  background: #fff;
-}
-.invoice-selection-count {
-  font-size: 13px;
-  white-space: nowrap;
-}
 .invoice-clipboard-hint {
   margin: 8px 2px 0;
   font-size: 13px;
   color: var(--danger);
 }
+.invoice-editable-cell {
+  vertical-align: middle;
+}
+.invoice-cell-text {
+  display: block;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.invoice-cell-text:focus {
+  outline: 2px solid rgba(23, 63, 53, 0.25);
+  outline-offset: 1px;
+}
+.invoice-editable-cell.is-editing .invoice-cell-text {
+  display: none;
+}
+.invoice-editable-cell:not(.is-editing) .invoice-cell-input {
+  display: none !important;
+}
+.invoice-editable-cell.is-editing .invoice-cell-input {
+  display: block;
+  width: 100%;
+}
 .invoice-line-number-cell,
-.invoice-line-number {
+.invoice-line-number,
+.invoice-line-actions,
+.invoice-line-actions * {
   -webkit-user-select: none;
   user-select: none;
+}
+.invoice-line-number-cell,
+.invoice-line-number {
   cursor: grab;
   touch-action: none;
+}
+.invoice-lines-table {
+  -webkit-user-select: text;
+  user-select: text;
 }
 .invoice-line-number {
   display: inline-flex;

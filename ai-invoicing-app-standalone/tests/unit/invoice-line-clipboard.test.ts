@@ -5,15 +5,13 @@ import {
   cloneLineItem,
   cloneLineItems,
   formatLinesAsTsv,
-  formatSelectedCountLabel,
   insertLinesAfter,
   isMultiRowClipboardText,
   linesFromSelectedIndexes,
   parseClipboardRows,
-  resolveRowSelection,
-  resolveSelectAll,
   serializeLineForClipboard,
-  shouldHandleBulkRowCopy,
+  serializeNaturalSelection,
+  shouldInsertClipboardAsRows,
 } from '../../public/invoice-line-clipboard.js';
 import { calculateLineItem } from '../../public/invoice-totals.js';
 import {
@@ -25,7 +23,7 @@ import { generateInvoicePdfBuffer } from '../../src/services/pdf-service.js';
 import { extractPdfText } from '../helpers/pdf-text.js';
 import { lineRowHtml, buildEditorHtml } from '../../public/invoice-editor.js';
 
-describe('invoice multi-row clipboard', () => {
+describe('invoice line clipboard (natural text selection)', () => {
   const sample = [
     { description: 'Labour Hire 08-07-26', quantity: 1, unitPrice: 350, gstApplicable: true, clientKey: 'a' },
     { description: 'Labour Hire 09-07-26', quantity: 1, unitPrice: 350, gstApplicable: true, clientKey: 'b' },
@@ -57,31 +55,6 @@ describe('invoice multi-row clipboard', () => {
     expect(clones[0]?.unitPrice).toBe(350);
   });
 
-  it('supports shift-range and ctrl toggle selection', () => {
-    const range = resolveRowSelection({
-      selectedIndexes: [0],
-      clickedIndex: 2,
-      shiftKey: true,
-      anchorIndex: 0,
-      lineCount: 3,
-    });
-    expect(range.selectedIndexes).toEqual([0, 1, 2]);
-
-    const toggled = resolveRowSelection({
-      selectedIndexes: [0, 1, 2],
-      clickedIndex: 1,
-      ctrlKey: true,
-      anchorIndex: 0,
-      lineCount: 3,
-    });
-    expect(toggled.selectedIndexes).toEqual([0, 2]);
-  });
-
-  it('select-all toggles between all and none', () => {
-    expect(resolveSelectAll({ lineCount: 4, currentlySelectedCount: 0 })).toEqual([0, 1, 2, 3]);
-    expect(resolveSelectAll({ lineCount: 4, currentlySelectedCount: 4 })).toEqual([]);
-  });
-
   it('formats spreadsheet TSV and parses it back with GST', () => {
     const tsv = formatLinesAsTsv(sample);
     expect(tsv.split('\n')[0]).toBe('Description\tQty\tUnit Price\tGST');
@@ -98,6 +71,70 @@ describe('invoice multi-row clipboard', () => {
       gstApplicable: true,
     });
     expect(calculateLineItem(parsed.lines[0]!).lineTotal).toBe(385);
+  });
+
+  it('does not treat plain description lists as row-insert clipboard', () => {
+    const descriptions = sample.map((item) => item.description).join('\n');
+    expect(isMultiRowClipboardText(descriptions)).toBe(false);
+    expect(
+      shouldInsertClipboardAsRows(descriptions, { tagName: 'INPUT' }),
+    ).toBe(false);
+    expect(shouldInsertClipboardAsRows(descriptions, { tagName: 'DIV' })).toBe(false);
+  });
+
+  it('serializes natural multi-description selection with line breaks only', () => {
+    const rowNodes = sample.map((item) => {
+      const displays = {
+        description: {
+          textContent: item.description,
+          getAttribute: () => 'description',
+          closest: (sel) => (sel === '[data-invoice-display]' ? displays.description : null),
+        },
+        quantity: {
+          textContent: String(item.quantity),
+          getAttribute: () => 'quantity',
+          closest: (sel) => (sel === '[data-invoice-display]' ? displays.quantity : null),
+        },
+        unitPrice: {
+          textContent: String(item.unitPrice),
+          getAttribute: () => 'unitPrice',
+          closest: (sel) => (sel === '[data-invoice-display]' ? displays.unitPrice : null),
+        },
+      };
+      const row = {
+        querySelector(fieldSelector) {
+          const match = String(fieldSelector).match(
+            /data-invoice-display="(description|quantity|unitPrice)"/,
+          );
+          return match ? displays[match[1]] : null;
+        },
+      };
+      displays.description.closest = (sel) => {
+        if (sel === '[data-invoice-display]') return displays.description;
+        if (sel === '[data-invoice-line]') return row;
+        return null;
+      };
+      return { row, displays };
+    });
+    const root = {
+      querySelectorAll(selector) {
+        if (selector !== '[data-invoice-line]') return [];
+        return rowNodes.map((item) => item.row);
+      },
+    };
+    const selection = {
+      isCollapsed: false,
+      anchorNode: rowNodes[0].displays.description,
+      focusNode: rowNodes[2].displays.description,
+    };
+    expect(serializeNaturalSelection(selection, root)).toBe(
+      sample.map((item) => item.description).join('\n'),
+    );
+  });
+
+  it('inserts tab-separated spreadsheet pastes as rows even inside a field', () => {
+    const tsv = formatLinesAsTsv(sample.slice(0, 2));
+    expect(shouldInsertClipboardAsRows(tsv, { tagName: 'INPUT' })).toBe(true);
   });
 
   it('reports invalid spreadsheet cells without discarding the paste block', () => {
@@ -118,24 +155,6 @@ describe('invoice multi-row clipboard', () => {
     expect(inserted.lineItems[1]?.description).toBe('Labour Hire 09-07-26');
     expect(inserted.lineItems[1]?.clientKey).not.toBe('b');
     expect(inserted.lineItems[3]?.clientKey).toBe('b');
-  });
-
-  it('keeps bulk copy from stealing text selection inside inputs', () => {
-    expect(
-      shouldHandleBulkRowCopy({
-        selectedCount: 2,
-        target: { tagName: 'INPUT' },
-        textSelected: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldHandleBulkRowCopy({
-        selectedCount: 2,
-        target: { tagName: 'INPUT' },
-        textSelected: false,
-      }),
-    ).toBe(true);
-    expect(formatSelectedCountLabel(8)).toBe('8 lines selected');
   });
 
   it('preserves pasted rows through payload, reopen hydration and PDF', async () => {
@@ -207,10 +226,12 @@ describe('invoice multi-row clipboard', () => {
     expect(text).toMatch(/385/);
   });
 
-  it('renders selection checkbox column and duplicate controls in the editor', () => {
-    const row = lineRowHtml(cloneLineItem(sample[0]!), 0, { selected: true });
-    expect(row).toContain('data-line-select');
-    expect(row).toContain('is-selected');
+  it('renders selectable text cells and line numbers without checkboxes', () => {
+    const row = lineRowHtml(cloneLineItem(sample[0]!), 0);
+    expect(row).not.toContain('data-line-select');
+    expect(row).not.toContain('is-selected');
+    expect(row).toContain('data-invoice-display="description"');
+    expect(row).toContain('data-editable-cell="description"');
     expect(row).toContain('data-line-duplicate');
     expect(row).toContain('data-line-number');
 
@@ -220,21 +241,24 @@ describe('invoice multi-row clipboard', () => {
       record: {
         issueDate: '2026-07-24',
         dueDate: '2026-08-07',
-        title: 'Select rows',
+        title: 'Natural select',
         lineItems: sample,
       },
     });
-    expect(html).toContain('data-select-all-lines');
-    expect(html).toContain('data-duplicate-selected');
-    expect(html).toContain('data-selection-count');
+    expect(html).not.toContain('data-select-all-lines');
+    expect(html).not.toContain('data-duplicate-selected');
+    expect(html).not.toContain('data-selection-count');
+    expect(html).toContain('data-line-number');
+    expect(html).toContain('data-invoice-display="description"');
   });
 
-  it('wires clipboard helpers into the canonical editor', () => {
+  it('wires natural selection clipboard helpers into the canonical editor', () => {
     const source = fs.readFileSync(new URL('../../public/invoice-editor.js', import.meta.url), 'utf8');
     expect(source).toContain("from './invoice-line-clipboard.js'");
-    expect(source).toContain('copySelectedRowsToClipboard');
-    expect(source).toContain('duplicateSelectedRows');
-    expect(source).toContain("addEventListener('copy'");
-    expect(source).toContain('formatLinesAsTsv');
+    expect(source).toContain('shouldInsertClipboardAsRows');
+    expect(source).toContain('data-invoice-display');
+    expect(source).not.toContain('data-line-select');
+    expect(source).not.toContain('copySelectedRowsToClipboard');
+    expect(source).not.toContain('duplicateSelectedRows');
   });
 });
