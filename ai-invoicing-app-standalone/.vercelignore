@@ -1,9 +1,17 @@
-# Keep test/reference material out of the public Vercel static output.
-# Branding marks are still bundled into the serverless function via includeFiles.
+# Only public/ is the Vercel static outputDirectory. Still exclude sensitive
+# paths from the upload so they cannot leak if outputDirectory is misconfigured.
+# Branding PNGs stay available to the serverless function via includeFiles
+# (do not ignore src/assets — those marks are required for PDF export).
+fixtures
 fixtures/**
+tests
 tests/**
+coverage
 coverage/**
 **/*.test.ts
 **/*.integration.test.ts
+docs
 docs/**
 scripts/tmp-*
+**/Cart_N_Tip*.pdf
+**/reference-invoices/**

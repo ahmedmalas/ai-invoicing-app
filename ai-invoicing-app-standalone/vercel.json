@@ -3,7 +3,7 @@
   "regions": ["syd1"],
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
-  "outputDirectory": ".",
+  "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
       "includeFiles": "{src/db/postgres-schema.sql,public/**,src/assets/branding/**}",
