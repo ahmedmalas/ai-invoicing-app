@@ -11,6 +11,8 @@ export function ensureLineClientKeys<T extends Record<string, unknown>>(
   lineItems?: T[] | null,
 ): Array<T & { clientKey: string }>;
 
+export function normalizeNumericText(raw: unknown): string;
+
 export function parseLineNumericInput(raw: unknown, previous?: number): number;
 
 export function blankLineItem(): {
@@ -19,6 +21,20 @@ export function blankLineItem(): {
   quantity: number;
   unitPrice: number;
   gstApplicable: boolean;
+};
+
+export function parseSpreadsheetPaste(text: unknown): string[][];
+
+export function applyLinePaste(input?: {
+  lineItems?: Array<Record<string, unknown>>;
+  startIndex?: number;
+  startField?: string;
+  pastedText?: string;
+}): {
+  handled: boolean;
+  lineItems: Array<Record<string, unknown> & { clientKey: string }>;
+  focus: { lineIndex: number; field: string } | null;
+  rowsTouched: number[];
 };
 
 export function resolveEnterNavigation(input: {
@@ -43,3 +59,10 @@ export function shouldHandleLineEnter(target: {
 export function shouldHandleLineTab(target: {
   getAttribute?: (name: string) => string | null;
 } | null): boolean;
+
+export function shouldHandleLinePaste(
+  target: {
+    getAttribute?: (name: string) => string | null;
+  } | null,
+  pastedText?: string,
+): boolean;

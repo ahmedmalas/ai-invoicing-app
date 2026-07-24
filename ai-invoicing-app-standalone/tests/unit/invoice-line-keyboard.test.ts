@@ -35,6 +35,8 @@ describe('invoice line keyboard navigation helpers', () => {
     expect(parseLineNumericInput('350', 0)).toBe(350);
     expect(parseLineNumericInput('350.', 0)).toBe(350);
     expect(parseLineNumericInput('1,250.50', 0)).toBe(1250.5);
+    expect(parseLineNumericInput('$350', 0)).toBe(350);
+    expect(parseLineNumericInput('350,00', 0)).toBe(350);
     expect(parseLineNumericInput('', 350)).toBe(350);
     expect(parseLineNumericInput('abc', 350)).toBe(350);
   });

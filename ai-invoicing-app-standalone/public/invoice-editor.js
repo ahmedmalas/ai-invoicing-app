@@ -29,12 +29,14 @@ import {
 } from './invoice-model.js';
 import { createInvoiceApiClient } from './invoice-api.js';
 import {
+  applyLinePaste,
   blankLineItem,
   ensureLineClientKeys,
   parseLineNumericInput,
   resolveEnterNavigation,
   resolveTabNavigation,
   shouldHandleLineEnter,
+  shouldHandleLinePaste,
   shouldHandleLineTab,
 } from './invoice-line-keyboard.js';
 
@@ -451,6 +453,56 @@ export function createInvoiceEditor(deps) {
     refreshTotalsDisplay();
   }
 
+  /**
+   * Keep visible line controls aligned with canonical state after paste/commit.
+   * Always write values back — including the focused control — so preventDefault
+   * paste paths cannot be clobbered by a later focusout reading a stale empty DOM value.
+   */
+  function syncLineControlsFromState() {
+    if (!form) return;
+    const lines = ensureLineClientKeys(state.lineItems);
+    form.querySelectorAll('[data-invoice-line]').forEach((row) => {
+      const index = lineIndexFromRow(row);
+      const item = lines[index];
+      if (!item) return;
+      const qty = row.querySelector('[data-invoice-field="quantity"]');
+      const price = row.querySelector('[data-invoice-field="unitPrice"]');
+      const desc = row.querySelector('[data-invoice-field="description"]');
+      const gst = row.querySelector('[data-invoice-field="gstApplicable"]');
+      if (desc) desc.value = String(item.description ?? '');
+      if (qty) qty.value = String(item.quantity ?? 1);
+      if (price) price.value = String(item.unitPrice ?? 0);
+      if (gst) gst.value = item.gstApplicable === false ? 'false' : 'true';
+    });
+  }
+
+  function applyPasteCommit(target, pastedText) {
+    const row = target?.closest?.('[data-invoice-line]');
+    if (!row) return false;
+    const fieldName = target.getAttribute?.('data-invoice-field') || '';
+    if (!shouldHandleLinePaste(target, pastedText)) return false;
+    const result = applyLinePaste({
+      lineItems: state.lineItems,
+      startIndex: lineIndexFromRow(row),
+      startField: fieldName,
+      pastedText,
+    });
+    if (!result.handled) return false;
+    const previousCount = state.lineItems.length;
+    state = withRecalculatedTotals({ ...state, lineItems: result.lineItems });
+    if (state.lineItems.length !== previousCount) {
+      renderLineRows();
+    } else {
+      syncLineControlsFromState();
+      refreshTotalsDisplay();
+    }
+    if (result.focus) {
+      queueMicrotask(() => focusLineField(result.focus.lineIndex, result.focus.field, { select: false }));
+    }
+    scheduleAutosave();
+    return true;
+  }
+
   function navigateLineKeyboard(plan) {
     if (!plan || plan.action === 'native') return;
     if (plan.action === 'add-row') {
@@ -682,7 +734,7 @@ export function createInvoiceEditor(deps) {
     }, INVOICE_EDITOR_AUTOSAVE_MS);
   }
 
-  function applyFieldFromEvent(target) {
+  function applyFieldFromEvent(target, { writeBack = false } = {}) {
     const path = target.getAttribute?.('data-invoice-field');
     if (!path) return;
     const row = target.closest?.('[data-invoice-line]');
@@ -697,6 +749,8 @@ export function createInvoiceEditor(deps) {
       else if (path === 'unitPrice')
         current.unitPrice = parseLineNumericInput(target.value, current.unitPrice);
       else if (path === 'gstApplicable') current.gstApplicable = target.value === 'true';
+      if (writeBack && path === 'quantity') target.value = String(current.quantity);
+      if (writeBack && path === 'unitPrice') target.value = String(current.unitPrice);
       lines[index] = current;
       state = withRecalculatedTotals({ ...state, lineItems: lines });
       return;
@@ -729,18 +783,48 @@ export function createInvoiceEditor(deps) {
     form.addEventListener('input', (event) => {
       const path = event.target?.getAttribute?.('data-invoice-field');
       if (path) setFieldError(path, '');
+      // Commit on every input (typing, paste fallback, autofill, programmatic InputEvent).
       applyFieldFromEvent(event.target);
       if (event.target.closest('[data-invoice-line], [data-invoice-field]')) refreshTotalsDisplay();
       scheduleAutosave();
     });
     form.addEventListener('change', (event) => {
-      applyFieldFromEvent(event.target);
+      // Autofill / steppers / select changes — write numeric values back immediately.
+      const path = event.target?.getAttribute?.('data-invoice-field');
+      const writeBack = path === 'quantity' || path === 'unitPrice';
+      applyFieldFromEvent(event.target, { writeBack });
       if (event.target.matches('[data-invoice-field="customerId"]')) updateCustomerPreview();
-      if (event.target.matches('[data-invoice-field="gstApplicable"], [data-invoice-field="customerId"]')) {
+      if (
+        event.target.matches(
+          '[data-invoice-field="gstApplicable"], [data-invoice-field="customerId"], [data-invoice-field="quantity"], [data-invoice-field="unitPrice"]',
+        )
+      ) {
         refreshTotalsDisplay();
       }
       scheduleAutosave();
     });
+    form.addEventListener('paste', (event) => {
+      const target = event.target;
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      if (!shouldHandleLinePaste(target, text)) return;
+      // Intercept before type=number rejects "$350" / "350,00" / multi-cell sheets.
+      event.preventDefault();
+      event.stopPropagation();
+      applyPasteCommit(target, text);
+    });
+    // Additional commit path (never the only one): clicking elsewhere after paste/type.
+    form.addEventListener(
+      'focusout',
+      (event) => {
+        const target = event.target;
+        const path = target?.getAttribute?.('data-invoice-field');
+        if (path === 'quantity' || path === 'unitPrice') {
+          commitLineControl(target);
+          scheduleAutosave();
+        }
+      },
+      true,
+    );
     form.addEventListener('click', (event) => {
       if (event.target.closest('[data-add-line]')) {
         state = withRecalculatedTotals({
