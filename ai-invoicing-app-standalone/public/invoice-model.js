@@ -126,6 +126,7 @@ export function normalizeLegacyInvoiceRecord(record) {
     dueDate: asString(source.dueDate ?? source.due_date ?? ''),
     notes: asString(source.notes ?? ''),
     paymentTerms: asString(source.paymentTerms ?? source.payment_terms ?? ''),
+    templateId: asString(source.templateId ?? source.template_id ?? '') || null,
     invoiceNumber: normalizeInvoiceNumber(source.invoiceNumber ?? source.invoice_number),
     status: source.status === 'Finalised' ? 'Finalised' : 'Draft',
     paymentState: asString(source.paymentState ?? source.payment_state ?? 'Draft') || 'Draft',
@@ -160,6 +161,7 @@ export function createEmptyEditorState(seed = {}) {
     lineItems,
     notes: asString(normalized.notes),
     paymentTerms: asString(normalized.paymentTerms),
+    templateId: normalized.templateId || null,
     tax: { gstRate: GST_RATE },
     totals: {
       subtotal: totals.subtotal,
@@ -258,6 +260,7 @@ export function buildInvoicePayload(editorState) {
   };
   if (notes) payload.notes = notes;
   if (paymentTerms) payload.paymentTerms = paymentTerms;
+  payload.templateId = asString(editorState.templateId).trim() || null;
   return payload;
 }
 
@@ -375,6 +378,7 @@ export function applySavedInvoice(state, saved) {
     dueDate: hydrated.dueDate,
     notes: hydrated.notes,
     paymentTerms: hydrated.paymentTerms,
+    templateId: hydrated.templateId ?? state.templateId ?? null,
     lineItems: hydrated.lineItems,
     totals: hydrated.totals,
     updatedAt: hydrated.updatedAt,

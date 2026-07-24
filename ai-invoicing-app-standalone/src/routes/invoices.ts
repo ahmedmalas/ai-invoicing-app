@@ -6,6 +6,14 @@ import {
   assertUpdateInvoiceNumber,
 } from '../domain/invoices/invoice-number.js';
 import { generateInvoicePdfBuffer } from '../services/pdf-service.js';
+import {
+  ensureCartNTipReferenceTemplate,
+} from '../domain/templates/cart-n-tip-reference.js';
+import {
+  getInvoiceTemplateBinding,
+  resolveInvoiceTemplateForPdf,
+  setInvoiceTemplateBinding,
+} from '../domain/templates/invoice-template-store.js';
 import { parsePagination } from './pagination.js';
 
 const lineItemSchema = z.object({
@@ -27,6 +35,7 @@ const createDraftSchema = z.object({
   paymentTerms: z.string().optional(),
   invoiceNumber: invoiceNumberSchema,
   lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
+  templateId: z.string().uuid().nullable().optional(),
 });
 
 const updateDraftSchema = z.object({
@@ -38,6 +47,7 @@ const updateDraftSchema = z.object({
   invoiceNumber: invoiceNumberSchema,
   lineItems: z.array(lineItemSchema).min(1, 'Add at least one line item.'),
   paymentState: z.enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled']),
+  templateId: z.string().uuid().nullable().optional(),
 });
 
 export const invoiceRoutes: FastifyPluginAsync = async (app) => {
@@ -59,9 +69,12 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     try {
       const body = createDraftSchema.parse(request.body);
       assertCreateInvoiceNumber(body.invoiceNumber);
-      const { invoiceNumber: _ignoredNumber, ...draftInput } = body;
+      const { invoiceNumber: _ignoredNumber, templateId, ...draftInput } = body;
       const invoice = await app.db.createInvoiceDraft(draftInput);
-      return reply.code(201).send(invoice);
+      if (templateId) {
+        await setInvoiceTemplateBinding(app.db, invoice.id, templateId);
+      }
+      return reply.code(201).send({ ...invoice, templateId: templateId || null });
     } catch (error) {
       if (!(error instanceof ZodError)) {
         request.log.error(
@@ -101,8 +114,12 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
         throw new Error('Invoice not found');
       }
       assertUpdateInvoiceNumber(body.invoiceNumber, existing.invoiceNumber);
-      const { invoiceNumber: _ignoredNumber, ...draftInput } = body;
-      return await app.db.updateInvoiceDraft(params.invoiceId, draftInput);
+      const { invoiceNumber: _ignoredNumber, templateId, ...draftInput } = body;
+      const updated = await app.db.updateInvoiceDraft(params.invoiceId, draftInput);
+      if (templateId !== undefined) {
+        await setInvoiceTemplateBinding(app.db, params.invoiceId, templateId);
+      }
+      return { ...updated, templateId: templateId ?? null };
     } catch (error) {
       if (!(error instanceof ZodError)) {
         request.log.error(
@@ -139,7 +156,8 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
     if (!invoice) {
       return reply.code(404).send({ message: 'Invoice not found' });
     }
-    return invoice;
+    const templateId = await getInvoiceTemplateBinding(app.db, params.invoiceId);
+    return { ...invoice, templateId };
   });
 
   app.delete('/invoices/:invoiceId', async (request, reply) => {
@@ -203,11 +221,34 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
       const frozenBranding =
         invoice.status === 'Finalised' ? await app.db.getInvoiceBrandingSnapshot(invoice.id) : null;
       const businessProfile = frozenBranding ?? (await app.db.getBusinessProfile());
+      await ensureCartNTipReferenceTemplate(app.db);
+      const resolvedTemplate = await resolveInvoiceTemplateForPdf(app.db, invoice.id);
+      const templateDesign = resolvedTemplate?.design ?? null;
+      const profileForPdf =
+        templateDesign && businessProfile
+          ? {
+              ...businessProfile,
+              primaryColor: templateDesign.colors.primary || businessProfile.primaryColor,
+              secondaryColor: templateDesign.colors.secondary || businessProfile.secondaryColor,
+            }
+          : businessProfile;
       const pdfBuffer = await generateInvoicePdfBuffer({
-        invoice,
+        invoice: {
+          ...invoice,
+          paymentTerms: invoice.paymentTerms || templateDesign?.termsAndConditions || null,
+          notes: invoice.notes || templateDesign?.notesPlaceholder || null,
+        },
         lineItems: invoice.lineItems,
         customer,
-        businessProfile,
+        businessProfile: profileForPdf,
+        templateDesign,
+        bankDetails: templateDesign?.bankDetails
+          ? {
+              accountName: templateDesign.bankDetails.accountName,
+              bsb: templateDesign.bankDetails.bsb,
+              accountNumber: templateDesign.bankDetails.accountNumber,
+            }
+          : null,
         timeoutMs: 20_000,
       });
 

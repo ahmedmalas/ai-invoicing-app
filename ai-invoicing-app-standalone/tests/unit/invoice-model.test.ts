@@ -162,6 +162,7 @@ describe('canonical invoice model', () => {
       dueDate: '2026-08-05',
       notes: 'note',
       paymentTerms: 'Net 7',
+      templateId: null,
       lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
     });
     expect(toUpdateDraftBody(savePayload, 'Draft')).toEqual({
@@ -170,6 +171,7 @@ describe('canonical invoice model', () => {
       dueDate: '2026-08-05',
       notes: 'note',
       paymentTerms: 'Net 7',
+      templateId: null,
       lineItems: [{ description: 'Labour', quantity: 1, unitPrice: 100, gstApplicable: true }],
       paymentState: 'Draft',
     });

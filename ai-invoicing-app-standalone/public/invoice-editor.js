@@ -221,7 +221,29 @@ function customerPreviewMarkup(customer) {
   );
 }
 
-function buildEditorHtml({ profile = {}, customers = [], state = null, record = null }) {
+function templateOptionsHtml(templates = [], selected = '') {
+  if (!templates.length) {
+    return '<option value="">Default Aleya layout</option>';
+  }
+  return (
+    '<option value="">Default Aleya layout</option>' +
+    templates
+      .map(
+        (item) =>
+          '<option value="' +
+          escapeHtml(item.id) +
+          '"' +
+          (item.id === selected || (!selected && item.isDefault) ? ' selected' : '') +
+          '>' +
+          escapeHtml(item.name) +
+          (item.isDefault ? ' (default)' : '') +
+          '</option>',
+      )
+      .join('')
+  );
+}
+
+function buildEditorHtml({ profile = {}, customers = [], templates = [], state = null, record = null }) {
   const resolved = withLineClientKeys(
     state || (record ? hydrateEditorState(record) : createEmptyEditorState()),
   );
@@ -231,6 +253,8 @@ function buildEditorHtml({ profile = {}, customers = [], state = null, record = 
   const logo = logoSrcFromProfile(profile);
   const status = recordState.status || 'Draft';
   const invoiceNumberDisplay = formatInvoiceNumberDisplay(recordState.invoiceNumber);
+  const selectedTemplateId =
+    recordState.templateId || templates.find((item) => item.isDefault)?.id || '';
 
   return (
     '<div class="invoice-curtain" data-invoice-editor aria-hidden="true">' +
@@ -301,6 +325,10 @@ function buildEditorHtml({ profile = {}, customers = [], state = null, record = 
     '<option value="">Select customer</option>' +
     customerOptionsHtml(customers, recordState.customerId || '') +
     '</select></label>' +
+    '<label class="invoice-field">Invoice template<select data-invoice-field="templateId" name="templateId" data-template-select>' +
+    templateOptionsHtml(templates, selectedTemplateId) +
+    '</select></label>' +
+    '<p class="muted invoice-template-hint">PDF export uses this recreated design. Manage templates under Templates.</p>' +
     '<div class="invoice-billto-preview" data-customer-preview>' +
     customerPreviewMarkup(null) +
     '</div></div>' +
@@ -540,6 +568,8 @@ export function createInvoiceEditor(deps) {
     else if (path === 'notes') state = patchEditorState(state, { notes: String(active.value ?? '') });
     else if (path === 'paymentTerms')
       state = patchEditorState(state, { paymentTerms: String(active.value ?? '') });
+    else if (path === 'templateId')
+      state = patchEditorState(state, { templateId: String(active.value ?? '') || null });
   }
 
   function commitLineControl(target) {
@@ -956,6 +986,8 @@ export function createInvoiceEditor(deps) {
     else if (path === 'notes') state = patchEditorState(state, { notes: String(target.value ?? '') });
     else if (path === 'paymentTerms')
       state = patchEditorState(state, { paymentTerms: String(target.value ?? '') });
+    else if (path === 'templateId')
+      state = patchEditorState(state, { templateId: String(target.value ?? '') || null });
   }
 
   function moveLine(index, direction) {
@@ -1355,6 +1387,15 @@ export function createInvoiceEditor(deps) {
       return { redirected: 'customers' };
     }
 
+    let templates = [];
+    try {
+      const payload = await deps.api('/api/invoice-templates');
+      templates = payload?.templates || [];
+    } catch {
+      templates = [];
+    }
+    const defaultTemplate = templates.find((item) => item.isDefault) || templates[0] || null;
+
     const local = !record?.id && snapshotRecoverable(readLocal(storage)) ? readLocal(storage) : null;
     if (!record?.id && local?.recordId) {
       try {
@@ -1377,7 +1418,16 @@ export function createInvoiceEditor(deps) {
       state = withLineClientKeys(hydrateEditorState(local));
       deps.toast('Restored unsaved invoice details from this browser session.');
     } else {
-      state = withLineClientKeys(createEmptyEditorState());
+      state = withLineClientKeys(
+        createEmptyEditorState({
+          templateId: defaultTemplate?.id || null,
+          paymentTerms: defaultTemplate?.design?.termsAndConditions || '',
+          notes: defaultTemplate?.design?.notesPlaceholder || '',
+        }),
+      );
+    }
+    if (!state.templateId && defaultTemplate?.id) {
+      state = patchEditorState(state, { templateId: defaultTemplate.id });
     }
 
     document.body.insertAdjacentHTML(
@@ -1385,6 +1435,7 @@ export function createInvoiceEditor(deps) {
       buildEditorHtml({
         profile: deps.getProfile() || {},
         customers,
+        templates,
         state,
       }),
     );

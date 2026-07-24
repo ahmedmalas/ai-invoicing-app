@@ -1529,6 +1529,64 @@ td.primary-cell {
   color: var(--muted);
 }
 
+/* Invoice template recreate */
+.template-compare {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.2fr);
+  margin-top: 16px;
+}
+.template-review-grid {
+  display: grid;
+  gap: 14px;
+}
+.template-original-frame,
+.template-original-image {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.template-original-image {
+  object-fit: contain;
+  min-height: 280px;
+  max-height: 520px;
+}
+.template-limitations {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.template-columns {
+  display: grid;
+  gap: 8px;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.checkbox-row em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+}
+.file-drop input[type='file'] {
+  display: block;
+  margin-top: 8px;
+  width: 100%;
+}
+.invoice-template-hint {
+  margin: 4px 0 10px;
+}
+@media (max-width: 960px) {
+  .template-compare {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* Inventory workspace */
 .inventory-page .inventory-alert-grid {

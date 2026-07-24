@@ -11,6 +11,7 @@ import {
   isBusinessProfileReady,
 } from './business-profile-readiness.js';
 import { brandMarkHtml, buildLogoCreatorPageHtml, logoSrcFromProfile } from './logo-studio-ui.js';
+import { createInvoiceTemplatesUi } from './invoice-templates-ui.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -26,6 +27,20 @@ let ignoreNextPopstate = false;
 let logoStudioConcepts = [];
 let logoStudioNotice = '';
 let invoiceEditor = null;
+let invoiceTemplatesUi = null;
+
+function getInvoiceTemplatesUi() {
+  if (!invoiceTemplatesUi) {
+    invoiceTemplatesUi = createInvoiceTemplatesUi({
+      api,
+      toast,
+      navigate,
+      getAccessToken: () => session?.access_token,
+      setContent: (html) => shell('<main class="page">' + html + '</main>'),
+    });
+  }
+  return invoiceTemplatesUi;
+}
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -327,6 +342,7 @@ const navItems = [
   ['/workspace/suppliers', 'SU', 'Suppliers'],
   ['/workspace/stocktakes', 'ST', 'Stocktakes'],
   ['/logo-creator', 'LG', 'Logo Creator'],
+  ['/templates', 'TP', 'Templates'],
   ['/reports', 'RE', 'Reports'],
   ['/timeline', 'TL', 'Timeline'],
   ['/settings', 'SE', 'Settings'],
@@ -1099,6 +1115,7 @@ function settingsPage() {
           '" alt="Active logo" width="240" height="140">'
         : '<div class="notice"><strong>No logo yet</strong><br>Create a logo once — Aleya applies it everywhere automatically.</div>') +
       '<a class="button" href="/logo-creator" data-route>Open Logo Creator</a>' +
+      '<a class="button secondary" href="/templates/import" data-route>Recreate invoice template</a>' +
       '<div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s database via <code>/api/business-profile</code>.</div>' +
       (ready
         ? '<div class="notice success"><strong>PDF downloads are ready</strong><br>' +
@@ -2371,6 +2388,8 @@ async function renderRoute({ forceReload = false } = {}) {
     else if (path === '/timeline') await timelinePage();
     else if (path === '/settings') settingsPage();
     else if (path === '/logo-creator') await logoCreatorPage();
+    else if (path === '/templates') await getInvoiceTemplatesUi().templatesListPage();
+    else if (path === '/templates/import') await getInvoiceTemplatesUi().templatesImportPage();
     else {
       history.replaceState({}, '', '/dashboard');
       dashboardPage();
