@@ -7,6 +7,7 @@ import {
   getConversation,
   listConversations,
 } from '../ai/conversation-store.js';
+import { getProviderStatus } from '../ai/provider.js';
 import { getAleyaRegistry } from '../ai/registry.js';
 import { ensureAleyaToolsRegistered } from '../ai/tools/register-all.js';
 import { getWorkspaceContext } from '../auth/workspace-context.js';
@@ -39,21 +40,51 @@ function actorIds(_request: unknown): {
   return { userId, organizationId };
 }
 
+/** Expose only safe identifiers / totals — never raw tool inputs or secrets. */
+function pickPublicToolData(toolName: string, data: unknown): Record<string, unknown> | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const row = data as Record<string, unknown>;
+  const allow = [
+    'invoiceId',
+    'id',
+    'invoiceNumber',
+    'draftNumber',
+    'status',
+    'customerId',
+    'customerName',
+    'templateId',
+    'templateName',
+    'subtotal',
+    'taxTotal',
+    'gstTotal',
+    'total',
+    'dueDate',
+    'issueDate',
+    'count',
+    'matched',
+  ] as const;
+  const picked: Record<string, unknown> = { tool: toolName };
+  for (const key of allow) {
+    if (row[key] !== undefined) picked[key] = row[key];
+  }
+  return Object.keys(picked).length > 1 ? picked : { tool: toolName };
+}
+
 export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
   ensureAleyaToolsRegistered();
 
   app.get('/aleya-ai/capabilities', async () => {
     const registry = ensureAleyaToolsRegistered();
+    const provider = getProviderStatus();
     return {
       productGoal: 'A full natural-language operating layer for Aleya Invoicing.',
       toolCount: registry.names().length,
       maxSteps: Number(process.env.ALEYA_AI_MAX_STEPS || 48),
-      model: process.env.ALEYA_AI_MODEL || 'openai/gpt-5.4',
-      providerConfigured: Boolean(
-        process.env.AI_GATEWAY_API_KEY ||
-          process.env.VERCEL_OIDC_TOKEN ||
-          process.env.ALEYA_AI_ALLOW_UNCONFIGURED === '1',
-      ),
+      model: provider.model,
+      provider: provider.provider,
+      authMethod: provider.authMethod,
+      providerConfigured: provider.providerConfigured,
+      deterministicPlanAllowed: provider.deterministicPlanAllowed,
       tools: registry.capabilityRows(),
       artificialLimitsForbidden: [
         'one tool call per message',
@@ -64,6 +95,7 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
         'text generation only',
         'simulated actions only',
         'small hardcoded intent list',
+        'silent ALEYA_PLAN / fake success fallback',
       ],
     };
   });
@@ -120,11 +152,51 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
       ...(body.confirmationToken ? { confirmationToken: body.confirmationToken } : {}),
       ...(body.confirm != null ? { confirm: body.confirm } : {}),
     });
-    return reply.send(result);
+    // Browser-safe payload: summaries only — never system prompt, credentials, or raw tool inputs.
+    return reply.send({
+      conversationId: result.conversationId,
+      assistantMessage: result.assistantMessage,
+      pendingConfirmation: result.pendingConfirmation
+        ? {
+            token: result.pendingConfirmation.token,
+            toolName: result.pendingConfirmation.toolName,
+            summary: result.pendingConfirmation.summary,
+            createdAt: result.pendingConfirmation.createdAt,
+            expiresAt: result.pendingConfirmation.expiresAt,
+          }
+        : null,
+      ui: result.ui,
+      decisions: result.decisions,
+      model: result.model,
+      providerConfigured: result.providerConfigured,
+      authMethod: result.authMethod,
+      provider: result.provider,
+      toolCalls: result.toolCalls.map((item) => ({
+        toolName: item.toolName,
+        result: {
+          ok: item.result.ok,
+          summary: item.result.ok ? item.result.summary : undefined,
+          message: item.result.ok ? undefined : item.result.message,
+          needsConfirmation: item.result.ok ? undefined : item.result.needsConfirmation,
+          code: item.result.ok ? undefined : item.result.code,
+          data: item.result.ok
+            ? pickPublicToolData(item.toolName, item.result.data)
+            : undefined,
+        },
+      })),
+      ...(result.error ? { error: result.error } : {}),
+    });
   });
 
-  app.get('/aleya-ai/health', async () => ({
-    ok: true,
-    registrySize: getAleyaRegistry().names().length || ensureAleyaToolsRegistered().names().length,
-  }));
+  app.get('/aleya-ai/health', async () => {
+    const provider = getProviderStatus();
+    return {
+      ok: true,
+      registrySize: getAleyaRegistry().names().length || ensureAleyaToolsRegistered().names().length,
+      providerConfigured: provider.providerConfigured,
+      authMethod: provider.authMethod,
+      model: provider.model,
+      provider: provider.provider,
+    };
+  });
 };

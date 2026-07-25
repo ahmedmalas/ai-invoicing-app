@@ -7,7 +7,7 @@
   "functions": {
     "api/index.ts": {
       "includeFiles": "{src/db/postgres-schema.sql,public/**,src/assets/branding/**}",
-      "maxDuration": 60
+      "maxDuration": 300
     }
   },
   "rewrites": [
