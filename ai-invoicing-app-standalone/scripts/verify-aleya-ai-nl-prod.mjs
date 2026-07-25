@@ -182,6 +182,11 @@ async function main() {
     SESSION_KEY,
     session,
   );
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'networkidle2', timeout: 90_000 });
+  await page.waitForFunction(
+    () => Boolean(document.querySelector('nav')) || /Dashboard|Invoices|Aleya/i.test(document.body?.innerText || ''),
+    { timeout: 45_000 },
+  );
   await page.goto(`${BASE}/aleya-ai`, { waitUntil: 'networkidle2', timeout: 90_000 });
   await page.waitForSelector('[data-aleya-thread]', { timeout: 60_000 });
   await shot(page, '00-aleya-ai-ready');
