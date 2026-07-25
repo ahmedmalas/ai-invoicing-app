@@ -32,7 +32,7 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
   registry.register({
     name: 'search_invoices',
     description:
-      'Search and filter invoices by customer, status, payment state, title, invoice number, or template name (e.g. “Quantum Hire” means the Quantum Hire invoice layout template, not a customer). Prefer recent invoices when the user asks for the most recent match.',
+      'Search and filter invoices by customer, status, payment state, title, invoice number, or template name. “Quantum Hire” means the Quantum Hire invoice layout template, not a customer. When finding a source invoice to duplicate, omit status so Finalised invoices are included; duplicate_invoice creates the new Draft.',
     category: 'invoices',
     milestone: 'M1',
     confirmation: 'none',
@@ -59,7 +59,6 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       if (input.customerId) filter.customerId = input.customerId;
       if (input.status) filter.status = input.status;
       if (input.paymentState) filter.paymentState = input.paymentState;
-      // Pull a wider window then filter — “most recent Quantum Hire” needs template bindings.
       const invoices = await ctx.db.listInvoices(filter, {
         limit: Math.max(input.limit, 100),
         offset: 0,
@@ -69,12 +68,17 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       const q = String(input.query || '')
         .trim()
         .toLowerCase();
-      const templateQ = String(input.templateQuery || input.query || '')
+      const templateNeedle = String(input.templateQuery || '')
         .trim()
         .toLowerCase();
-      const looksLikeTemplateName =
-        Boolean(input.templateQuery) ||
+      const queryLooksLikeTemplate =
+        !templateNeedle &&
         /quantum\s*hire|cart\s*n\s*tip|template|layout/i.test(String(input.query || ''));
+      const effectiveTemplateNeedle =
+        templateNeedle ||
+        (queryLooksLikeTemplate
+          ? q.replace(/\b(template|layout|invoice)\b/g, '').trim()
+          : '');
 
       const enriched = await Promise.all(
         invoices.map(async (item) => {
@@ -89,25 +93,34 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       );
 
       let filtered = enriched;
-      if (q) {
-        filtered = enriched.filter((item) => {
-          const hay = `${item.title} ${item.invoiceNumber || ''} ${item.id} ${item.templateName || ''}`.toLowerCase();
-          const textMatch = hay.includes(q);
-          const templateMatch =
-            looksLikeTemplateName &&
-            Boolean(item.templateName) &&
-            item.templateName!.toLowerCase().includes(templateQ.replace(/template|layout/gi, '').trim() || templateQ);
-          return textMatch || templateMatch;
+      if (effectiveTemplateNeedle) {
+        filtered = filtered.filter((item) =>
+          (item.templateName || '').toLowerCase().includes(effectiveTemplateNeedle),
+        );
+      } else if (q) {
+        filtered = filtered.filter((item) => {
+          const hay = `${item.title} ${item.invoiceNumber || ''} ${item.id}`.toLowerCase();
+          return hay.includes(q);
         });
-      }
-      if (input.templateQuery) {
-        const tq = input.templateQuery.trim().toLowerCase();
-        filtered = filtered.filter((item) => (item.templateName || '').toLowerCase().includes(tq));
       }
       filtered = filtered.slice(0, input.limit);
       return {
         ok: true,
-        data: { invoices: filtered, count: filtered.length },
+        data: {
+          invoices: filtered.map((item) => ({
+            id: item.id,
+            title: item.title,
+            status: item.status,
+            invoiceNumber: item.invoiceNumber,
+            customerId: item.customerId,
+            issueDate: item.issueDate,
+            dueDate: item.dueDate,
+            templateId: item.templateId,
+            templateName: item.templateName,
+            totals: item.totals,
+          })),
+          count: filtered.length,
+        },
         summary: `Found ${filtered.length} invoice(s).`,
         ui: { refresh: ['invoices'] },
       };
