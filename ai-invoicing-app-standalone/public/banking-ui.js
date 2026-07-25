@@ -1,4 +1,4 @@
-/** Lazy-loaded Banking workspace (Basiq Phase 1). */
+/** Lazy-loaded Banking + Settings Bank Feeds (Basiq Phase 1). Shared API client. */
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -60,14 +60,18 @@ export function createBankingUi({ api, shell }) {
     return api('/api/banking/transactions?' + params.toString());
   }
 
-  function renderStatusCard(status, accounts) {
+  function renderConnectionPanel(status, accounts, options = {}) {
     const primary = accounts[0] || status.accounts?.[0] || null;
     const errors = Array.isArray(status.errors) ? status.errors : [];
+    const title = options.title || 'Bank Feeds';
+    const intro =
+      options.intro ||
+      'Connect a Basiq sandbox/test institution. Manage consent and sync here. Full account numbers are never shown.';
     return [
-      '<section class="banking-panel" data-banking-status>',
+      '<section class="banking-panel" data-banking-status data-bank-feeds-panel>',
       '<header class="banking-panel-head">',
-      '<h2>Bank connection</h2>',
-      '<p class="muted">Basiq sandbox / development feed. Full account numbers are never shown.</p>',
+      '<h2>' + escapeHtml(title) + '</h2>',
+      '<p class="muted">' + escapeHtml(intro) + '</p>',
       '</header>',
       '<dl class="banking-meta">',
       '<div><dt>Status</dt><dd data-status="' +
@@ -102,19 +106,22 @@ export function createBankingUi({ api, shell }) {
         : '',
       '<div class="banking-actions">',
       status.connected || status.status === 'connecting' || status.status === 'error'
-        ? '<button type="button" class="btn" data-bank-refresh>Refresh</button>'
+        ? '<button type="button" class="button" data-bank-refresh>Refresh</button>'
         : '',
       status.status === 'not_connected' ||
       status.status === 'disconnected' ||
       status.status === 'not_configured'
-        ? '<button type="button" class="btn primary" data-bank-connect>Connect bank account</button>'
-        : '<button type="button" class="btn" data-bank-reconnect>Reconnect</button>',
+        ? '<button type="button" class="button" data-bank-connect>Connect bank account</button>'
+        : '<button type="button" class="button secondary" data-bank-reconnect>Reconnect</button>',
       status.connected ||
       status.status === 'connecting' ||
       status.status === 'error' ||
       status.status === 'reauth_required' ||
       status.status === 'consent_expiring'
-        ? '<button type="button" class="btn danger" data-bank-disconnect>Disconnect</button>'
+        ? '<button type="button" class="button danger" data-bank-disconnect>Disconnect</button>'
+        : '',
+      options.showTransactionsLink
+        ? '<a class="button secondary" href="/workspace/banking" data-route>View transactions</a>'
         : '',
       '</div>',
       '</section>',
@@ -154,8 +161,8 @@ export function createBankingUi({ api, shell }) {
     return [
       '<section class="banking-panel" data-banking-transactions>',
       '<header class="banking-panel-head">',
-      '<h2>Recent transactions</h2>',
-      '<p class="muted">Loaded only when Banking is open. Paginated.</p>',
+      '<h2>Imported transactions</h2>',
+      '<p class="muted">Search and paginate feed data. Connection is managed in Settings → Bank Feeds.</p>',
       '</header>',
       '<form class="banking-filters" data-bank-filters>',
       '<label>Account<select name="accountId"><option value="">All accounts</option>',
@@ -177,7 +184,7 @@ export function createBankingUi({ api, shell }) {
       '<label>Search<input name="search" type="search" value="' +
         escapeHtml(txState.search) +
         '" placeholder="Description or merchant" /></label>',
-      '<button type="submit" class="btn">Apply</button>',
+      '<button type="submit" class="button">Apply</button>',
       '</form>',
       rows.length === 0
         ? '<p class="muted">No transactions to show.</p>'
@@ -204,11 +211,11 @@ export function createBankingUi({ api, shell }) {
             '</tbody></table>',
           ].join(''),
       '<div class="banking-pagination">',
-      '<button type="button" class="btn" data-bank-prev' +
+      '<button type="button" class="button secondary" data-bank-prev' +
         (txState.offset <= 0 ? ' disabled' : '') +
         '>Previous</button>',
       '<span class="muted">Page ' + page + ' of ' + pages + ' · ' + txState.total + ' total</span>',
-      '<button type="button" class="btn" data-bank-next' +
+      '<button type="button" class="button secondary" data-bank-next' +
         (txState.offset + txState.limit >= txState.total ? ' disabled' : '') +
         '>Next</button>',
       '</div>',
@@ -216,73 +223,7 @@ export function createBankingUi({ api, shell }) {
     ].join('');
   }
 
-  async function bankingPage() {
-    const params = new URLSearchParams(location.search);
-    const flash =
-      params.get('banking') === 'connected'
-        ? '<p class="banking-flash" role="status">Bank connection completed. Imported accounts and transactions where available.</p>'
-        : params.get('banking') === 'error'
-          ? '<p class="banking-error" role="alert">Bank connection callback failed (' +
-            escapeHtml(params.get('reason') || 'unknown') +
-            '). No secrets were returned.</p>'
-          : '';
-
-    shell(
-      [
-        '<main class="page banking-page">',
-        '<header class="page-header"><div><h1>Banking</h1>',
-        '<p class="muted">Connect a Basiq test institution, review sync status, and browse imported transactions.</p>',
-        '</div></header>',
-        flash,
-        '<div data-banking-root><p class="muted">Loading bank feed…</p></div>',
-        '</main>',
-      ].join(''),
-    );
-
-    const root = document.querySelector('[data-banking-root]');
-    try {
-      const [status, accounts, transactions] = await Promise.all([
-        loadStatus(),
-        loadAccounts(),
-        loadTransactions(),
-      ]);
-      root.innerHTML =
-        renderStatusCard(status, accounts) +
-        renderAccounts(accounts) +
-        renderTransactions(transactions, accounts);
-      bindActions(root);
-    } catch (error) {
-      root.innerHTML =
-        '<p class="banking-error" role="alert">Unable to load banking data. ' +
-        escapeHtml(error?.message || 'Unknown error') +
-        '</p>';
-    }
-  }
-
-  function bindActions(root) {
-    root.querySelector('[data-bank-connect]')?.addEventListener('click', () => void connectBank());
-    root.querySelector('[data-bank-reconnect]')?.addEventListener('click', () => void connectBank(true));
-    root.querySelector('[data-bank-refresh]')?.addEventListener('click', () => void refreshBank());
-    root.querySelector('[data-bank-disconnect]')?.addEventListener('click', () => void disconnectBank());
-    root.querySelector('[data-bank-filters]')?.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      txState.accountId = form.accountId.value || '';
-      txState.search = form.search.value || '';
-      txState.offset = 0;
-      void bankingPage();
-    });
-    root.querySelector('[data-bank-prev]')?.addEventListener('click', () => {
-      txState.offset = Math.max(0, txState.offset - txState.limit);
-      void bankingPage();
-    });
-    root.querySelector('[data-bank-next]')?.addEventListener('click', () => {
-      txState.offset += txState.limit;
-      void bankingPage();
-    });
-  }
-
-  async function connectBank(isReconnect = false) {
+  async function connectBank(isReconnect = false, onDone) {
     if (
       isReconnect &&
       !window.confirm(
@@ -306,14 +247,15 @@ export function createBankingUi({ api, shell }) {
       return;
     }
     window.location.assign(result.authLinkUrl);
+    if (typeof onDone === 'function') await onDone();
   }
 
-  async function refreshBank() {
+  async function refreshBank(onDone) {
     await api('/api/banking/refresh', { method: 'POST', body: '{}' });
-    await bankingPage();
+    if (typeof onDone === 'function') await onDone();
   }
 
-  async function disconnectBank() {
+  async function disconnectBank(onDone) {
     if (
       !window.confirm(
         'Disconnect this bank feed? Imported transactions remain, but the live connection will end.',
@@ -325,8 +267,128 @@ export function createBankingUi({ api, shell }) {
       method: 'POST',
       body: JSON.stringify({ confirm: true }),
     });
-    await bankingPage();
+    if (typeof onDone === 'function') await onDone();
   }
 
-  return { bankingPage };
+  function bindConnectionActions(root, reload) {
+    root.querySelector('[data-bank-connect]')?.addEventListener('click', () =>
+      void connectBank(false, reload),
+    );
+    root.querySelector('[data-bank-reconnect]')?.addEventListener('click', () =>
+      void connectBank(true, reload),
+    );
+    root.querySelector('[data-bank-refresh]')?.addEventListener('click', () =>
+      void refreshBank(reload),
+    );
+    root.querySelector('[data-bank-disconnect]')?.addEventListener('click', () =>
+      void disconnectBank(reload),
+    );
+  }
+
+  /** Settings → Bank Feeds: connection management only (no full transaction history). */
+  async function mountBankFeedsSettings(host) {
+    if (!host) return;
+    const render = async () => {
+      host.innerHTML = '<p class="muted">Loading bank feed connection…</p>';
+      try {
+        const params = new URLSearchParams(location.search);
+        const flash =
+          params.get('banking') === 'connected'
+            ? '<p class="banking-flash" role="status">Bank connection completed. Accounts were imported where available. Open Banking to browse transactions.</p>'
+            : params.get('banking') === 'error'
+              ? '<p class="banking-error" role="alert">Bank connection callback failed (' +
+                escapeHtml(params.get('reason') || 'unknown') +
+                '). No secrets were returned.</p>'
+              : '';
+        const [status, accounts] = await Promise.all([loadStatus(), loadAccounts()]);
+        host.innerHTML =
+          flash +
+          renderConnectionPanel(status, accounts, {
+            title: 'Bank Feeds',
+            intro:
+              'Connect and manage your Basiq bank feed for this Aleya business. Use Banking in the sidebar to search imported transactions.',
+            showTransactionsLink: true,
+          }) +
+          renderAccounts(accounts);
+        bindConnectionActions(host, render);
+      } catch (error) {
+        host.innerHTML =
+          '<p class="banking-error" role="alert">Unable to load bank feed settings. ' +
+          escapeHtml(error?.message || 'Unknown error') +
+          '</p>';
+      }
+    };
+    await render();
+  }
+
+  /** Operational Banking page: imported transactions (+ compact connection summary). */
+  async function bankingPage() {
+    const params = new URLSearchParams(location.search);
+    const flash =
+      params.get('banking') === 'connected'
+        ? '<p class="banking-flash" role="status">Bank connection completed. Manage the feed in Settings → Bank Feeds.</p>'
+        : params.get('banking') === 'error'
+          ? '<p class="banking-error" role="alert">Bank connection callback failed (' +
+            escapeHtml(params.get('reason') || 'unknown') +
+            '). No secrets were returned.</p>'
+          : '';
+
+    shell(
+      [
+        '<main class="page banking-page">',
+        '<header class="page-header"><div><h1>Banking</h1>',
+        '<p class="muted">Browse and search imported bank transactions. Connection and consent are managed in Settings → Bank Feeds.</p>',
+        '</div>',
+        '<a class="button secondary" href="/settings?tab=bank-feeds" data-route>Bank Feeds settings</a>',
+        '</header>',
+        flash,
+        '<div data-banking-root><p class="muted">Loading transactions…</p></div>',
+        '</main>',
+      ].join(''),
+    );
+
+    const root = document.querySelector('[data-banking-root]');
+    const render = async () => {
+      try {
+        const [status, accounts, transactions] = await Promise.all([
+          loadStatus(),
+          loadAccounts(),
+          loadTransactions(),
+        ]);
+        root.innerHTML =
+          '<section class="banking-panel banking-summary"><p><strong>Status:</strong> ' +
+          escapeHtml(statusLabel(status.status)) +
+          ' · <strong>Institution:</strong> ' +
+          escapeHtml(status.institution || '—') +
+          ' · <strong>Account:</strong> ' +
+          escapeHtml(status.maskedAccount || '—') +
+          ' · <a href="/settings?tab=bank-feeds" data-route>Manage connection</a></p></section>' +
+          renderTransactions(transactions, accounts);
+        root.querySelector('[data-bank-filters]')?.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          txState.accountId = form.accountId.value || '';
+          txState.search = form.search.value || '';
+          txState.offset = 0;
+          void render();
+        });
+        root.querySelector('[data-bank-prev]')?.addEventListener('click', () => {
+          txState.offset = Math.max(0, txState.offset - txState.limit);
+          void render();
+        });
+        root.querySelector('[data-bank-next]')?.addEventListener('click', () => {
+          txState.offset += txState.limit;
+          void render();
+        });
+      } catch (error) {
+        root.innerHTML =
+          '<p class="banking-error" role="alert">Unable to load banking data. ' +
+          escapeHtml(error?.message || 'Unknown error') +
+          '</p>';
+      }
+    };
+    await render();
+  }
+
+  return { bankingPage, mountBankFeedsSettings };
 }

@@ -55,7 +55,9 @@ function redirectBanking(
   },
   query: Record<string, string>,
 ) {
-  const url = new URL('/workspace/banking', 'https://ai-invoicing-app.vercel.app');
+  // Connection results land in Settings → Bank Feeds; Banking remains the transactions workspace.
+  const url = new URL('/settings', 'https://ai-invoicing-app.vercel.app');
+  url.searchParams.set('tab', 'bank-feeds');
   for (const [key, value] of Object.entries(query)) {
     url.searchParams.set(key, value);
   }

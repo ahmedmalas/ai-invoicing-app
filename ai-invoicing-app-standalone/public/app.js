@@ -1112,50 +1112,77 @@ async function timelinePage() {
   );
 }
 
-function settingsPage() {
+function settingsActiveTab() {
+  const tab = new URLSearchParams(location.search).get('tab') || 'profile';
+  return tab === 'bank-feeds' ? 'bank-feeds' : 'profile';
+}
+
+async function settingsPage() {
   const profile = cache.businessProfile || {};
   const ready = isBusinessProfileReady(profile);
+  const activeTab = settingsActiveTab();
+  const profilePanel =
+    '<section class="grid-2 settings-grid" data-settings-panel="profile"><article class="panel"><header class="panel-head"><h2>Business profile</h2></header><form class="form panel-body" id="profile-form"><label>Business name<input name="companyName" required value="' +
+    escapeHtml(profile.companyName || '') +
+    '" autocomplete="organization"></label><label>Legal name<input name="legalName" value="' +
+    escapeHtml(profile.legalName || '') +
+    '"></label><div class="form-grid"><label>ABN / Tax ID<input name="abnTaxId" value="' +
+    escapeHtml(profile.abnTaxId || '') +
+    '"></label><label>Email<input name="email" type="email" value="' +
+    escapeHtml(profile.email || '') +
+    '" autocomplete="email"></label><label>Phone<input name="phone" value="' +
+    escapeHtml(profile.phone || '') +
+    '" autocomplete="tel"></label><label class="wide">Business address<textarea name="address" required rows="3" placeholder="Street, suburb, state, postcode">' +
+    escapeHtml(profile.address || '') +
+    '</textarea></label><label>Primary colour<input name="primaryColor" type="color" value="' +
+    escapeHtml(profile.primaryColor || '#173f35') +
+    '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
+    escapeHtml(profile.secondaryColor || '#c4f36b') +
+    '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock. Phone is also used for Basiq AuthLink SMS when connecting a bank feed.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
+    (logoSrcFromProfile(profile)
+      ? '<div class="notice success"><strong>Logo active</strong><br>Your selected logo is used across the dashboard, invoices and PDFs.</div><img class="settings-logo-preview" src="' +
+        logoSrcFromProfile(profile) +
+        '" alt="Active logo" width="240" height="140">'
+      : '<div class="notice"><strong>No logo yet</strong><br>Create a logo once — Aleya applies it everywhere automatically.</div>') +
+    '<a class="button" href="/logo-creator" data-route>Open Logo Creator</a>' +
+    '<a class="button secondary" href="/templates/import" data-route>Recreate invoice template</a>' +
+    '<div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s database via <code>/api/business-profile</code>.</div>' +
+    (ready
+      ? '<div class="notice success"><strong>PDF downloads are ready</strong><br>' +
+        escapeHtml(businessProfileReadinessMessage(profile)) +
+        '</div>'
+      : '<div class="notice"><strong>PDF downloads are paused</strong><br>' +
+        escapeHtml(businessProfileReadinessMessage(profile)) +
+        '</div>') +
+    '</div></article></section>';
+
   shell(
-    '<main class="page">' +
+    '<main class="page settings-page">' +
       pageHead(
         'Aleya Settings',
-        'Business profile',
-        'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external settings page.',
+        activeTab === 'bank-feeds' ? 'Bank Feeds' : 'Business profile',
+        activeTab === 'bank-feeds'
+          ? 'Connect and manage the Basiq bank feed for this workspace. Imported transactions are browsed under Banking.'
+          : 'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external settings page.',
       ) +
-      '<section class="grid-2 settings-grid"><article class="panel"><header class="panel-head"><h2>Business profile</h2></header><form class="form panel-body" id="profile-form"><label>Business name<input name="companyName" required value="' +
-      escapeHtml(profile.companyName || '') +
-      '" autocomplete="organization"></label><label>Legal name<input name="legalName" value="' +
-      escapeHtml(profile.legalName || '') +
-      '"></label><div class="form-grid"><label>ABN / Tax ID<input name="abnTaxId" value="' +
-      escapeHtml(profile.abnTaxId || '') +
-      '"></label><label>Email<input name="email" type="email" value="' +
-      escapeHtml(profile.email || '') +
-      '" autocomplete="email"></label><label>Phone<input name="phone" value="' +
-      escapeHtml(profile.phone || '') +
-      '" autocomplete="tel"></label><label class="wide">Business address<textarea name="address" required rows="3" placeholder="Street, suburb, state, postcode">' +
-      escapeHtml(profile.address || '') +
-      '</textarea></label><label>Primary colour<input name="primaryColor" type="color" value="' +
-      escapeHtml(profile.primaryColor || '#173f35') +
-      '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
-      escapeHtml(profile.secondaryColor || '#c4f36b') +
-      '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
-      (logoSrcFromProfile(profile)
-        ? '<div class="notice success"><strong>Logo active</strong><br>Your selected logo is used across the dashboard, invoices and PDFs.</div><img class="settings-logo-preview" src="' +
-          logoSrcFromProfile(profile) +
-          '" alt="Active logo" width="240" height="140">'
-        : '<div class="notice"><strong>No logo yet</strong><br>Create a logo once — Aleya applies it everywhere automatically.</div>') +
-      '<a class="button" href="/logo-creator" data-route>Open Logo Creator</a>' +
-      '<a class="button secondary" href="/templates/import" data-route>Recreate invoice template</a>' +
-      '<div class="notice success"><strong>Stored in Aleya</strong><br>Business profile rows live in this app’s database via <code>/api/business-profile</code>.</div>' +
-      (ready
-        ? '<div class="notice success"><strong>PDF downloads are ready</strong><br>' +
-          escapeHtml(businessProfileReadinessMessage(profile)) +
-          '</div>'
-        : '<div class="notice"><strong>PDF downloads are paused</strong><br>' +
-          escapeHtml(businessProfileReadinessMessage(profile)) +
-          '</div>') +
-      '</div></article></section></main>',
+      '<nav class="settings-tabs" aria-label="Settings sections">' +
+      '<a class="settings-tab' +
+      (activeTab === 'profile' ? ' active' : '') +
+      '" href="/settings?tab=profile" data-route data-settings-tab="profile">Business profile</a>' +
+      '<a class="settings-tab' +
+      (activeTab === 'bank-feeds' ? ' active' : '') +
+      '" href="/settings?tab=bank-feeds" data-route data-settings-tab="bank-feeds">Bank Feeds</a>' +
+      '</nav>' +
+      (activeTab === 'bank-feeds'
+        ? '<section class="settings-bank-feeds" data-settings-panel="bank-feeds"><div data-settings-bank-feeds><p class="muted">Loading Bank Feeds…</p></div></section>'
+        : profilePanel) +
+      '</main>',
   );
+
+  if (activeTab === 'bank-feeds') {
+    const host = document.querySelector('[data-settings-bank-feeds]');
+    await (await getBankingUi()).mountBankFeedsSettings(host);
+  }
 }
 
 async function logoCreatorPage() {
@@ -2426,7 +2453,7 @@ async function renderRoute({ forceReload = false } = {}) {
     else if (path === '/workspace/stocktakes') await stocktakesPage();
     else if (path === '/reports') reportsPage();
     else if (path === '/timeline') await timelinePage();
-    else if (path === '/settings') settingsPage();
+    else if (path === '/settings') await settingsPage();
     else if (path === '/logo-creator') await logoCreatorPage();
     else if (path === '/templates') await getInvoiceTemplatesUi().templatesListPage();
     else if (path === '/templates/import') await getInvoiceTemplatesUi().templatesImportPage();

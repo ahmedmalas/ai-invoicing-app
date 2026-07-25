@@ -399,7 +399,7 @@ export function bankFeedStatusPayload() {
     lastSyncAttemptAt: null,
     errors: [] as string[],
     warning: null,
-    nextAction: 'Open Banking and connect a Basiq sandbox test institution.',
+    nextAction: 'Open Settings → Bank Feeds and connect a Basiq sandbox test institution.',
     distinction: {
       featureAbsent: false,
       toolAbsentForExistingFeature: false,
