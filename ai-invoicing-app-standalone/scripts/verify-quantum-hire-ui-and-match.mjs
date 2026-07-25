@@ -168,11 +168,12 @@ async function main() {
       { description: '03/07/2026 Labour Hire - Night Shift', quantity: 1, unitPrice: 350, gstApplicable: true },
     ];
 
+    const title = `Cart N Tip recreation verify ${Date.now().toString().slice(-8)}`;
     const created = await api(page, '/api/invoices', {
       method: 'POST',
       body: JSON.stringify({
         customerId: customer.id,
-        title: 'Cart N Tip recreation verify',
+        title,
         issueDate: '2026-07-06',
         dueDate: '2026-07-13',
         paymentTerms: '7 Days',
@@ -182,9 +183,14 @@ async function main() {
         lineItems,
       }),
     });
-    if (created.status !== 201) throw new Error('invoice create failed: ' + JSON.stringify(created.body));
+    if (created.status !== 201) {
+      throw new Error('invoice create failed: ' + JSON.stringify(created.body));
+    }
     const invoiceId = created.body.id;
-    report.steps.push({ step: 'create-match-invoice', id: invoiceId });
+    if (!invoiceId || created.body.status === 'Finalised') {
+      throw new Error('create did not return a fresh draft: ' + JSON.stringify(created.body));
+    }
+    report.steps.push({ step: 'create-match-invoice', id: invoiceId, title, status: created.body.status });
 
     await page.goto(`${BASE}/workspace/invoices/${invoiceId}/edit`, {
       waitUntil: 'networkidle2',
