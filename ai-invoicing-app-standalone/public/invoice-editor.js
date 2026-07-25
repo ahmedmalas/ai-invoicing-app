@@ -116,10 +116,13 @@ function formatCellDisplayValue(fieldName, value) {
 }
 
 /** Selectable text cell; input appears only while editing so drag-select works across rows. */
-function editableCellHtml(fieldName, value, inputAttrs = '') {
+function editableCellHtml(fieldName, value, inputAttrs = '', extraClass = '') {
   const display = formatCellDisplayValue(fieldName, value);
+  const className = ['invoice-editable-cell', extraClass].filter(Boolean).join(' ');
   return (
-    '<td class="invoice-editable-cell" data-editable-cell="' +
+    '<td class="' +
+    escapeHtml(className) +
+    '" data-editable-cell="' +
     escapeHtml(fieldName) +
     '">' +
     '<span class="invoice-cell-text" data-invoice-display="' +
@@ -243,21 +246,235 @@ function templateOptionsHtml(templates = [], selected = '') {
   );
 }
 
+function selectedTemplate(templates = [], selectedId = '') {
+  return (templates || []).find((item) => item.id === selectedId) || null;
+}
+
+function isQuantumHireTemplate(template) {
+  return String(template?.design?.layout?.layoutPreset || '') === 'quantum-hire';
+}
+
+function formatAuDisplayDate(iso) {
+  const value = String(iso || '').trim();
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return value;
+  return match[3] + '/' + match[2] + '/' + match[1];
+}
+
+function quantumHireLineRowHtml(item = {}, index = 0) {
+  const calculated = calculateLineItem(item);
+  const lineId = String(item.clientKey || item.id || `line-index-${index}`);
+  const description = String(calculated.description || '');
+  const dateMatch = description.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.*)$/);
+  const dateLabel = dateMatch ? dateMatch[1] : '';
+  const amount = Number(calculated.quantity || 0) * Number(calculated.unitPrice || 0);
+  return (
+    '<tr class="invoice-line qh-line" data-invoice-line data-line-id="' +
+    escapeHtml(lineId) +
+    '" data-line-index="' +
+    index +
+    '">' +
+    '<td class="qh-col-date"><span class="qh-date-display">' +
+    escapeHtml(dateLabel || '—') +
+    '</span></td>' +
+    editableCellHtml(
+      'description',
+      description,
+      'required placeholder="DD/MM/YYYY Description of work" autocomplete="off" spellcheck="true"',
+      'qh-col-description',
+    ) +
+    editableCellHtml(
+      'quantity',
+      calculated.quantity || 1,
+      'type="number" min="0.01" step="0.01" inputmode="decimal" required',
+      'qh-col-qty',
+    ) +
+    editableCellHtml(
+      'unitPrice',
+      calculated.unitPrice || 0,
+      'type="number" min="0" step="0.01" inputmode="decimal" required',
+      'qh-col-rate',
+    ) +
+    '<td class="qh-col-amount" data-line-total>' +
+    money(amount) +
+    '</td>' +
+    '<td class="invoice-line-actions qh-line-actions">' +
+    '<select data-invoice-field="gstApplicable" name="gstApplicable" aria-label="GST">' +
+    '<option value="true"' +
+    (calculated.gstApplicable ? ' selected' : '') +
+    '>GST</option>' +
+    '<option value="false"' +
+    (!calculated.gstApplicable ? ' selected' : '') +
+    '>No GST</option></select>' +
+    '<button type="button" class="icon-button" data-line-duplicate tabindex="-1" aria-label="Duplicate line">⧉</button>' +
+    '<button type="button" class="icon-button" data-remove-line tabindex="-1" aria-label="Delete line">×</button>' +
+    '</td></tr>'
+  );
+}
+
+function buildQuantumHireEditorHtml({
+  profile = {},
+  customers = [],
+  templates = [],
+  recordState,
+  template = null,
+}) {
+  const lines = recordState.lineItems.map((item, index) => quantumHireLineRowHtml(item, index)).join('');
+  const totals = recordState.totals || calculateInvoiceTotals(recordState.lineItems).totals;
+  const status = recordState.status || 'Draft';
+  const invoiceNumberDisplay = formatInvoiceNumberDisplay(recordState.invoiceNumber);
+  const selectedTemplateId =
+    recordState.templateId || templates.find((item) => item.isDefault)?.id || '';
+  const design = template?.design || {};
+  const brand = design.businessDefaults || {};
+  const bank = design.bankDetails || {};
+  const fromName = brand.companyName || profile.companyName || 'Quantum Hire Services Pty Ltd';
+  const fromPhone = profile.phone || brand.phone || '';
+  const fromEmail = profile.email || brand.email || '';
+  const fromAbn = profile.abnTaxId || brand.abnTaxId || '';
+  const customer = (customers || []).find((item) => item.id === recordState.customerId) || null;
+  const numberShown = invoiceNumberDisplay
+    ? invoiceNumberDisplay.startsWith('#')
+      ? invoiceNumberDisplay
+      : '#' + invoiceNumberDisplay
+    : '#Draft';
+
+  return (
+    '<div class="invoice-curtain" data-invoice-editor data-layout-preset="quantum-hire" aria-hidden="true">' +
+    '<form class="invoice-workspace qh-workspace" id="invoice-editor-form" novalidate data-record-id="' +
+    escapeHtml(recordState.id || '') +
+    '" data-payment-state="' +
+    escapeHtml(recordState.paymentState || 'Draft') +
+    '" data-status="' +
+    escapeHtml(status) +
+    '" data-invoice-number="' +
+    escapeHtml(recordState.invoiceNumber || '') +
+    '" data-layout-preset="quantum-hire">' +
+    '<header class="invoice-toolbar">' +
+    '<div class="invoice-toolbar-brand">' +
+    '<img class="brand-logo" src="/assets/quantum-hire-logo.png" alt="Quantum Hire" width="40" height="40">' +
+    '<div><strong>Quantum Hire invoice</strong><small>Cart N Tip layout · live editable data</small></div></div>' +
+    '<div class="invoice-toolbar-actions">' +
+    '<button type="submit" class="button secondary" data-invoice-action="draft">Save Draft</button>' +
+    '<button type="submit" class="button" data-invoice-action="save">Save</button>' +
+    '<button type="button" class="button ghost" data-invoice-action="preview">Preview PDF</button>' +
+    '<button type="button" class="button ghost" data-invoice-action="download">Download PDF</button>' +
+    '<button type="button" class="button ghost" data-invoice-action="cancel">Cancel</button>' +
+    '</div></header>' +
+    '<div class="qh-controls">' +
+    '<label class="invoice-field">Customer<select data-invoice-field="customerId" name="customerId" required data-customer-select>' +
+    '<option value="">Select customer</option>' +
+    customerOptionsHtml(customers, recordState.customerId || '') +
+    '</select></label>' +
+    '<label class="invoice-field">Template<select data-invoice-field="templateId" name="templateId" data-template-select>' +
+    templateOptionsHtml(templates, selectedTemplateId) +
+    '</select></label>' +
+    '<label class="invoice-field">Title<input data-invoice-field="title" name="title" required value="' +
+    escapeHtml(recordState.title || '') +
+    '" placeholder="Invoice title"></label>' +
+    '<label class="invoice-field">Issue date<input data-invoice-field="issueDate" name="issueDate" type="date" required value="' +
+    escapeHtml(recordState.issueDate || '') +
+    '"></label>' +
+    '<label class="invoice-field">Due date<input data-invoice-field="dueDate" name="dueDate" type="date" required value="' +
+    escapeHtml(recordState.dueDate || '') +
+    '"></label></div>' +
+    '<div class="qh-page" data-qh-page>' +
+    '<section class="qh-header">' +
+    '<div class="qh-logo-wrap"><img class="qh-logo" src="/assets/quantum-hire-logo.png" alt="Quantum Hire Services"></div>' +
+    '<div class="qh-header-divider" aria-hidden="true"></div>' +
+    '<div class="qh-meta"><h1 class="qh-title">TAX INVOICE</h1><dl class="qh-meta-list">' +
+    '<div><dt>INVOICE NUMBER:</dt><dd data-invoice-number-display>' +
+    escapeHtml(numberShown) +
+    '</dd></div>' +
+    '<div><dt>INVOICE DATE:</dt><dd data-qh-issue-display>' +
+    escapeHtml(formatAuDisplayDate(recordState.issueDate)) +
+    '</dd></div>' +
+    '<div><dt>DUE DATE:</dt><dd data-qh-due-display>' +
+    escapeHtml(formatAuDisplayDate(recordState.dueDate)) +
+    '</dd></div>' +
+    '<div><dt>TERMS:</dt><dd><input class="qh-meta-input" data-invoice-field="paymentTerms" name="paymentTerms" value="' +
+    escapeHtml(recordState.paymentTerms || design.termsAndConditions || '7 Days') +
+    '"></dd></div></dl></div></section><hr class="qh-rule">' +
+    '<section class="qh-parties"><div class="qh-billto"><h2>BILL TO:</h2><div class="qh-party-name" data-customer-preview>' +
+    (customer
+      ? '<strong>' +
+        escapeHtml(customer.displayName) +
+        '</strong>' +
+        (customer.address ? '<span>' + escapeHtml(customer.address) + '</span>' : '') +
+        (customer.email ? '<span>' + escapeHtml(customer.email) + '</span>' : '')
+      : '<span class="muted">Select a customer</span>') +
+    '</div></div><div class="qh-from"><h2>FROM:</h2><strong>' +
+    escapeHtml(fromName) +
+    '</strong>' +
+    (fromPhone ? '<span>M: ' + escapeHtml(fromPhone) + '</span>' : '') +
+    (fromEmail ? '<span>E: ' + escapeHtml(fromEmail) + '</span>' : '') +
+    (fromAbn ? '<span>ABN: ' + escapeHtml(fromAbn) + '</span>' : '') +
+    '</div></section>' +
+    '<section class="qh-lines-section"><div class="qh-lines-toolbar">' +
+    '<span class="invoice-line-count muted" data-line-count>' +
+    escapeHtml(formatLineItemCountLabel(recordState.lineItems.length)) +
+    '</span><button type="button" class="button secondary small" data-add-line>Add line</button></div>' +
+    '<div class="qh-table-wrap"><table class="qh-lines-table"><thead><tr>' +
+    '<th>DATE</th><th>DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT (EX GST)</th><th class="narrow"></th>' +
+    '</tr></thead><tbody data-invoice-lines>' +
+    lines +
+    '</tbody></table></div></section>' +
+    '<section class="qh-footer"><div class="qh-footer-divider" aria-hidden="true"></div>' +
+    '<div class="qh-payment"><h2>PAYMENT DETAILS:</h2><dl>' +
+    '<div><dt>Account Name:</dt><dd>' +
+    escapeHtml(bank.accountName || fromName) +
+    '</dd></div><div><dt>BSB:</dt><dd>' +
+    escapeHtml(bank.bsb || '') +
+    '</dd></div><div><dt>Account Number:</dt><dd>' +
+    escapeHtml(bank.accountNumber || '') +
+    '</dd></div><div><dt>Reference:</dt><dd data-qh-reference>' +
+    escapeHtml(recordState.invoiceNumber ? String(recordState.invoiceNumber).replace(/^#/, '') : '') +
+    '</dd></div></dl><h2 class="qh-note-title">PLEASE NOTE:</h2>' +
+    '<textarea class="qh-notes" data-invoice-field="notes" name="notes" rows="3">' +
+    escapeHtml(recordState.notes || design.notesPlaceholder || '') +
+    '</textarea></div><div class="qh-totals" aria-live="polite">' +
+    '<div><span>SUBTOTAL (EX GST):</span><strong data-total-subtotal>' +
+    money(totals.subtotal) +
+    '</strong></div><div><span>GST (10%):</span><strong data-total-gst>' +
+    money(totals.gstTotal) +
+    '</strong></div><div class="qh-grand"><span>TOTAL (INC GST):</span><strong data-total-grand>' +
+    money(totals.total) +
+    '</strong></div>' +
+    '<img class="qh-thankyou" src="/assets/quantum-hire-thank-you.png" alt="Thank you for your business">' +
+    '</div></section>' +
+    (status === 'Draft' && recordState.id
+      ? '<section class="invoice-danger-zone"><button type="button" class="button danger" data-invoice-action="delete">Delete invoice draft</button></section>'
+      : '') +
+    '</div></form></div>'
+  );
+}
+
 function buildEditorHtml({ profile = {}, customers = [], templates = [], state = null, record = null }) {
   const resolved = withLineClientKeys(
     state || (record ? hydrateEditorState(record) : createEmptyEditorState()),
   );
   const recordState = resolved;
+  const selectedTemplateId =
+    recordState.templateId || templates.find((item) => item.isDefault)?.id || '';
+  const template = selectedTemplate(templates, selectedTemplateId);
+  if (isQuantumHireTemplate(template)) {
+    return buildQuantumHireEditorHtml({
+      profile,
+      customers,
+      templates,
+      recordState,
+      template,
+    });
+  }
+
   const lines = recordState.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
   const totals = recordState.totals || calculateInvoiceTotals(recordState.lineItems).totals;
   const logo = logoSrcFromProfile(profile);
   const status = recordState.status || 'Draft';
   const invoiceNumberDisplay = formatInvoiceNumberDisplay(recordState.invoiceNumber);
-  const selectedTemplateId =
-    recordState.templateId || templates.find((item) => item.isDefault)?.id || '';
 
   return (
-    '<div class="invoice-curtain" data-invoice-editor aria-hidden="true">' +
+    '<div class="invoice-curtain" data-invoice-editor data-layout-preset="standard" aria-hidden="true">' +
     '<form class="invoice-workspace" id="invoice-editor-form" novalidate data-record-id="' +
     escapeHtml(recordState.id || '') +
     '" data-payment-state="' +
@@ -266,7 +483,7 @@ function buildEditorHtml({ profile = {}, customers = [], templates = [], state =
     escapeHtml(status) +
     '" data-invoice-number="' +
     escapeHtml(recordState.invoiceNumber || '') +
-    '">' +
+    '" data-layout-preset="standard">' +
     '<header class="invoice-toolbar">' +
     '<div class="invoice-toolbar-brand">' +
     (logo
@@ -414,6 +631,7 @@ export function createInvoiceEditor(deps) {
   let state = withLineClientKeys(createEmptyEditorState());
   let root = null;
   let form = null;
+  let templatesCache = [];
   let opChain = Promise.resolve();
   let autosaveTimer = null;
   let destroyed = false;
@@ -684,7 +902,69 @@ export function createInvoiceEditor(deps) {
     form.dataset.status = state.status || 'Draft';
     form.dataset.invoiceNumber = state.invoiceNumber || '';
     const display = form.querySelector('[data-invoice-number-display]');
-    if (display) display.textContent = formatInvoiceNumberDisplay(state.invoiceNumber);
+    if (display) {
+      const formatted = formatInvoiceNumberDisplay(state.invoiceNumber);
+      display.textContent =
+        currentLayoutPreset() === 'quantum-hire' && formatted && !String(formatted).startsWith('#')
+          ? '#' + formatted
+          : formatted || (currentLayoutPreset() === 'quantum-hire' ? '#Draft' : formatted);
+    }
+    syncQuantumHireMetaDisplays();
+  }
+
+  function syncQuantumHireMetaDisplays() {
+    if (!form || currentLayoutPreset() !== 'quantum-hire') return;
+    const issue = form.querySelector('[data-qh-issue-display]');
+    const due = form.querySelector('[data-qh-due-display]');
+    if (issue) issue.textContent = formatAuDisplayDate(state.issueDate);
+    if (due) due.textContent = formatAuDisplayDate(state.dueDate);
+    const reference = form.querySelector('[data-qh-reference]');
+    if (reference) {
+      reference.textContent = state.invoiceNumber
+        ? String(state.invoiceNumber).replace(/^#/, '')
+        : '';
+    }
+  }
+
+  function layoutPresetForTemplateId(templateId) {
+    const template = selectedTemplate(templatesCache, templateId || '');
+    return isQuantumHireTemplate(template) ? 'quantum-hire' : 'standard';
+  }
+
+  /**
+   * Quantum Hire uses a dedicated document shell. Switching templates across
+   * layout presets must rebuild that shell — styling alone cannot convert
+   * the standard Aleya invoice sheet into Cart N Tip geometry.
+   */
+  function remountEditorForLayoutChange() {
+    if (!root || !form) return;
+    commitPendingInput();
+    const keepOpen = root.classList.contains('is-open');
+    const html = buildEditorHtml({
+      profile: deps.getProfile() || {},
+      customers: deps.getCustomers() || [],
+      templates: templatesCache,
+      state,
+    });
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const nextRoot = host.firstElementChild;
+    if (!nextRoot) return;
+    root.replaceWith(nextRoot);
+    root = nextRoot;
+    form = root.querySelector('#invoice-editor-form');
+    if (!form) return;
+    if (keepOpen) {
+      root.classList.add('is-open');
+      root.setAttribute('data-curtain-state', 'open');
+      root.setAttribute('aria-hidden', 'false');
+      root.style.transform = 'translate3d(0, 0, 0)';
+    }
+    syncFormMeta();
+    applyReadOnlyUi();
+    bindInteractions();
+    updateCustomerPreview();
+    refreshTotalsDisplay();
   }
 
   /** Canonical payload from editor state — never FormData / DOM scrape. */
@@ -730,15 +1010,29 @@ export function createInvoiceEditor(deps) {
       ...state,
       totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total },
     };
+    const quantumHire = currentLayoutPreset() === 'quantum-hire';
     form.querySelectorAll('[data-invoice-line]').forEach((row, index) => {
+      const item = calculatedItems[index] || state.lineItems[index] || {};
       const cell = row.querySelector('[data-line-total]');
-      if (cell) cell.textContent = money(calculatedItems[index]?.lineTotal || 0);
+      if (cell) {
+        // Cart N Tip amount column is exclusive of GST (qty × rate).
+        const amount = quantumHire
+          ? Number(item.quantity || 0) * Number(item.unitPrice || 0)
+          : Number(item.lineTotal || 0);
+        cell.textContent = money(amount);
+      }
       row.dataset.lineIndex = String(index);
       const number = displayLineNumber(index);
       const numberEl = row.querySelector('[data-line-number]');
       if (numberEl) numberEl.textContent = String(number);
       const sr = row.querySelector('.sr-only');
       if (sr) sr.textContent = 'Line ' + number;
+      if (quantumHire) {
+        const description = String(item.description || '');
+        const dateMatch = description.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+/);
+        const dateEl = row.querySelector('.qh-date-display');
+        if (dateEl) dateEl.textContent = dateMatch ? dateMatch[1] : '—';
+      }
     });
     const countEl = form.querySelector('[data-line-count]');
     if (countEl) countEl.textContent = formatLineItemCountLabel(state.lineItems.length);
@@ -748,6 +1042,7 @@ export function createInvoiceEditor(deps) {
     if (sub) sub.textContent = money(totals.subtotal);
     if (gst) gst.textContent = money(totals.gstTotal);
     if (grand) grand.textContent = money(totals.total);
+    syncQuantumHireMetaDisplays();
     if (selection?.el?.isConnected && typeof selection.el.setSelectionRange === 'function') {
       try {
         selection.el.focus({ preventScroll: true });
@@ -820,10 +1115,16 @@ export function createInvoiceEditor(deps) {
     scheduleAutosave();
   }
 
+  function currentLayoutPreset() {
+    return form?.getAttribute('data-layout-preset') || 'standard';
+  }
+
   function renderLineRows() {
     const body = form?.querySelector('[data-invoice-lines]');
     if (!body) return;
-    body.innerHTML = state.lineItems.map((item, index) => lineRowHtml(item, index)).join('');
+    const rowHtml =
+      currentLayoutPreset() === 'quantum-hire' ? quantumHireLineRowHtml : lineRowHtml;
+    body.innerHTML = state.lineItems.map((item, index) => rowHtml(item, index)).join('');
     refreshTotalsDisplay();
   }
 
@@ -831,6 +1132,16 @@ export function createInvoiceEditor(deps) {
     const preview = form?.querySelector('[data-customer-preview]');
     if (!preview) return;
     const customer = (deps.getCustomers() || []).find((item) => item.id === state.customerId);
+    if (currentLayoutPreset() === 'quantum-hire') {
+      preview.innerHTML = customer
+        ? '<strong>' +
+          escapeHtml(customer.displayName) +
+          '</strong>' +
+          (customer.address ? '<span>' + escapeHtml(customer.address) + '</span>' : '') +
+          (customer.email ? '<span>' + escapeHtml(customer.email) + '</span>' : '')
+        : '<span class="muted">Select a customer</span>';
+      return;
+    }
     preview.innerHTML = customerPreviewMarkup(customer || null);
   }
 
@@ -1009,17 +1320,34 @@ export function createInvoiceEditor(deps) {
       // Commit on every input (typing, paste fallback, autofill, programmatic InputEvent).
       applyFieldFromEvent(event.target);
       if (event.target.closest('[data-invoice-line], [data-invoice-field]')) refreshTotalsDisplay();
+      if (
+        path === 'issueDate' ||
+        path === 'dueDate' ||
+        path === 'description' ||
+        path === 'paymentTerms'
+      ) {
+        syncQuantumHireMetaDisplays();
+      }
       scheduleAutosave();
     });
     form.addEventListener('change', (event) => {
       // Autofill / steppers / select changes — write numeric values back immediately.
       const path = event.target?.getAttribute?.('data-invoice-field');
       const writeBack = path === 'quantity' || path === 'unitPrice';
+      const previousPreset = currentLayoutPreset();
       applyFieldFromEvent(event.target, { writeBack });
       if (event.target.matches('[data-invoice-field="customerId"]')) updateCustomerPreview();
+      if (event.target.matches('[data-invoice-field="templateId"]')) {
+        const nextPreset = layoutPresetForTemplateId(state.templateId);
+        if (nextPreset !== previousPreset) {
+          remountEditorForLayoutChange();
+          scheduleAutosave();
+          return;
+        }
+      }
       if (
         event.target.matches(
-          '[data-invoice-field="gstApplicable"], [data-invoice-field="customerId"], [data-invoice-field="quantity"], [data-invoice-field="unitPrice"]',
+          '[data-invoice-field="gstApplicable"], [data-invoice-field="customerId"], [data-invoice-field="quantity"], [data-invoice-field="unitPrice"], [data-invoice-field="issueDate"], [data-invoice-field="dueDate"]',
         )
       ) {
         refreshTotalsDisplay();
@@ -1394,6 +1722,7 @@ export function createInvoiceEditor(deps) {
     } catch {
       templates = [];
     }
+    templatesCache = templates;
     const defaultTemplate = templates.find((item) => item.isDefault) || templates[0] || null;
 
     const local = !record?.id && snapshotRecoverable(readLocal(storage)) ? readLocal(storage) : null;
