@@ -9,6 +9,7 @@ import {
   disconnectBankFeed,
   startBasiqConnect,
 } from '../domain/banking/connection-service.js';
+import { InvalidAustralianMobileError } from '../domain/banking/phone.js';
 import { assertBankRateLimit } from '../domain/banking/rate-limit.js';
 import { syncBankConnection } from '../domain/banking/sync-service.js';
 import {
@@ -126,7 +127,8 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/banking/basiq/connect', async (request, reply) => {
-    assertBankRateLimit(`connect:${clientKey(request)}`, { limit: 8, windowMs: 60_000 });
+    // Connect + resend AuthLink share this limiter (sensible resend spacing).
+    assertBankRateLimit(`connect:${clientKey(request)}`, { limit: 6, windowMs: 60_000 });
     const businessId = businessIdFromAuth(request);
     const workspace = getWorkspaceContext();
     if (!workspace) throw new Error('AUTH_UNAUTHENTICATED');
@@ -134,6 +136,8 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         mobile: z.string().min(8).max(32).optional(),
+        /** Explicit resend of AuthLink (same connect path, clearer UX). */
+        resend: z.boolean().optional(),
       })
       .parse(request.body ?? {});
 
@@ -142,13 +146,6 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
       (profile?.email && String(profile.email).trim()) ||
       `${businessId.replaceAll('-', '').slice(0, 12)}@users.aleya.app`;
     const mobile = body.mobile?.trim() || profile?.phone?.trim() || null;
-    if (!mobile) {
-      return reply.code(400).send({
-        code: 'BANK_CONNECT_MOBILE_REQUIRED',
-        message:
-          'A mobile number is required for Basiq AuthLink SMS verification. Add a phone on the business profile or pass mobile in the connect request.',
-      });
-    }
 
     try {
       const started = await app.db.startBasiqBankConnect({
@@ -170,14 +167,29 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         connectionId: started.connection.id,
         status: started.connection.status,
         expiresAt: started.expiresAt,
-        // Never include tokens or secrets.
+        environment: started.environment,
+        sandbox: started.sandbox,
+        deliveryMode: started.deliveryMode,
+        message: body.resend
+          ? started.sandbox
+            ? 'Sandbox AuthLink regenerated. Opening Basiq Connect again (no SMS is sent).'
+            : started.message
+          : started.message,
+        // Never include tokens or secrets. Do not claim AuthLink was SMS-delivered.
       });
     } catch (error) {
       if (error instanceof BasiqClientError) {
         return reply.code(error.category === 'not_configured' ? 503 : 502).send({
           code: 'BASIQ_CONNECT_FAILED',
           category: error.category,
-          message: 'Unable to start Basiq bank connection.',
+          message: error.providerDetail || error.message || 'Unable to start Basiq bank connection.',
+          providerDetail: error.providerDetail || null,
+        });
+      }
+      if (error instanceof InvalidAustralianMobileError) {
+        return reply.code(400).send({
+          code: error.code,
+          message: error.message,
         });
       }
       throw error;

@@ -7,12 +7,20 @@ import {
   createBasiqAuthLink,
   createBasiqUser,
   deleteBasiqConnection,
+  isBasiqSandboxEnvironment,
 } from '../../services/basiq-client.js';
+import {
+  BASIQ_SANDBOX_PLACEHOLDER_MOBILE,
+  InvalidAustralianMobileError,
+  normalizeAustralianMobileE164,
+} from './phone.js';
 import { syncBankConnection } from './sync-service.js';
 import type { BankConnection, BankSyncResult } from './types.js';
 
 const STATE_TTL_MS = 30 * 60 * 1000;
 export const BASIQ_STATE_COOKIE = 'aleya_basiq_state';
+
+export type AuthLinkDeliveryMode = 'open_auth_link';
 
 export function createConnectStateToken(): string {
   return randomBytes(24).toString('base64url');
@@ -34,6 +42,12 @@ export async function startBasiqConnect(
   stateToken: string;
   connection: BankConnection;
   expiresAt: string | null;
+  environment: 'sandbox' | 'production';
+  deliveryMode: AuthLinkDeliveryMode;
+  sandbox: boolean;
+  /** Present only in production when a real AU mobile was supplied for hosted 2FA. */
+  authLinkMobile: string | null;
+  message: string;
 }> {
   if (!basiqConfigured()) {
     throw new BasiqClientError('not_configured', 'BASIQ_API_KEY is not configured');
@@ -41,8 +55,22 @@ export async function startBasiqConnect(
   if (!input.email?.trim()) {
     throw new Error('BANK_CONNECT_EMAIL_REQUIRED');
   }
-  if (!input.mobile?.trim()) {
-    throw new Error('BANK_CONNECT_MOBILE_REQUIRED');
+
+  const sandbox = isBasiqSandboxEnvironment();
+  let mobileForApi: string;
+  if (sandbox) {
+    // Sandbox does not SMS-deliver AuthLinks. Basiq still expects a mobile on
+    // the user/auth_link for API validity; use a fixed sandbox placeholder and
+    // open the returned AuthLink URL in the browser (Hooli test bank).
+    mobileForApi = BASIQ_SANDBOX_PLACEHOLDER_MOBILE;
+  } else {
+    const normalized = normalizeAustralianMobileE164(input.mobile);
+    if (!normalized) {
+      throw new InvalidAustralianMobileError(
+        'A valid Australian mobile (+614XXXXXXXX) is required for Basiq AuthLink 2FA in production.',
+      );
+    }
+    mobileForApi = normalized;
   }
 
   const existing = await store.getConnectionByBusiness(input.businessId);
@@ -55,7 +83,7 @@ export async function startBasiqConnect(
       lastName?: string | null;
     } = {
       email: input.email.trim(),
-      mobile: input.mobile.trim(),
+      mobile: mobileForApi,
     };
     if (input.firstName) userInput.firstName = input.firstName;
     if (input.lastName) userInput.lastName = input.lastName;
@@ -78,7 +106,7 @@ export async function startBasiqConnect(
   }
   const connection = await store.upsertConnection(upsertInput);
 
-  const authLink = await createBasiqAuthLink(providerUserId);
+  const authLink = await createBasiqAuthLink(providerUserId, { mobile: mobileForApi });
   const stateToken = createConnectStateToken();
   const now = new Date();
   await store.saveConnectState({
@@ -97,6 +125,13 @@ export async function startBasiqConnect(
     stateToken,
     connection,
     expiresAt: authLink.expiresAt,
+    environment: sandbox ? 'sandbox' : 'production',
+    deliveryMode: 'open_auth_link',
+    sandbox,
+    authLinkMobile: sandbox ? null : mobileForApi,
+    message: sandbox
+      ? 'Sandbox AuthLink created. Opening Basiq Connect for a sandbox test institution (no SMS is sent).'
+      : 'AuthLink created. Opening Basiq Connect — complete any mobile 2FA on Basiq’s hosted page.',
   };
 }
 

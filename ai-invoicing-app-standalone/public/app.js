@@ -1140,7 +1140,7 @@ async function settingsPage() {
     escapeHtml(profile.primaryColor || '#173f35') +
     '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
     escapeHtml(profile.secondaryColor || '#c4f36b') +
-    '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock. Phone is also used for Basiq AuthLink SMS when connecting a bank feed.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
+    '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock. In production, phone may be used for Basiq AuthLink two-factor authentication after AuthLink is opened in the browser (not to SMS-deliver the AuthLink URL).</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
     (logoSrcFromProfile(profile)
       ? '<div class="notice success"><strong>Logo active</strong><br>Your selected logo is used across the dashboard, invoices and PDFs.</div><img class="settings-logo-preview" src="' +
         logoSrcFromProfile(profile) +
