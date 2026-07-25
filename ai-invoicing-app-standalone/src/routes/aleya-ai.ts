@@ -7,6 +7,8 @@ import {
   getConversation,
   listConversations,
 } from '../ai/conversation-store.js';
+import { latencyTraceEnabled } from '../ai/latency.js';
+import { PRODUCT_CAPABILITIES } from '../ai/product-capabilities.js';
 import { getProviderStatus } from '../ai/provider.js';
 import { getAleyaRegistry } from '../ai/registry.js';
 import { ensureAleyaToolsRegistered } from '../ai/tools/register-all.js';
@@ -67,6 +69,24 @@ function pickPublicToolData(toolName: string, data: unknown): Record<string, unk
     'templateNeedle',
     'ignoredStatusFilterForTemplateSearch',
     'invoices',
+    'implemented',
+    'connected',
+    'status',
+    'provider',
+    'institution',
+    'maskedAccount',
+    'lastSuccessfulSyncAt',
+    'warning',
+    'nextAction',
+    'distinction',
+    'capabilities',
+    'appExists',
+    'aiAccess',
+    'limitation',
+    'priority',
+    'found',
+    'message',
+    'feature',
   ] as const;
   const picked: Record<string, unknown> = { tool: toolName };
   for (const key of allow) {
@@ -78,11 +98,17 @@ function pickPublicToolData(toolName: string, data: unknown): Record<string, unk
 export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
   ensureAleyaToolsRegistered();
 
-  app.get('/aleya-ai/capabilities', async () => {
+  app.get('/aleya-ai/capabilities', async (request) => {
     const registry = ensureAleyaToolsRegistered();
     const provider = getProviderStatus();
+    const query = (request.query || {}) as { detail?: string };
+    const detail = query.detail === 'full';
+    const rows = registry.capabilityRows();
     return {
-      productGoal: 'A full natural-language operating layer for Aleya Invoicing.',
+      productGoal:
+        'Natural-language assistant for Aleya Invoicing via registered tools. Expanding coverage — not yet a complete operating layer over every screen.',
+      coverageNote:
+        'Use list_product_capabilities / get_feature_status for accurate feature existence vs AI access. Bank feeds are not implemented.',
       toolCount: registry.names().length,
       maxSteps: Number(process.env.ALEYA_AI_MAX_STEPS || 48),
       model: provider.model,
@@ -90,7 +116,24 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
       authMethod: provider.authMethod,
       providerConfigured: provider.providerConfigured,
       deterministicPlanAllowed: provider.deterministicPlanAllowed,
-      tools: registry.capabilityRows(),
+      // Concise catalog by default — full schemas stay server-side on the registry.
+      tools: detail
+        ? rows
+        : rows.map((row) => ({
+            tool: row.tool,
+            category: row.category,
+            confirmation: row.confirmation,
+            undo: row.undo,
+            domain: row.domain,
+            mutates: row.mutates,
+          })),
+      productCapabilities: PRODUCT_CAPABILITIES.map((item) => ({
+        id: item.id,
+        label: item.label,
+        appExists: item.appExists,
+        aiAccess: item.aiAccess,
+        priority: item.priority,
+      })),
       artificialLimitsForbidden: [
         'one tool call per message',
         'one invoice action per command',
@@ -101,6 +144,7 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
         'simulated actions only',
         'small hardcoded intent list',
         'silent ALEYA_PLAN / fake success fallback',
+        'calling unrelated tools after a capability gap',
       ],
     };
   });
@@ -147,6 +191,9 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
   app.post('/aleya-ai/chat', async (request, reply) => {
     const body = chatSchema.parse(request.body);
     const { userId, organizationId } = actorIds(request as never);
+    const includeLatencyTrace = latencyTraceEnabled(
+      request.headers as Record<string, unknown>,
+    );
     const result = await runAleyaAgent({
       db: app.db,
       userId,
@@ -154,6 +201,7 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
       conversationId: body.conversationId ?? null,
       message: body.message,
       visibleState: (body.visibleState || {}) as import('../ai/types.js').AgentVisibleState,
+      includeLatencyTrace,
       ...(body.confirmationToken ? { confirmationToken: body.confirmationToken } : {}),
       ...(body.confirm != null ? { confirm: body.confirm } : {}),
     });
@@ -176,6 +224,7 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
       providerConfigured: result.providerConfigured,
       authMethod: result.authMethod,
       provider: result.provider,
+      path: result.path,
       toolCalls: result.toolCalls.map((item) => ({
         toolName: item.toolName,
         result: {
@@ -190,6 +239,10 @@ export const aleyaAiRoutes: FastifyPluginAsync = async (app) => {
         },
       })),
       ...(result.error ? { error: result.error } : {}),
+      // Developer-only timing — omitted unless explicitly requested.
+      ...(includeLatencyTrace && result.latencyTrace
+        ? { latencyTrace: result.latencyTrace }
+        : {}),
     });
   });
 

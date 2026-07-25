@@ -1,4 +1,5 @@
 import { getAleyaRegistry, type AleyaActionRegistry } from '../registry.js';
+import { registerCapabilityTools } from './capability-tools.js';
 import { registerCustomerProfileTools } from './customer-profile-tools.js';
 import { registerInvoicingTools } from './invoicing-tools.js';
 import { registerPaymentsMetaTools } from './payments-meta-tools.js';
@@ -11,6 +12,7 @@ export function ensureAleyaToolsRegistered(
     registerInvoicingTools(registry);
     registerCustomerProfileTools(registry);
     registerPaymentsMetaTools(registry);
+    registerCapabilityTools(registry);
   }
   return registry;
 }

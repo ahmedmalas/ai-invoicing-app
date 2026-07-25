@@ -4,7 +4,7 @@
 
 Aleya AI is **not** a chatbot bolted onto invoicing.
 
-It is a **full natural-language operating layer for Aleya Invoicing**: the authenticated user describes the result they want; Aleya determines the steps, performs the work through registered application tools, verifies outcomes, and reports back.
+It is a **natural-language assistant for Aleya Invoicing** that operates through registered application tools. Coverage is expanding toward a full operating layer, but it must **not** claim to be a complete operating layer while ordinary app features remain invisible or unimplemented (for example bank feeds).
 
 ## Amended requirements (binding)
 

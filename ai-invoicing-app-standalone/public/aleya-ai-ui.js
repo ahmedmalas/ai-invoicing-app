@@ -1,5 +1,5 @@
 /**
- * Aleya AI workspace — natural-language operating layer UI.
+ * Aleya AI workspace — natural-language assistant UI.
  * Talks to /api/aleya-ai/* and refreshes app caches from tool UI instructions.
  */
 
@@ -38,6 +38,7 @@ export function createAleyaAiUi(deps) {
   let pendingConfirmation = null;
   let busy = false;
   let lastFocusInvoiceId = null;
+  let abortController = null;
 
   function renderMessage(role, content, options = {}) {
     const extraClass = options.kind ? ' aleya-msg-' + options.kind : '';
@@ -54,69 +55,37 @@ export function createAleyaAiUi(deps) {
   }
 
   async function aleyaAiPage() {
-    const caps = await deps.api('/api/aleya-ai/capabilities').catch(() => ({
-      tools: [],
-      toolCount: 0,
-      providerConfigured: false,
-    }));
-    const modelReady = Boolean(caps.providerConfigured);
-    const modelLabel = caps.model || 'openai/gpt-5.4';
-    const authLabel = caps.authMethod && caps.authMethod !== 'none' ? caps.authMethod : 'unconfigured';
-
+    // Paint shell immediately; load a concise capability catalog in parallel.
+    const modelReadyPlaceholder = true;
     deps.shell(
       '<main class="page aleya-ai-page">' +
         deps.pageHead(
           'Aleya AI',
-          'Natural-language operating layer',
-          'Describe the result you want. Aleya plans the steps, uses registered application tools, and reports back.',
+          'Natural-language assistant',
+          'Ask in ordinary language. Aleya uses registered tools for what it can access, and says clearly when a feature is missing or not yet wired.',
         ) +
         '<section class="aleya-ai-layout">' +
         '<div class="aleya-ai-panel">' +
-        '<div class="aleya-ai-meta muted">' +
-        escapeHtml(String(caps.toolCount || 0)) +
-        ' registered tools · max chain ' +
-        escapeHtml(String(caps.maxSteps || 48)) +
-        ' steps · ' +
-        (modelReady
-          ? 'model ready (' + escapeHtml(modelLabel) + ' via ' + escapeHtml(authLabel) + ')'
-          : 'production natural-language model connection not yet configured') +
-        '</div>' +
+        '<div class="aleya-ai-meta muted" data-aleya-meta>Loading capability catalog…</div>' +
         '<div class="aleya-ai-thread" data-aleya-thread>' +
         renderMessage(
           'assistant',
-          modelReady
-            ? 'I can create and edit drafts, manage customers and templates, prepare PDFs and emails, run bulk updates, finalise with confirmation, and more. Ask in ordinary language.'
-            : 'Action registry and tool execution infrastructure are deployed; production natural-language model connection is not yet configured. I will not simulate success until the model provider is connected.',
+          'Ask a question whenever you are ready. Simple status questions are answered directly; invoice work uses registered tools.',
         ) +
         '</div>' +
         '<div class="aleya-ai-confirm" data-aleya-confirm hidden></div>' +
         '<form class="aleya-ai-composer" data-aleya-form>' +
-        '<textarea name="message" rows="3" placeholder="e.g. Create a draft for Westbrook with two labour lines at $95.50, use the Quantum Hire template, and prepare the PDF — do not finalise." required></textarea>' +
+        '<textarea name="message" rows="3" placeholder="e.g. Is my bank feed connected? Which invoices are still unpaid?" required></textarea>' +
         '<div class="aleya-ai-actions">' +
-        '<button type="submit" class="button" data-aleya-send' +
-        (modelReady ? '' : ' disabled title="Model provider not configured"') +
-        '>Send</button>' +
+        '<button type="submit" class="button" data-aleya-send>Send</button>' +
+        '<button type="button" class="button secondary" data-aleya-cancel hidden>Cancel</button>' +
         '<button type="button" class="button secondary" data-aleya-confirm-btn hidden>Confirm and continue</button>' +
         '<a class="button secondary" data-aleya-open-invoice hidden href="#">Open invoice</a>' +
         '</div></form></div>' +
         '<aside class="aleya-ai-side">' +
-        '<h2>Registered capabilities</h2>' +
-        '<ul class="aleya-ai-tool-list">' +
-        (caps.tools || [])
-          .slice(0, 40)
-          .map(
-            (tool) =>
-              '<li><strong>' +
-              escapeHtml(tool.tool) +
-              '</strong><span>' +
-              escapeHtml(tool.category) +
-              (tool.confirmation === 'required' ? ' · confirm' : '') +
-              (tool.undo !== 'none' ? ' · undo' : '') +
-              '</span></li>',
-          )
-          .join('') +
-        '</ul>' +
-        '<p class="muted">New Aleya features register as tools automatically — the chat system is not rebuilt per command.</p>' +
+        '<h2>What I can access</h2>' +
+        '<ul class="aleya-ai-tool-list" data-aleya-tool-list><li class="muted">Loading…</li></ul>' +
+        '<p class="muted">Tool schemas stay on the server. This list is a concise catalog, not full application data.</p>' +
         '</aside></section></main>',
     );
 
@@ -124,7 +93,64 @@ export function createAleyaAiUi(deps) {
     const form = document.querySelector('[data-aleya-form]');
     const confirmBox = document.querySelector('[data-aleya-confirm]');
     const confirmBtn = document.querySelector('[data-aleya-confirm-btn]');
+    const cancelBtn = document.querySelector('[data-aleya-cancel]');
     const openInvoiceBtn = document.querySelector('[data-aleya-open-invoice]');
+    const metaEl = document.querySelector('[data-aleya-meta]');
+    const toolListEl = document.querySelector('[data-aleya-tool-list]');
+    let modelReady = modelReadyPlaceholder;
+
+    // Non-blocking catalog fetch — chat input is already usable.
+    void deps
+      .api('/api/aleya-ai/capabilities')
+      .then((caps) => {
+        modelReady = Boolean(caps.providerConfigured);
+        const modelLabel = caps.model || 'openai/gpt-5.4';
+        const authLabel =
+          caps.authMethod && caps.authMethod !== 'none' ? caps.authMethod : 'unconfigured';
+        if (metaEl) {
+          metaEl.textContent =
+            String(caps.toolCount || 0) +
+            ' registered tools · ' +
+            (modelReady
+              ? 'model ready (' + modelLabel + ' via ' + authLabel + ')'
+              : 'model connection not configured') +
+            ' · expanding coverage (not a complete operating layer yet)';
+        }
+        if (toolListEl) {
+          const controllable = (caps.productCapabilities || []).filter(
+            (item) => item.aiAccess && item.aiAccess !== 'none',
+          );
+          const missing = (caps.productCapabilities || []).filter(
+            (item) => item.appExists === 'no',
+          );
+          toolListEl.innerHTML =
+            controllable
+              .slice(0, 20)
+              .map(
+                (item) =>
+                  '<li><strong>' +
+                  escapeHtml(item.label) +
+                  '</strong><span>' +
+                  escapeHtml(item.aiAccess) +
+                  (item.appExists === 'partial' ? ' · partial app' : '') +
+                  '</span></li>',
+              )
+              .join('') +
+            (missing.length
+              ? '<li class="muted"><strong>Not in product yet</strong><span>' +
+                escapeHtml(missing.map((item) => item.label).join(', ')) +
+                '</span></li>'
+              : '');
+        }
+        const sendBtn = form?.querySelector('[data-aleya-send]');
+        if (sendBtn && !modelReady) {
+          sendBtn.disabled = true;
+          sendBtn.title = 'Model provider not configured';
+        }
+      })
+      .catch(() => {
+        if (metaEl) metaEl.textContent = 'Capability catalog unavailable — chat may still work.';
+      });
 
     function append(role, content, options) {
       if (!thread) return;
@@ -167,21 +193,18 @@ export function createAleyaAiUi(deps) {
     async function send(message, { confirm = false } = {}) {
       if (busy) return;
       if (!modelReady && !confirm) {
-        append(
-          'assistant',
-          'Model provider is not configured. Aleya will not run a simulated or hardcoded command.',
-          { kind: 'error' },
-        );
-        return;
+        // Still allow status questions — server may answer via capability fast-path.
       }
       busy = true;
+      abortController = new AbortController();
       form?.querySelectorAll('button').forEach((button) => {
-        button.disabled = true;
+        if (button !== cancelBtn) button.disabled = true;
       });
+      if (cancelBtn) cancelBtn.hidden = false;
       let progressEl = null;
       try {
         if (!confirm) append('user', message);
-        append('assistant', 'Working — calling the model and registered tools…', {
+        append('assistant', 'Working…', {
           kind: 'progress',
           label: 'Progress',
         });
@@ -196,6 +219,7 @@ export function createAleyaAiUi(deps) {
             confirm,
             confirmationToken: confirm ? pendingConfirmation?.token : undefined,
           }),
+          signal: abortController.signal,
         });
         if (progressEl) progressEl.remove();
 
@@ -219,7 +243,8 @@ export function createAleyaAiUi(deps) {
         if (result.ui?.refresh?.includes('invoices') || result.ui?.refresh?.includes('customers')) {
           deps.invalidateCache?.();
         }
-        if (result.decisions?.length) {
+        // Avoid dumping decision noise for simple status answers.
+        if (result.decisions?.length && result.path !== 'status_fast_path') {
           append('assistant', 'Decisions:\n- ' + result.decisions.join('\n- '), {
             kind: 'progress',
             label: 'Decisions',
@@ -230,15 +255,21 @@ export function createAleyaAiUi(deps) {
         }
       } catch (error) {
         if (progressEl) progressEl.remove();
-        append('assistant', error.message || 'Request failed.', { kind: 'error' });
-        deps.toast?.(error.message || 'Aleya AI request failed', true);
+        if (error?.name === 'AbortError') {
+          append('assistant', 'Request cancelled.', { kind: 'error' });
+        } else {
+          append('assistant', error.message || 'Request failed.', { kind: 'error' });
+          deps.toast?.(error.message || 'Aleya AI request failed', true);
+        }
       } finally {
         busy = false;
+        abortController = null;
         form?.querySelectorAll('button').forEach((button) => {
           button.disabled = false;
         });
+        if (cancelBtn) cancelBtn.hidden = true;
         const sendBtn = form?.querySelector('[data-aleya-send]');
-        if (sendBtn && !modelReady) sendBtn.disabled = true;
+        if (sendBtn && !modelReady) sendBtn.disabled = false; // status fast-path still works
         confirmBtn.hidden = !pendingConfirmation;
         setOpenInvoice(lastFocusInvoiceId);
       }
@@ -254,6 +285,9 @@ export function createAleyaAiUi(deps) {
     });
     confirmBtn?.addEventListener('click', () => {
       void send('confirm', { confirm: true });
+    });
+    cancelBtn?.addEventListener('click', () => {
+      abortController?.abort();
     });
   }
 

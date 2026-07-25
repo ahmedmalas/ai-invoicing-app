@@ -2370,18 +2370,25 @@ async function renderRoute({ forceReload = false } = {}) {
   if (!currentUser) return;
   const path = location.pathname === '/' ? '/dashboard' : location.pathname;
   const invoiceRoute = parseInvoiceWorkspacePath(path);
+  const isAleyaAi = path === '/aleya-ai';
   const warm =
     !forceReload &&
     workspaceCacheAt &&
     Date.now() - workspaceCacheAt < WORKSPACE_CACHE_TTL_MS &&
     Array.isArray(cache.customers) &&
     Boolean(document.querySelector('.app-shell'));
-  if (!warm) {
+  // Aleya AI must not wait on full invoice/customer/report preload to become usable.
+  if (!warm && !isAleyaAi) {
     root.innerHTML =
       '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
   }
   try {
-    await loadWorkspace({ force: forceReload });
+    if (!isAleyaAi) {
+      await loadWorkspace({ force: forceReload });
+    } else if (!document.querySelector('.app-shell')) {
+      // Minimal shell only — capabilities load inside the Aleya page.
+      shell('');
+    }
     if (invoiceRoute) {
       invoicesPage();
       if (invoiceRoute.mode === 'create') await mountInvoiceWorkspace(null);
