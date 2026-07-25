@@ -12,7 +12,11 @@ import type {
   BasiqConnectState,
   ListBankTransactionsFilter,
 } from '../domain/banking/types.js';
-import { basiqConfigured } from '../services/basiq-client.js';
+import {
+  basiqConfigured,
+  basiqEnvironmentLabel,
+  isBasiqSandboxEnvironment,
+} from '../services/basiq-client.js';
 
 export interface BankSqlDb {
   // Looser prepare typing bridges better-sqlite3 and the postgres prepare shim.
@@ -584,8 +588,15 @@ export function createBankStore(
 
     async getFeedStatusView(businessId: string): Promise<BankFeedStatusView> {
       const configured = basiqConfigured();
+      const environment = basiqEnvironmentLabel();
+      const sandbox = isBasiqSandboxEnvironment();
       const connection = await this.getConnectionByBusiness(businessId);
       const accounts = connection ? await this.listAccounts(businessId, true) : [];
+      const authLinkMeta = {
+        environment,
+        sandbox,
+        authLinkDelivery: 'open_auth_link' as const,
+      };
       if (!configured && !connection) {
         return {
           implemented: true,
@@ -593,6 +604,7 @@ export function createBankStore(
           connected: false,
           status: 'not_configured',
           provider: null,
+          ...authLinkMeta,
           institution: null,
           maskedAccount: null,
           accounts: [],
@@ -618,6 +630,7 @@ export function createBankStore(
           connected: false,
           status: 'not_connected',
           provider: 'basiq',
+          ...authLinkMeta,
           institution: null,
           maskedAccount: null,
           accounts: [],
@@ -625,7 +638,9 @@ export function createBankStore(
           lastSyncAttemptAt: null,
           consentExpiresAt: null,
           errors: [],
-          warning: null,
+          warning: sandbox
+            ? 'Sandbox mode: Connect opens the Basiq AuthLink in your browser. No AuthLink SMS is sent.'
+            : null,
           nextAction: nextActionForStatus('not_connected'),
           distinction: {
             featureAbsent: false,
@@ -646,6 +661,7 @@ export function createBankStore(
         connected: status !== 'disconnected' && status !== 'not_connected' && status !== 'error',
         status,
         provider: connection.provider,
+        ...authLinkMeta,
         institution: primary?.institutionName || null,
         maskedAccount: primary?.maskedAccountNumber || null,
         accounts: accounts.map((account) => ({

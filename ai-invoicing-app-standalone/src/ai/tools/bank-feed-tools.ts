@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { getWorkspaceContext } from '../../auth/workspace-context.js';
+import { isBasiqSandboxEnvironment } from '../../services/basiq-client.js';
 import type { AleyaActionRegistry } from '../registry.js';
 
 function businessId(ctx: { organizationId: string }): string {
@@ -347,7 +348,7 @@ export function registerBankFeedTools(registry: AleyaActionRegistry): void {
   registry.register({
     name: 'reconnect_bank_feed',
     description:
-      'Start a Basiq reconnect AuthLink. Requires confirmation because it may replace existing consent. Returns an AuthLink URL — does not open it itself.',
+      'Start a Basiq reconnect AuthLink. Requires confirmation because it may replace existing consent. Returns an AuthLink URL to open in the browser — Basiq does not SMS-deliver AuthLink URLs.',
     category: 'meta',
     milestone: 'M1',
     confirmation: 'required',
@@ -359,7 +360,14 @@ export function registerBankFeedTools(registry: AleyaActionRegistry): void {
     mutates: true,
     inputSchema: z.object({
       confirm: z.literal(true),
-      mobile: z.string().min(8).max(32).optional(),
+      mobile: z
+        .string()
+        .min(8)
+        .max(32)
+        .optional()
+        .describe(
+          'Australian mobile (+614XXXXXXXX) for AuthLink 2FA in production only. Not used to SMS-deliver the AuthLink URL.',
+        ),
     }),
     async execute(input, ctx) {
       const workspace = getWorkspaceContext();
@@ -374,12 +382,14 @@ export function registerBankFeedTools(registry: AleyaActionRegistry): void {
       const email =
         profile?.email?.trim() ||
         `${workspace.workspaceId.replaceAll('-', '').slice(0, 12)}@users.aleya.app`;
+      const sandbox = isBasiqSandboxEnvironment();
       const mobile = input.mobile?.trim() || profile?.phone?.trim() || null;
-      if (!mobile) {
+      if (!sandbox && !mobile) {
         return {
           ok: false,
           code: 'BANK_CONNECT_MOBILE_REQUIRED',
-          message: 'Add a business phone number before reconnecting the bank feed.',
+          message:
+            'Add a business phone number (+614XXXXXXXX) for AuthLink 2FA before reconnecting in production.',
         };
       }
       const started = await ctx.db.startBasiqBankConnect({
@@ -397,10 +407,13 @@ export function registerBankFeedTools(registry: AleyaActionRegistry): void {
           authLinkUrl: started.authLinkUrl,
           connectionId: started.connection.id,
           status: started.connection.status,
+          environment: started.environment,
+          sandbox: started.sandbox,
+          deliveryMode: started.deliveryMode,
+          message: started.message,
           warning: 'Completing reconnect may replace the existing open-banking consent.',
         },
-        summary:
-          'Reconnect AuthLink created. Open the AuthLink URL to complete Basiq consent (sandbox/test institution first).',
+        summary: started.message,
         ui: { refresh: ['banking'] },
       };
     },

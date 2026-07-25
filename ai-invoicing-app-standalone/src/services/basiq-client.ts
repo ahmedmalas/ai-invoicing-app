@@ -25,17 +25,19 @@ export class BasiqClientError extends Error {
   readonly category: BasiqErrorCategory;
   readonly status?: number | undefined;
   readonly endpoint?: string | undefined;
+  readonly providerDetail?: string | undefined;
 
   constructor(
     category: BasiqErrorCategory,
     message: string,
-    options?: { status?: number; endpoint?: string },
+    options?: { status?: number; endpoint?: string; providerDetail?: string },
   ) {
     super(message);
     this.name = 'BasiqClientError';
     this.category = category;
     this.status = options?.status;
     this.endpoint = options?.endpoint;
+    this.providerDetail = options?.providerDetail;
   }
 }
 
@@ -50,11 +52,19 @@ export function basiqConfigured(): boolean {
   return Boolean(process.env.BASIQ_API_KEY?.trim());
 }
 
-export function basiqEnvironmentLabel(): 'sandbox' | 'production' | 'unknown' {
+/**
+ * Phase 1 defaults to sandbox unless BASIQ_ENVIRONMENT=production.
+ * Official Basiq AuthLink does not SMS-deliver the AuthLink URL; sandbox
+ * testing opens the returned public URL and uses Hooli test institutions.
+ */
+export function basiqEnvironmentLabel(): 'sandbox' | 'production' {
   const explicit = (process.env.BASIQ_ENVIRONMENT || '').toLowerCase();
-  if (explicit === 'sandbox' || explicit === 'production') return explicit;
-  // Development integrations default to sandbox semantics.
-  return process.env.NODE_ENV === 'production' ? 'production' : 'sandbox';
+  if (explicit === 'production') return 'production';
+  return 'sandbox';
+}
+
+export function isBasiqSandboxEnvironment(): boolean {
+  return basiqEnvironmentLabel() === 'sandbox';
 }
 
 function apiKey(): string {
@@ -216,6 +226,7 @@ export async function basiqRequest<T = unknown>(
         continue;
       }
       if (!response.ok) {
+        const providerDetail = await readBasiqErrorDetail(response);
         logSafe('warn', {
           event: 'basiq.request',
           endpoint: path,
@@ -223,11 +234,16 @@ export async function basiqRequest<T = unknown>(
           status: response.status,
           durationMs,
           category: categorizeStatus(response.status),
+          ...(providerDetail ? { providerDetail } : {}),
         });
         throw new BasiqClientError(
           categorizeStatus(response.status),
-          `Basiq ${method} ${path} failed`,
-          { status: response.status, endpoint: path },
+          providerDetail || `Basiq ${method} ${path} failed`,
+          {
+            status: response.status,
+            endpoint: path,
+            ...(providerDetail ? { providerDetail } : {}),
+          },
         );
       }
       logSafe('info', {
@@ -257,11 +273,32 @@ export async function basiqRequest<T = unknown>(
     : new BasiqClientError('provider_error', 'Basiq request failed');
 }
 
+async function readBasiqErrorDetail(response: Response): Promise<string | undefined> {
+  try {
+    const payload = (await response.clone().json()) as {
+      data?: Array<{ title?: string; detail?: string; code?: string }>;
+      message?: string;
+      detail?: string;
+      title?: string;
+    };
+    const first = Array.isArray(payload?.data) ? payload.data[0] : null;
+    const parts = [
+      first?.title || payload?.title,
+      first?.detail || payload?.detail || payload?.message,
+      first?.code,
+    ].filter((part): part is string => Boolean(part && String(part).trim()));
+    if (!parts.length) return undefined;
+    return parts.join(' — ').slice(0, 400);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface BasiqHealthResult {
   configured: boolean;
   authenticated: boolean;
   providerReachable: boolean;
-  environment: 'sandbox' | 'production' | 'unknown';
+  environment: 'sandbox' | 'production';
   latencyMs: number | null;
   errorCategory: BasiqErrorCategory | null;
 }
@@ -318,19 +355,35 @@ export async function createBasiqUser(input: {
   return { id: created.id };
 }
 
-export async function createBasiqAuthLink(userId: string): Promise<{
+/**
+ * Create a Basiq AuthLink. The returned public URL must be opened in the browser.
+ * Optional `mobile` is used for hosted AuthLink 2FA after open — Basiq does not
+ * SMS-deliver the AuthLink URL itself via this endpoint.
+ */
+export async function createBasiqAuthLink(
+  userId: string,
+  options?: { mobile?: string | null },
+): Promise<{
   publicUrl: string;
   expiresAt: string | null;
+  mobile: string | null;
 }> {
+  const body: Record<string, string> = {};
+  if (options?.mobile?.trim()) body.mobile = options.mobile.trim();
   const created = await basiqRequest<{
     expiresAt?: string;
+    mobile?: string;
     links?: { public?: string };
-  }>('POST', `/users/${encodeURIComponent(userId)}/auth_link`, { body: {} });
+  }>('POST', `/users/${encodeURIComponent(userId)}/auth_link`, { body });
   const publicUrl = created.links?.public;
   if (!publicUrl) {
     throw new BasiqClientError('invalid_response', 'Basiq auth_link missing public URL');
   }
-  return { publicUrl, expiresAt: created.expiresAt || null };
+  return {
+    publicUrl,
+    expiresAt: created.expiresAt || null,
+    mobile: created.mobile || options?.mobile || null,
+  };
 }
 
 export async function listBasiqConnections(userId: string): Promise<unknown[]> {

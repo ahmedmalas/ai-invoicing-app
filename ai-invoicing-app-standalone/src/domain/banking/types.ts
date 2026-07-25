@@ -107,6 +107,14 @@ export interface BankFeedStatusView {
   connected: boolean;
   status: BankConnectionStatus | 'not_configured' | 'not_connected';
   provider: BankProvider | null;
+  /** Basiq environment for AuthLink UX (sandbox opens AuthLink; no AuthLink SMS). */
+  environment: 'sandbox' | 'production';
+  sandbox: boolean;
+  /**
+   * How AuthLink is presented to the user.
+   * Basiq does not SMS-deliver AuthLink URLs — the browser must open `authLinkUrl`.
+   */
+  authLinkDelivery: 'open_auth_link';
   institution: string | null;
   maskedAccount: string | null;
   accounts: Array<{

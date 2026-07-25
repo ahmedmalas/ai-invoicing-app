@@ -1029,6 +1029,11 @@ export interface AppDatabase {
     stateToken: string;
     connection: BankConnection;
     expiresAt: string | null;
+    environment: 'sandbox' | 'production';
+    deliveryMode: 'open_auth_link';
+    sandbox: boolean;
+    authLinkMobile: string | null;
+    message: string;
   }>;
   completeBasiqBankCallback(input: {
     stateToken: string;

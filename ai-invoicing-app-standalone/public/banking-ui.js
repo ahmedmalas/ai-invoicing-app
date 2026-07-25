@@ -60,17 +60,34 @@ export function createBankingUi({ api, shell }) {
     return api('/api/banking/transactions?' + params.toString());
   }
 
+  function isSandboxStatus(status) {
+    return Boolean(status?.sandbox) || status?.environment === 'sandbox';
+  }
+
   function renderConnectionPanel(status, accounts, options = {}) {
     const primary = accounts[0] || status.accounts?.[0] || null;
     const errors = Array.isArray(status.errors) ? status.errors : [];
+    const sandbox = isSandboxStatus(status);
     const title = options.title || 'Bank Feeds';
     const intro =
       options.intro ||
-      'Connect a Basiq sandbox/test institution. Manage consent and sync here. Full account numbers are never shown.';
+      (sandbox
+        ? 'Sandbox test connection: Connect opens the Basiq AuthLink in your browser (Hooli test bank). No SMS is sent.'
+        : 'Connect a bank via Basiq AuthLink in your browser. Manage consent and sync here. Full account numbers are never shown.');
+    const connectLabel = sandbox
+      ? 'Connect sandbox test bank'
+      : 'Connect bank account';
+    const showResend =
+      status.status === 'connecting' ||
+      status.status === 'reauth_required' ||
+      status.status === 'error';
     return [
       '<section class="banking-panel" data-banking-status data-bank-feeds-panel>',
       '<header class="banking-panel-head">',
       '<h2>' + escapeHtml(title) + '</h2>',
+      sandbox
+        ? '<p class="banking-warning" role="status">Sandbox test connection — AuthLink opens in the browser; Basiq does not SMS-deliver the AuthLink URL.</p>'
+        : '',
       '<p class="muted">' + escapeHtml(intro) + '</p>',
       '</header>',
       '<dl class="banking-meta">',
@@ -78,6 +95,9 @@ export function createBankingUi({ api, shell }) {
         escapeHtml(status.status) +
         '">' +
         escapeHtml(statusLabel(status.status)) +
+        '</dd></div>',
+      '<div><dt>Environment</dt><dd>' +
+        escapeHtml(sandbox ? 'Sandbox' : status.environment || 'Production') +
         '</dd></div>',
       '<div><dt>Institution</dt><dd>' +
         escapeHtml(status.institution || primary?.institutionName || '—') +
@@ -101,6 +121,11 @@ export function createBankingUi({ api, shell }) {
       errors.length
         ? '<p class="banking-error" role="alert">' + escapeHtml(errors.join('; ')) + '</p>'
         : '',
+      options.connectFlash
+        ? '<div class="banking-flash" role="status" data-bank-connect-flash>' +
+          options.connectFlash +
+          '</div>'
+        : '',
       status.nextAction
         ? '<p class="muted">' + escapeHtml(status.nextAction) + '</p>'
         : '',
@@ -111,8 +136,13 @@ export function createBankingUi({ api, shell }) {
       status.status === 'not_connected' ||
       status.status === 'disconnected' ||
       status.status === 'not_configured'
-        ? '<button type="button" class="button" data-bank-connect>Connect bank account</button>'
+        ? '<button type="button" class="button" data-bank-connect>' +
+          escapeHtml(connectLabel) +
+          '</button>'
         : '<button type="button" class="button secondary" data-bank-reconnect>Reconnect</button>',
+      showResend
+        ? '<button type="button" class="button secondary" data-bank-resend>Resend AuthLink</button>'
+        : '',
       status.connected ||
       status.status === 'connecting' ||
       status.status === 'error' ||
@@ -223,36 +253,94 @@ export function createBankingUi({ api, shell }) {
     ].join('');
   }
 
-  async function connectBank(isReconnect = false, onDone) {
+  function openAuthLinkUrl(url) {
+    if (!url) return false;
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      window.location.assign(url);
+      return true;
+    }
+    return true;
+  }
+
+  function connectFlashHtml(result) {
+    const sandbox = Boolean(result?.sandbox) || result?.environment === 'sandbox';
+    const message =
+      result?.message ||
+      (sandbox
+        ? 'Sandbox AuthLink created. Opening the test bank connection (no SMS is sent).'
+        : 'AuthLink created. Opening Basiq Connect.');
+    const url = result?.authLinkUrl || '';
+    return (
+      '<p><strong>' +
+      escapeHtml(message) +
+      '</strong></p>' +
+      (url
+        ? '<p>AuthLink: <a href="' +
+          escapeHtml(url) +
+          '" target="_blank" rel="noopener noreferrer" data-bank-authlink>' +
+          escapeHtml(url) +
+          '</a></p>'
+        : '')
+    );
+  }
+
+  async function connectBank(options = {}) {
+    const { isReconnect = false, resend = false, onDone, onFlash } = options;
     if (
       isReconnect &&
+      !resend &&
       !window.confirm(
         'Reconnect may replace the existing open-banking consent. Continue?',
       )
     ) {
       return;
     }
-    const mobile = window.prompt(
-      'Mobile number for Basiq AuthLink SMS (sandbox). Leave blank to use business profile phone.',
-      '',
-    );
-    const body = {};
-    if (mobile && mobile.trim()) body.mobile = mobile.trim();
-    const result = await api('/api/banking/basiq/connect', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-    if (!result?.authLinkUrl) {
-      window.alert(result?.message || 'Unable to start bank connection.');
-      return;
+
+    let status = null;
+    try {
+      status = await loadStatus();
+    } catch {
+      status = null;
     }
-    window.location.assign(result.authLinkUrl);
-    if (typeof onDone === 'function') await onDone();
+    const sandbox = isSandboxStatus(status);
+    const body = { resend: Boolean(resend) };
+
+    // Production only: collect AU mobile for hosted AuthLink 2FA after open.
+    // Basiq does not SMS-deliver the AuthLink URL itself.
+    if (!sandbox) {
+      const entered = window.prompt(
+        'Australian mobile for Basiq AuthLink two-factor authentication (E.164, e.g. +614XXXXXXXX). Used after you open AuthLink — not to SMS you the AuthLink URL. Leave blank to use the business profile phone.',
+        '+614',
+      );
+      if (entered === null) return;
+      if (entered.trim()) body.mobile = entered.trim();
+    }
+
+    try {
+      const result = await api('/api/banking/basiq/connect', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (!result?.authLinkUrl) {
+        window.alert(result?.message || 'Unable to start bank connection.');
+        return;
+      }
+      if (typeof onFlash === 'function') onFlash(connectFlashHtml(result));
+      openAuthLinkUrl(result.authLinkUrl);
+      if (typeof onDone === 'function') await onDone();
+    } catch (error) {
+      window.alert(error?.message || 'Unable to start bank connection.');
+    }
   }
 
   async function refreshBank(onDone) {
-    await api('/api/banking/refresh', { method: 'POST', body: '{}' });
-    if (typeof onDone === 'function') await onDone();
+    try {
+      await api('/api/banking/refresh', { method: 'POST', body: '{}' });
+      if (typeof onDone === 'function') await onDone();
+    } catch (error) {
+      window.alert(error?.message || 'Unable to refresh bank data.');
+    }
   }
 
   async function disconnectBank(onDone) {
@@ -263,19 +351,31 @@ export function createBankingUi({ api, shell }) {
     ) {
       return;
     }
-    await api('/api/banking/disconnect', {
-      method: 'POST',
-      body: JSON.stringify({ confirm: true }),
-    });
-    if (typeof onDone === 'function') await onDone();
+    try {
+      await api('/api/banking/disconnect', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (typeof onDone === 'function') await onDone();
+    } catch (error) {
+      window.alert(error?.message || 'Unable to disconnect bank feeds.');
+    }
   }
 
-  function bindConnectionActions(root, reload) {
+  function bindConnectionActions(root, reload, setFlash) {
     root.querySelector('[data-bank-connect]')?.addEventListener('click', () =>
-      void connectBank(false, reload),
+      void connectBank({ isReconnect: false, onDone: reload, onFlash: setFlash }),
     );
     root.querySelector('[data-bank-reconnect]')?.addEventListener('click', () =>
-      void connectBank(true, reload),
+      void connectBank({ isReconnect: true, onDone: reload, onFlash: setFlash }),
+    );
+    root.querySelector('[data-bank-resend]')?.addEventListener('click', () =>
+      void connectBank({
+        isReconnect: false,
+        resend: true,
+        onDone: reload,
+        onFlash: setFlash,
+      }),
     );
     root.querySelector('[data-bank-refresh]')?.addEventListener('click', () =>
       void refreshBank(reload),
@@ -288,11 +388,12 @@ export function createBankingUi({ api, shell }) {
   /** Settings → Bank Feeds: connection management only (no full transaction history). */
   async function mountBankFeedsSettings(host) {
     if (!host) return;
+    let connectFlash = '';
     const render = async () => {
       host.innerHTML = '<p class="muted">Loading bank feed connection…</p>';
       try {
         const params = new URLSearchParams(location.search);
-        const flash =
+        const callbackFlash =
           params.get('banking') === 'connected'
             ? '<p class="banking-flash" role="status">Bank connection completed. Accounts were imported where available. Open Banking to browse transactions.</p>'
             : params.get('banking') === 'error'
@@ -301,16 +402,21 @@ export function createBankingUi({ api, shell }) {
                 '). No secrets were returned.</p>'
               : '';
         const [status, accounts] = await Promise.all([loadStatus(), loadAccounts()]);
+        const sandbox = isSandboxStatus(status);
         host.innerHTML =
-          flash +
+          callbackFlash +
           renderConnectionPanel(status, accounts, {
             title: 'Bank Feeds',
-            intro:
-              'Connect and manage your Basiq bank feed for this Aleya business. Use Banking in the sidebar to search imported transactions.',
+            intro: sandbox
+              ? 'Sandbox test connection for this Aleya business. Connect opens the Basiq AuthLink (no SMS). Use Banking to browse imported transactions after consent.'
+              : 'Connect and manage your Basiq bank feed for this Aleya business. AuthLink opens in the browser. Use Banking in the sidebar to search imported transactions.',
             showTransactionsLink: true,
+            connectFlash,
           }) +
           renderAccounts(accounts);
-        bindConnectionActions(host, render);
+        bindConnectionActions(host, render, (html) => {
+          connectFlash = html;
+        });
       } catch (error) {
         host.innerHTML =
           '<p class="banking-error" role="alert">Unable to load bank feed settings. ' +

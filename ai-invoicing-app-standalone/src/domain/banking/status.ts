@@ -62,9 +62,9 @@ export function deriveBankConnectionStatus(
 export function nextActionForStatus(status: BankConnectionStatus): string {
   switch (status) {
     case 'not_connected':
-      return 'Open Banking and connect a Basiq sandbox test institution.';
+      return 'Open Settings → Bank Feeds and connect via Basiq AuthLink (sandbox opens the AuthLink URL; no SMS).';
     case 'connecting':
-      return 'Finish the Basiq consent flow, then return to Aleya.';
+      return 'Finish Basiq AuthLink consent in the browser, then return to Aleya. Use Resend AuthLink if the link expired.';
     case 'syncing':
       return 'Wait for the current sync to finish, or refresh shortly.';
     case 'connected':
