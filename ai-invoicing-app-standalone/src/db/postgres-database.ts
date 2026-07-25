@@ -63,9 +63,27 @@ import type {
   PurchaseOrderReceiptStatus,
 } from '../domain/inventory/types.js';
 import { createPostgresInventoryStore } from './postgres-inventory-store.js';
+import { createBankStore } from './bank-store.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
-import { assertWorkspaceSchemaName, getWorkspaceContext } from '../auth/workspace-context.js';
+import {
+  assertWorkspaceSchemaName,
+  enterWorkspaceContext,
+  getWorkspaceContext,
+} from '../auth/workspace-context.js';
+import type {
+  BankAccount,
+  BankConnection,
+  BankFeedStatusView,
+  BankSyncResult,
+  BankTransaction,
+  ListBankTransactionsFilter,
+} from '../domain/banking/types.js';
+import {
+  disconnectBankFeed as disconnectBankFeedService,
+  startBasiqConnect,
+} from '../domain/banking/connection-service.js';
+import { syncBankConnection } from '../domain/banking/sync-service.js';
 
 interface DbInvoiceLineItem {
   description: string;
@@ -688,7 +706,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 45;
+export const DATABASE_SCHEMA_VERSION = 46;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -992,6 +1010,37 @@ export interface AppDatabase {
   getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  getBankFeedStatus(businessId: string): DatabaseResult<BankFeedStatusView>;
+  listBankAccounts(businessId: string, activeOnly?: boolean): DatabaseResult<BankAccount[]>;
+  listBankTransactions(
+    filter: ListBankTransactionsFilter,
+  ): DatabaseResult<{ items: BankTransaction[]; total: number }>;
+  getBankConnection(businessId: string): DatabaseResult<BankConnection | null>;
+  startBasiqBankConnect(input: {
+    businessId: string;
+    workspaceId: string;
+    workspaceSchema: string;
+    email: string;
+    mobile?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+  }): DatabaseResult<{
+    authLinkUrl: string;
+    stateToken: string;
+    connection: BankConnection;
+    expiresAt: string | null;
+  }>;
+  completeBasiqBankCallback(input: {
+    stateToken: string;
+    cookieState?: string | null;
+  }): DatabaseResult<{
+    workspaceId: string;
+    workspaceSchema: string;
+    businessId: string;
+    sync: BankSyncResult;
+  }>;
+  refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
+  disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
 }
 
 function nowIso(): string {
@@ -1275,6 +1324,121 @@ ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
 `;
 }
+
+/** Idempotent bank-feed DDL for one tenant schema (search_path already set). */
+function loadPostgresBankFeedUpgradeSql(): string {
+  return `
+CREATE TABLE IF NOT EXISTS bank_connections (
+  id TEXT PRIMARY KEY,
+  business_id TEXT,
+  provider TEXT,
+  provider_user_id TEXT,
+  provider_connection_id TEXT,
+  status TEXT,
+  consent_id TEXT,
+  consent_status TEXT,
+  consent_started_at TEXT,
+  consent_expires_at TEXT,
+  last_sync_attempt_at TEXT,
+  last_successful_sync_at TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider_connection_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_status TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_started_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_expires_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_sync_attempt_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_successful_sync_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_code TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS updated_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_bank_connections_business ON bank_connections(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_connections_provider_user ON bank_connections(provider, provider_user_id);
+
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id TEXT PRIMARY KEY,
+  business_id TEXT,
+  bank_connection_id TEXT,
+  provider_account_id TEXT,
+  institution_name TEXT,
+  account_name TEXT,
+  masked_account_number TEXT,
+  account_type TEXT,
+  currency TEXT,
+  current_balance DOUBLE PRECISION,
+  available_balance DOUBLE PRECISION,
+  balance_updated_at TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT,
+  updated_at TEXT
+);
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS provider_account_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS institution_name TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_name TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS masked_account_number TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_type TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS currency TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS current_balance DOUBLE PRECISION;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS available_balance DOUBLE PRECISION;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS balance_updated_at TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS updated_at TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_accounts_business_provider
+  ON bank_accounts(business_id, provider_account_id);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_business ON bank_accounts(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(bank_connection_id);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  business_id TEXT,
+  bank_account_id TEXT,
+  provider_transaction_id TEXT,
+  transaction_date TEXT,
+  posted_date TEXT,
+  description TEXT,
+  amount DOUBLE PRECISION,
+  direction TEXT,
+  status TEXT,
+  merchant_name TEXT,
+  reference TEXT,
+  provider_category TEXT,
+  imported_at TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS bank_account_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS provider_transaction_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS transaction_date TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS posted_date TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS amount DOUBLE PRECISION;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS direction TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS merchant_name TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reference TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS provider_category TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS imported_at TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_transactions_business_provider
+  ON bank_transactions(business_id, provider_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_business_date ON bank_transactions(business_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(bank_account_id);
+`;
+}
 function pgSql(sql: string): string {
   let index = 0;
   return sql
@@ -1419,6 +1583,25 @@ export async function createPostgresDatabase(
         schema_version INTEGER NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS public.basiq_connect_states (
+        state_token TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        workspace_schema TEXT,
+        business_id TEXT,
+        provider_user_id TEXT,
+        bank_connection_id TEXT,
+        expires_at TEXT,
+        created_at TEXT
+      );
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_schema TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS business_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS expires_at TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS created_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires
+        ON public.basiq_connect_states(expires_at);
     `);
     const version = await schemaClient.query<{ schema_version: number }>(
       'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
@@ -1484,10 +1667,12 @@ export async function createPostgresDatabase(
       workspaceSchemas.rows.push({ schema_name: 'public' });
     }
     const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
+    const bankFeedUpgradeSql = loadPostgresBankFeedUpgradeSql();
     for (const workspace of workspaceSchemas.rows) {
       const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
       await schemaClient.query(`SET LOCAL search_path TO "${schemaName}", public`);
       await schemaClient.query(workspaceUpgradeSql);
+      await schemaClient.query(bankFeedUpgradeSql);
       await schemaClient.query(
         `CREATE TABLE IF NOT EXISTS app_database_metadata (
           singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
@@ -1681,6 +1866,7 @@ export async function createPostgresDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
+  const bankStore = createBankStore(db, { connectStatesTable: 'public.basiq_connect_states' });
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -6832,6 +7018,87 @@ export async function createPostgresDatabase(
     async restorePlatformSnapshot(snapshot) {
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       await restorePlatformSnapshot(parsedSnapshot);
+    },
+
+    async getBankFeedStatus(businessId) {
+      return bankStore.getFeedStatusView(businessId);
+    },
+    async listBankAccounts(businessId, activeOnly = false) {
+      return bankStore.listAccounts(businessId, activeOnly);
+    },
+    async listBankTransactions(filter) {
+      return bankStore.listTransactions(filter);
+    },
+    async getBankConnection(businessId) {
+      return bankStore.getConnectionByBusiness(businessId);
+    },
+    async startBasiqBankConnect(input) {
+      return startBasiqConnect(bankStore, input);
+    },
+    async completeBasiqBankCallback(input) {
+      if (!input.cookieState || input.cookieState !== input.stateToken) {
+        throw new Error('BANK_CONNECT_STATE_MISMATCH');
+      }
+      // Transaction starts with public search_path (no auth workspace on callback).
+      const stateRow = await bankStore.consumeConnectState(input.stateToken);
+      if (!stateRow) {
+        throw new Error('BANK_CONNECT_STATE_INVALID');
+      }
+      const client = storage.getStore();
+      if (!client) throw new Error('DATABASE_TRANSACTION_REQUIRED');
+      const schemaName = assertWorkspaceSchemaName(stateRow.workspaceSchema);
+      await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
+      enterWorkspaceContext({
+        authUserId: 'basiq-callback',
+        workspaceId: stateRow.workspaceId,
+        schemaName,
+      });
+
+      const connectionId = stateRow.bankConnectionId;
+      let connection = connectionId
+        ? await bankStore.getConnectionById(stateRow.businessId, connectionId)
+        : null;
+      if (!connection) {
+        const upsertInput: Parameters<typeof bankStore.upsertConnection>[0] = {
+          businessId: stateRow.businessId,
+          provider: 'basiq',
+          providerUserId: stateRow.providerUserId || 'unknown',
+          status: 'connecting',
+        };
+        if (connectionId) upsertInput.id = connectionId;
+        connection = await bankStore.upsertConnection(upsertInput);
+      } else {
+        await bankStore.updateConnectionFields(stateRow.businessId, connection.id, {
+          status: 'connecting',
+          errorCode: null,
+          errorMessage: null,
+        });
+      }
+      const sync = await syncBankConnection(bankStore, {
+        businessId: stateRow.businessId,
+        connectionId: connection.id,
+        triggerRefresh: false,
+      });
+      return {
+        workspaceId: stateRow.workspaceId,
+        workspaceSchema: schemaName,
+        businessId: stateRow.businessId,
+        sync,
+      };
+    },
+    async refreshBankFeed(businessId) {
+      const connection = await bankStore.getConnectionByBusiness(businessId);
+      if (!connection || connection.status === 'disconnected') {
+        throw new Error('BANK_CONNECTION_NOT_FOUND');
+      }
+      return syncBankConnection(bankStore, {
+        businessId,
+        connectionId: connection.id,
+        triggerRefresh: true,
+      });
+    },
+    async disconnectBankFeed(businessId, confirmed) {
+      return disconnectBankFeedService(bankStore, { businessId, confirmed });
     },
   };
   const proxy = new Proxy(implementation, {

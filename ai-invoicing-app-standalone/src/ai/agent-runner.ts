@@ -306,31 +306,80 @@ export async function runAleyaAgent(input: RunAleyaAgentInput): Promise<RunAleya
     historyMessages: conversation.messages.length,
   });
 
-  // Known product-status intents: answer from the capability map without a model loop
-  // and without fetching unrelated private profile fields.
+  // Known product-status intents: answer without a model loop.
+  // list_controllable stays on the capability map; bank intents use real bank tools + DB.
   const statusIntent = matchStatusIntent(input.message);
   if (statusIntent && !input.confirm && !input.confirmationToken) {
     trace.mark('status_intent_matched', { intent: statusIntent });
-    const answered = answerForStatusIntent(statusIntent);
-    const toolResult: ToolResult = {
-      ok: true,
-      data: answered.data,
-      summary: answered.assistantMessage,
-    };
+    if (statusIntent === 'list_controllable') {
+      const answered = answerForStatusIntent(statusIntent);
+      const toolResult: ToolResult = {
+        ok: true,
+        data: answered.data,
+        summary: answered.assistantMessage,
+      };
+      await appendMessages(input.db, input.userId, conversation.id, [
+        { role: 'user', content: input.message },
+        { role: 'assistant', content: answered.assistantMessage },
+      ]);
+      trace.mark('persistence_completed');
+      trace.mark('final_response_ready');
+      return {
+        conversationId: conversation.id,
+        assistantMessage: answered.assistantMessage,
+        toolCalls: [{ toolName: answered.toolName, result: toolResult }],
+        pendingConfirmation: null,
+        ui: {},
+        decisions: [
+          `Answered via product capability map (${statusIntent}); no unrelated tools called.`,
+        ],
+        model: null,
+        providerConfigured: status.providerConfigured,
+        authMethod: status.authMethod,
+        provider: status.provider,
+        path: 'status_fast_path',
+        ...(input.includeLatencyTrace ? { latencyTrace: trace.toJSON() } : {}),
+      };
+    }
+
+    const registry = ensureAleyaToolsRegistered();
+    const bankCtx = createToolContext({
+      db: input.db,
+      userId: input.userId,
+      organizationId: input.organizationId,
+      conversationId: conversation.id,
+      visibleState: { ...conversation.visibleState, ...input.visibleState },
+      approvedTokens: new Set(),
+      onConfirmation: () => undefined,
+    });
+    const toolName =
+      statusIntent === 'bank_transactions'
+        ? 'list_recent_bank_transactions'
+        : statusIntent === 'bank_feed_sync'
+          ? 'get_last_bank_sync'
+          : statusIntent === 'bank_feed_errors'
+            ? 'list_bank_feed_errors'
+            : 'get_bank_feed_status';
+    const toolInput =
+      toolName === 'list_recent_bank_transactions' ? { limit: 5 } : {};
+    const toolResult = await registry.execute(toolName, toolInput, bankCtx);
+    const assistantMessage = toolResult.ok
+      ? toolResult.summary || 'Bank feed status loaded.'
+      : toolResult.message || 'Unable to load bank feed status.';
     await appendMessages(input.db, input.userId, conversation.id, [
       { role: 'user', content: input.message },
-      { role: 'assistant', content: answered.assistantMessage },
+      { role: 'assistant', content: assistantMessage },
     ]);
     trace.mark('persistence_completed');
     trace.mark('final_response_ready');
     return {
       conversationId: conversation.id,
-      assistantMessage: answered.assistantMessage,
-      toolCalls: [{ toolName: answered.toolName, result: toolResult }],
+      assistantMessage,
+      toolCalls: [{ toolName, result: toolResult }],
       pendingConfirmation: null,
-      ui: {},
+      ui: toolResult.ok ? toolResult.ui || {} : {},
       decisions: [
-        `Answered via product capability map (${statusIntent}); no unrelated tools called.`,
+        `Answered via registered bank tool ${toolName} (${statusIntent}); get_business_profile not called.`,
       ],
       model: null,
       providerConfigured: status.providerConfigured,

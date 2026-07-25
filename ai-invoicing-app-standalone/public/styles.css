@@ -2150,3 +2150,132 @@ td.primary-cell {
     grid-template-columns: 1fr;
   }
 }
+
+/* Settings tabs */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 1.25rem;
+  border-bottom: 1px solid var(--line, #e6e1d8);
+  padding-bottom: 0.35rem;
+}
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.55rem 0.85rem;
+  text-decoration: none;
+  color: var(--muted, #6b6458);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-weight: 600;
+}
+.settings-tab:hover {
+  color: inherit;
+}
+.settings-tab.active {
+  color: inherit;
+  border-bottom-color: currentColor;
+}
+.settings-bank-feeds {
+  display: grid;
+  gap: 1rem;
+}
+
+/* Banking (Basiq Phase 1) */
+.banking-page {
+  display: grid;
+  gap: 1.25rem;
+}
+.banking-page .page-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+.banking-summary p {
+  margin: 0;
+}
+.banking-panel {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line, #e6e1d8);
+}
+.banking-panel-head h2 {
+  margin: 0 0 0.25rem;
+}
+.banking-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0;
+}
+.banking-meta dt {
+  font-size: 0.75rem;
+  color: var(--muted, #6b6458);
+}
+.banking-meta dd {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+}
+.banking-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.banking-warning {
+  color: #8a5a00;
+}
+.banking-error {
+  color: #9b1c1c;
+}
+.banking-flash {
+  color: #17633a;
+}
+.banking-account-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+.banking-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+}
+.banking-filters label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.banking-tx-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.banking-tx-table th,
+.banking-tx-table td {
+  text-align: left;
+  padding: 0.55rem 0.35rem;
+  border-bottom: 1px solid var(--line, #eee);
+  font-size: 0.92rem;
+}
+.banking-amount-in {
+  color: #17633a;
+}
+.banking-amount-out {
+  color: #9b1c1c;
+}
+.banking-pagination {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.btn.danger {
+  background: #9b1c1c;
+  color: #fff;
+  border-color: #9b1c1c;
+}
