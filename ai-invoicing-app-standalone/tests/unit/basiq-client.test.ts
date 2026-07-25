@@ -111,4 +111,27 @@ describe('basiq client', () => {
       providerDetail: expect.stringContaining('Unable to authenticate'),
     });
   });
+
+  it('sends dashboard API key verbatim after a single Basic prefix', async () => {
+    // Official Basiq /token auth: Authorization: Basic <api-key-as-issued>
+    // Env may include paste noise; never Base64-encode the key.
+    process.env.BASIQ_API_KEY = '  "Basic dashboard-key-as-issued"\n';
+    let authHeader = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/token')) {
+          authHeader = String((init?.headers as Record<string, string>)?.Authorization || '');
+          return new Response(
+            JSON.stringify({ access_token: 'tok-ok', expires_in: 3600 }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }),
+    );
+    await getBasiqAccessToken();
+    expect(authHeader).toBe('Basic dashboard-key-as-issued');
+    expect(authHeader.toLowerCase().startsWith('basic basic')).toBe(false);
+  });
 });

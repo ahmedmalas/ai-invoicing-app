@@ -74,14 +74,32 @@ export function isBasiqSandboxEnvironment(): boolean {
   return basiqEnvironmentLabel() === 'sandbox';
 }
 
+/**
+ * Basiq `/token` expects the dashboard API key verbatim in:
+ *   Authorization: Basic <api-key-as-issued>
+ * Do not Base64-encode the key. Aleya adds the `Basic ` prefix; the env value
+ * must be only the exact key from the Basiq dashboard.
+ */
 function apiKey(): string {
-  let key = process.env.BASIQ_API_KEY?.trim() || '';
+  let key = process.env.BASIQ_API_KEY ?? '';
+  // Strip BOM / CR / LF / surrounding whitespace from common paste mistakes.
+  key = key.replace(/^\uFEFF/, '').replace(/[\r\n]+/g, '').trim();
   if (!key) {
     throw new BasiqClientError('not_configured', 'BASIQ_API_KEY is not configured');
   }
-  // Dashboard keys are used verbatim after "Basic ". Strip a duplicated prefix if pasted.
+  // Strip accidental wrapping quotes from .env / dashboard pastes.
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  // Strip a duplicated Authorization scheme if pasted into the env var.
   if (/^basic\s+/i.test(key)) {
     key = key.replace(/^basic\s+/i, '').trim();
+  }
+  if (!key) {
+    throw new BasiqClientError('not_configured', 'BASIQ_API_KEY is not configured');
   }
   return key;
 }
