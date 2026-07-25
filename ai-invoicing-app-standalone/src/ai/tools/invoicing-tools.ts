@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { calculateTotals } from '../../domain/invoices/gst.js';
 import {
   getInvoiceTemplateBinding,
+  listInvoiceTemplateBindings,
   listInvoiceTemplates,
   setInvoiceTemplateBinding,
 } from '../../domain/templates/invoice-template-store.js';
@@ -78,23 +79,22 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       if (input.paymentState) filter.paymentState = input.paymentState;
 
       const invoices = await ctx.db.listInvoices(filter, {
-        limit: Math.max(input.limit, 100),
+        limit: Math.max(input.limit, 200),
         offset: 0,
       });
       const templates = await listInvoiceTemplates(ctx.db);
+      const bindings = await listInvoiceTemplateBindings(ctx.db);
       const templateById = new Map(templates.map((item) => [item.id, item]));
 
-      const enriched = await Promise.all(
-        invoices.map(async (item) => {
-          const templateId = await getInvoiceTemplateBinding(ctx.db, item.id);
-          const template = templateId ? templateById.get(templateId) : null;
-          return {
-            ...item,
-            templateId: templateId || null,
-            templateName: template?.name || null,
-          };
-        }),
-      );
+      const enriched = invoices.map((item) => {
+        const templateId = bindings[item.id] || null;
+        const template = templateId ? templateById.get(templateId) : null;
+        return {
+          ...item,
+          templateId,
+          templateName: template?.name || null,
+        };
+      });
 
       let filtered = enriched;
       if (effectiveTemplateNeedle) {
@@ -124,6 +124,9 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
             totals: item.totals,
           })),
           count: filtered.length,
+          scanned: invoices.length,
+          bindingsKnown: Object.keys(bindings).length,
+          templateNeedle: effectiveTemplateNeedle || null,
           ignoredStatusFilterForTemplateSearch: Boolean(effectiveTemplateNeedle && input.status),
         },
         summary: `Found ${filtered.length} invoice(s).`,

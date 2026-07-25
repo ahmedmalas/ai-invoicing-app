@@ -62,6 +62,11 @@ function pickPublicToolData(toolName: string, data: unknown): Record<string, unk
     'issueDate',
     'count',
     'matched',
+    'scanned',
+    'bindingsKnown',
+    'templateNeedle',
+    'ignoredStatusFilterForTemplateSearch',
+    'invoices',
   ] as const;
   const picked: Record<string, unknown> = { tool: toolName };
   for (const key of allow) {

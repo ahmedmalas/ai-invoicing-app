@@ -185,6 +185,14 @@ async function readBindings(db: AppDatabase): Promise<BindingStore> {
   return { version: 1, byInvoiceId: { ...byInvoiceId } };
 }
 
+/** Read all invoice→template bindings once (for search / batch enrichment). */
+export async function listInvoiceTemplateBindings(
+  db: AppDatabase,
+): Promise<Record<string, string>> {
+  const store = await readBindings(db);
+  return { ...store.byInvoiceId };
+}
+
 export async function getInvoiceTemplateBinding(
   db: AppDatabase,
   invoiceId: string,
