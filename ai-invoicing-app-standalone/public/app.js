@@ -13,6 +13,7 @@ import {
 import { brandMarkHtml, buildLogoCreatorPageHtml, logoSrcFromProfile } from './logo-studio-ui.js';
 import { createInvoiceTemplatesUi } from './invoice-templates-ui.js';
 import { createAleyaAiUi } from './aleya-ai-ui.js';
+import { createBankingUi } from './banking-ui.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -62,10 +63,11 @@ function getInvoiceTemplatesUi() {
   return invoiceTemplatesUi;
 }
 
-async function getBankingUi() {
+function getBankingUi() {
   if (!bankingUi) {
-    const mod = await import('/assets/banking-ui.js');
-    bankingUi = mod.createBankingUi({ api, shell });
+    // Static module graph (same as Aleya AI) — avoids flaky late dynamic imports.
+    // Banking *data* still loads only when Banking / Settings → Bank Feeds is opened.
+    bankingUi = createBankingUi({ api, shell });
   }
   return bankingUi;
 }

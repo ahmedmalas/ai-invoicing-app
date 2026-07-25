@@ -421,10 +421,25 @@ export async function buildApp(options: BuildAppOptions) {
     const actorHeader = Array.isArray(actorHeaderValue) ? actorHeaderValue[0] : actorHeaderValue;
     if (!actorHeader) {
       if (authBypassForTesting) {
+        const bypassUserId = '00000000-0000-0000-0000-000000000001';
+        const workspace = await db.resolveWorkspaceAccess(bypassUserId);
+        if (workspace) {
+          enterWorkspaceContext({
+            authUserId: bypassUserId,
+            workspaceId: workspace.workspaceId,
+            schemaName: workspace.schemaName,
+          });
+        }
         request.auth = {
-          userId: '00000000-0000-0000-0000-000000000001',
+          userId: bypassUserId,
           isAdmin: true,
           canWrite: true,
+          ...(workspace
+            ? {
+                workspaceId: workspace.workspaceId,
+                workspaceSchemaName: workspace.schemaName,
+              }
+            : {}),
         };
         return;
       }
