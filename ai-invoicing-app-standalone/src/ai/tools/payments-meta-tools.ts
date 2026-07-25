@@ -61,8 +61,17 @@ export function registerPaymentsMetaTools(registry: AleyaActionRegistry): void {
     }),
     async execute(input, ctx) {
       const filter: { customerId?: string; invoiceId?: string } = {};
-      if (input.customerId) filter.customerId = input.customerId;
-      if (input.invoiceId) filter.invoiceId = input.invoiceId;
+      // Models often fill optional UUIDs with the nil placeholder — treat as omitted.
+      const customerId =
+        input.customerId && input.customerId !== '00000000-0000-0000-0000-000000000000'
+          ? input.customerId
+          : undefined;
+      const invoiceId =
+        input.invoiceId && input.invoiceId !== '00000000-0000-0000-0000-000000000000'
+          ? input.invoiceId
+          : undefined;
+      if (customerId) filter.customerId = customerId;
+      if (invoiceId) filter.invoiceId = invoiceId;
       const payments = await ctx.db.listCustomerPayments(filter, {
         limit: input.limit,
         offset: 0,
