@@ -51,20 +51,6 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       limit: z.number().int().min(1).max(100).default(50),
     }),
     async execute(input, ctx) {
-      const filter: {
-        customerId?: string;
-        status?: 'Draft' | 'Finalised';
-        paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
-      } = {};
-      if (input.customerId) filter.customerId = input.customerId;
-      if (input.status) filter.status = input.status;
-      if (input.paymentState) filter.paymentState = input.paymentState;
-      const invoices = await ctx.db.listInvoices(filter, {
-        limit: Math.max(input.limit, 100),
-        offset: 0,
-      });
-      const templates = await listInvoiceTemplates(ctx.db);
-      const templateById = new Map(templates.map((item) => [item.id, item]));
       const q = String(input.query || '')
         .trim()
         .toLowerCase();
@@ -79,6 +65,24 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
         (queryLooksLikeTemplate
           ? q.replace(/\b(template|layout|invoice)\b/g, '').trim()
           : '');
+
+      const filter: {
+        customerId?: string;
+        status?: 'Draft' | 'Finalised';
+        paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
+      } = {};
+      if (input.customerId) filter.customerId = input.customerId;
+      // Template/"most recent Quantum Hire" lookups must include Finalised sources.
+      // Models often pass status=Draft because the *result* should be a draft — ignore that.
+      if (input.status && !effectiveTemplateNeedle) filter.status = input.status;
+      if (input.paymentState) filter.paymentState = input.paymentState;
+
+      const invoices = await ctx.db.listInvoices(filter, {
+        limit: Math.max(input.limit, 100),
+        offset: 0,
+      });
+      const templates = await listInvoiceTemplates(ctx.db);
+      const templateById = new Map(templates.map((item) => [item.id, item]));
 
       const enriched = await Promise.all(
         invoices.map(async (item) => {
@@ -120,6 +124,7 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
             totals: item.totals,
           })),
           count: filtered.length,
+          ignoredStatusFilterForTemplateSearch: Boolean(effectiveTemplateNeedle && input.status),
         },
         summary: `Found ${filtered.length} invoice(s).`,
         ui: { refresh: ['invoices'] },
