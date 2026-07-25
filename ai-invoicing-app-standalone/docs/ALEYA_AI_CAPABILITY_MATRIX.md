@@ -2,11 +2,15 @@
 
 Generated from the live action registry plus a UI/backend operations audit.
 
-Registered tools: **31**
+Registered tools: **35**
 
 ## Product rule
 
-If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI should be able to do it through natural language — via a registered, permission-checked tool.
+If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI should eventually be able to do it through natural language — via a registered, permission-checked tool.
+
+Do **not** describe Aleya AI as a complete “full operating layer” while ordinary existing app features remain invisible to Aleya, or while features such as bank feeds are not implemented.
+
+Authoritative product map: `src/ai/product-capabilities.ts` (exposed via `list_product_capabilities` / capabilities API).
 
 ## Registered tools (M1)
 
@@ -21,13 +25,17 @@ If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI sh
 | `diagnose_invoice_issues` | diagnostics | none | none | M1 | Inspect an invoice for missing customer, empty lines, GST inconsistencies, and profile readiness issues. |
 | `duplicate_invoice` | invoices | none | none | M1 | Duplicate an invoice into a new draft, optionally for another customer. |
 | `finalise_invoice` | invoices | required | none | M1 | Finalise a draft invoice (assigns invoice number, locks content). Requires confirmation. |
-| `get_business_profile` | profile | none | none | M1 | Read the business profile / branding / payment defaults. |
+| `get_bank_feed_status` | meta | none | none | M1 | Answer bank-feed / open-banking / connected-bank / bank-sync status questions. Conclusive for “is my bank feed connected?”, last sync, bank-feed errors, and imported bank transactions. Bank feeds are not implemented in this product — returns that fact. Do NOT call get_business_profile for these questions. |
+| `get_business_profile` | profile | none | none | M1 | Read business contact/branding details (company name, ABN, address, email, phone, colours). ONLY when the user asks about the business profile, branding, or contact details. NEVER use for bank-feed connectivity, sync status, imported bank transactions, or connection health — those are not in the business profile. Prefer get_bank_feed_status for bank-feed questions. |
 | `get_customer` | customers | none | none | M1 | Load a customer record by id. |
+| `get_feature_status` | meta | none | none | M1 | Look up whether a named product feature exists and whether Aleya AI can access it. Distinguishes feature-absent vs tool-absent vs permission vs provider issues. Use before offering navigation to a screen. |
 | `get_invoice` | invoices | none | none | M1 | Load a full invoice including line items, totals, and bound template id. |
 | `get_visible_app_state` | meta | none | none | M1 | Read the UI-visible state passed from the client (active invoice/customer/path). |
 | `list_payments` | payments | none | none | M1 | List payments, optionally filtered by customer or invoice. |
+| `list_product_capabilities` | meta | none | none | M1 | List what exists in the Aleya product versus what Aleya AI can currently read or change. Use for “what can you control?”, capability audits, or whether a feature exists. Prefer this over guessing or calling unrelated profile tools. |
 | `list_registered_tools` | meta | none | none | M1 | List every registered Aleya AI tool with category, confirmation, and undo metadata. Use this to discover capabilities dynamically. |
 | `list_templates` | templates | none | none | M1 | List invoice templates available to the authenticated business. |
+| `list_unpaid_invoices` | invoices | none | none | M1 | List finalised invoices that still have outstanding balance (unpaid / part-paid / awaiting payment). Use for “which invoices are still unpaid?”. Do not use get_business_profile. |
 | `manage_invoice_lines` | invoices | none | snapshot | M1 | Add, replace, reorder, or remove line items on a draft invoice. Prefer this for line-level edits. |
 | `prepare_invoice_email` | email | none | none | M1 | Prepare an email draft (subject/body/attachment path) for an invoice. Does not send. |
 | `prepare_invoice_pdf` | pdf | none | none | M1 | Generate/export the invoice PDF and return a download path plus byte size. |
@@ -35,7 +43,7 @@ If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI sh
 | `record_payment` | payments | required | none | M1 | Record a customer payment and allocate it to one or more invoices. Requires confirmation. |
 | `reuse_previous_invoice` | invoices | none | none | M1 | Create a new draft by reusing line items/rates/notes from a previous invoice for a customer (defaults to most recent). |
 | `search_customers` | customers | none | none | M1 | Find customers by name, email, phone, or ABN fragment. |
-| `search_invoices` | invoices | none | none | M1 | Search and filter invoices by customer, status, payment state, title text, or invoice number. |
+| `search_invoices` | invoices | none | none | M1 | Search and filter invoices by customer, status, payment state, title, invoice number, or template name. “Quantum Hire” means the Quantum Hire invoice layout template, not a customer. When finding a source invoice to duplicate, omit status so Finalised invoices are included; duplicate_invoice creates the new Draft. |
 | `set_invoice_payment_state` | invoices | required | none | M1 | Change payment/status state on an invoice (Sent, Awaiting Payment, Paid, Cancelled). Requires confirmation. |
 | `set_invoice_template` | templates | none | snapshot | M1 | Bind an invoice template (including Quantum Hire / Cart N Tip) to a draft invoice. |
 | `undo_last_ai_edit` | undo | none | none | M1 | Undo the most recent reversible Aleya AI edit in this conversation. |
@@ -69,8 +77,11 @@ If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI sh
 | Update customer | Yes | update_customer | none | snapshot | — | M1 |
 | Delete customer | Yes | delete_customer | required | none | Safe-deletion rules still apply | M1 |
 | Search customers | Yes | search_customers | none | none | — | M1 |
-| Update business profile / bank details | Yes | update_business_profile | required | none | — | M1 |
-| Read business profile | Yes | get_business_profile | none | none | — | M1 |
+| Update business profile / branding | Yes | update_business_profile | required | none | Not bank-feed status | M1 |
+| Read business profile | Yes | get_business_profile | none | none | Contact/branding only — never for bank feeds | M1 |
+| Bank feed connected / sync / errors / transactions | Yes (honest absent) | get_bank_feed_status | none | none | Feature not implemented in product | M1 |
+| List product capabilities / what AI can control | Yes | list_product_capabilities / get_feature_status | none | none | — | M1 |
+| List unpaid invoices | Yes | list_unpaid_invoices | none | none | — | M1 |
 | Universal search | Yes | universal_search | none | none | Falls back to customer/invoice scan if DB search absent | M1 |
 | Bulk create drafts from rows/CSV | Yes | bulk_create_drafts_from_rows | none | none | Structured rows in M1; file upload parser M2 | M1 |
 | Bulk update many drafts | Yes | bulk_update_invoices | required | snapshot | — | M1 |
@@ -78,14 +89,19 @@ If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI sh
 | Undo last reversible AI edit | Yes | undo_last_ai_edit | none | none | Snapshot-based | M1 |
 | Discover tools dynamically | Yes | list_registered_tools | none | none | — | M1 |
 | Use visible UI state | Yes | get_visible_app_state | none | none | — | M1 |
-| Quotes create/convert | No | — | — | — | Quote tools not registered yet | M2 |
-| Supplier bills / AP / POs | No | — | — | — | Register after shared service extraction | M3 |
-| Inventory / stocktakes | No | — | — | — | Register after shared service extraction | M3 |
-| Logo studio generate/select | No | — | — | — | Wrap existing logo-studio routes | M2 |
-| Template analyse/import from upload | Partial | — | — | — | Heuristic analyse API exists; AI tool wrapper M2 | M2 |
-| Reports / statements export | No | — | — | — | Wrap statement/report routes | M2 |
-| Recurring invoices | No | — | — | — | Feature not in product yet | M4 |
-| Void finalised invoice | No | — | — | — | Needs explicit void domain operation | M2 |
+| Quotes create/convert | No | — | — | — | Quotes exist in app; AI tools not registered | P1 |
+| Reports / statements | No | — | — | — | Reports exist in app; AI tools not registered | P1 |
+| Dashboard metrics | No | — | — | — | Dashboard exists; AI tools not registered | P1 |
+| Live bank feeds / open banking | No (feature absent) | get_bank_feed_status | — | — | Build provider + sync + tools | P1 |
+| Supplier bills / AP / POs | No | — | — | — | Register after shared service extraction | P2 |
+| Inventory / stocktakes | No | — | — | — | Register after shared service extraction | P2 |
+| Logo studio generate/select | No | — | — | — | Wrap existing logo-studio routes | P2 |
+| Template analyse/import from upload | Partial | — | — | — | Heuristic analyse API exists; AI tool wrapper | P2 |
+| Timeline / audit query | No | — | — | — | Timeline UI exists; AI tools not registered | P2 |
+| Notifications | No | — | — | — | Feature not in product | P3 |
+| Third-party integrations | No | — | — | — | Feature not in product | P3 |
+| Recurring invoices | No | — | — | — | Feature not in product yet | P3 |
+| Void finalised invoice | No | — | — | — | Needs explicit void domain operation | P2 |
 | Keyboard shortcuts as tools | N/A | — | — | — | Shortcuts map to same tools as UI | — |
 
 ## Artificial limits explicitly rejected

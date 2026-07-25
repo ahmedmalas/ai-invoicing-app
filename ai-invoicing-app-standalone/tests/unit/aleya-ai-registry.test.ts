@@ -11,7 +11,7 @@ describe('Aleya AI action registry', () => {
   it('registers a broad M1 tool surface without a hardcoded intent list', () => {
     const registry = ensureAleyaToolsRegistered(getAleyaRegistry());
     const names = registry.names();
-    expect(names.length).toBeGreaterThanOrEqual(24);
+    expect(names.length).toBeGreaterThanOrEqual(28);
     for (const required of [
       'create_invoice_draft',
       'update_invoice_draft',

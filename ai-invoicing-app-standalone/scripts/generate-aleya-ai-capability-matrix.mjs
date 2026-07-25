@@ -44,8 +44,11 @@ const uiActions = [
   ['Update customer', 'Yes', 'update_customer', 'none', 'snapshot', '—', 'M1'],
   ['Delete customer', 'Yes', 'delete_customer', 'required', 'none', 'Safe-deletion rules still apply', 'M1'],
   ['Search customers', 'Yes', 'search_customers', 'none', 'none', '—', 'M1'],
-  ['Update business profile / bank details', 'Yes', 'update_business_profile', 'required', 'none', '—', 'M1'],
-  ['Read business profile', 'Yes', 'get_business_profile', 'none', 'none', '—', 'M1'],
+  ['Update business profile / branding', 'Yes', 'update_business_profile', 'required', 'none', 'Not bank-feed status', 'M1'],
+  ['Read business profile', 'Yes', 'get_business_profile', 'none', 'none', 'Contact/branding only — never for bank feeds', 'M1'],
+  ['Bank feed connected / sync / errors / transactions', 'Yes (honest absent)', 'get_bank_feed_status', 'none', 'none', 'Feature not implemented in product', 'M1'],
+  ['List product capabilities / what AI can control', 'Yes', 'list_product_capabilities / get_feature_status', 'none', 'none', '—', 'M1'],
+  ['List unpaid invoices', 'Yes', 'list_unpaid_invoices', 'none', 'none', '—', 'M1'],
   ['Universal search', 'Yes', 'universal_search', 'none', 'none', 'Falls back to customer/invoice scan if DB search absent', 'M1'],
   ['Bulk create drafts from rows/CSV', 'Yes', 'bulk_create_drafts_from_rows', 'none', 'none', 'Structured rows in M1; file upload parser M2', 'M1'],
   ['Bulk update many drafts', 'Yes', 'bulk_update_invoices', 'required', 'snapshot', '—', 'M1'],
@@ -53,14 +56,19 @@ const uiActions = [
   ['Undo last reversible AI edit', 'Yes', 'undo_last_ai_edit', 'none', 'none', 'Snapshot-based', 'M1'],
   ['Discover tools dynamically', 'Yes', 'list_registered_tools', 'none', 'none', '—', 'M1'],
   ['Use visible UI state', 'Yes', 'get_visible_app_state', 'none', 'none', '—', 'M1'],
-  ['Quotes create/convert', 'No', '—', '—', '—', 'Quote tools not registered yet', 'M2'],
-  ['Supplier bills / AP / POs', 'No', '—', '—', '—', 'Register after shared service extraction', 'M3'],
-  ['Inventory / stocktakes', 'No', '—', '—', '—', 'Register after shared service extraction', 'M3'],
-  ['Logo studio generate/select', 'No', '—', '—', '—', 'Wrap existing logo-studio routes', 'M2'],
-  ['Template analyse/import from upload', 'Partial', '—', '—', '—', 'Heuristic analyse API exists; AI tool wrapper M2', 'M2'],
-  ['Reports / statements export', 'No', '—', '—', '—', 'Wrap statement/report routes', 'M2'],
-  ['Recurring invoices', 'No', '—', '—', '—', 'Feature not in product yet', 'M4'],
-  ['Void finalised invoice', 'No', '—', '—', '—', 'Needs explicit void domain operation', 'M2'],
+  ['Quotes create/convert', 'No', '—', '—', '—', 'Quotes exist in app; AI tools not registered', 'P1'],
+  ['Reports / statements', 'No', '—', '—', '—', 'Reports exist in app; AI tools not registered', 'P1'],
+  ['Dashboard metrics', 'No', '—', '—', '—', 'Dashboard exists; AI tools not registered', 'P1'],
+  ['Live bank feeds / open banking', 'No (feature absent)', 'get_bank_feed_status', '—', '—', 'Build provider + sync + tools', 'P1'],
+  ['Supplier bills / AP / POs', 'No', '—', '—', '—', 'Register after shared service extraction', 'P2'],
+  ['Inventory / stocktakes', 'No', '—', '—', '—', 'Register after shared service extraction', 'P2'],
+  ['Logo studio generate/select', 'No', '—', '—', '—', 'Wrap existing logo-studio routes', 'P2'],
+  ['Template analyse/import from upload', 'Partial', '—', '—', '—', 'Heuristic analyse API exists; AI tool wrapper', 'P2'],
+  ['Timeline / audit query', 'No', '—', '—', '—', 'Timeline UI exists; AI tools not registered', 'P2'],
+  ['Notifications', 'No', '—', '—', '—', 'Feature not in product', 'P3'],
+  ['Third-party integrations', 'No', '—', '—', '—', 'Feature not in product', 'P3'],
+  ['Recurring invoices', 'No', '—', '—', '—', 'Feature not in product yet', 'P3'],
+  ['Void finalised invoice', 'No', '—', '—', '—', 'Needs explicit void domain operation', 'P2'],
   ['Keyboard shortcuts as tools', 'N/A', '—', '—', '—', 'Shortcuts map to same tools as UI', '—'],
 ];
 
@@ -73,7 +81,11 @@ lines.push(`Registered tools: **${tools.length}**`);
 lines.push('');
 lines.push('## Product rule');
 lines.push('');
-lines.push('If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI should be able to do it through natural language — via a registered, permission-checked tool.');
+lines.push('If the authenticated user can legitimately do it in Aleya Invoicing, Aleya AI should eventually be able to do it through natural language — via a registered, permission-checked tool.');
+lines.push('');
+lines.push('Do **not** describe Aleya AI as a complete “full operating layer” while ordinary existing app features remain invisible to Aleya, or while features such as bank feeds are not implemented.');
+lines.push('');
+lines.push('Authoritative product map: `src/ai/product-capabilities.ts` (exposed via `list_product_capabilities` / capabilities API).');
 lines.push('');
 lines.push('## Registered tools (M1)');
 lines.push('');

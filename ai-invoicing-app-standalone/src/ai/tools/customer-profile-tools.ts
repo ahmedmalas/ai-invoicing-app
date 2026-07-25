@@ -130,11 +130,18 @@ export function registerCustomerProfileTools(registry: AleyaActionRegistry): voi
 
   registry.register({
     name: 'get_business_profile',
-    description: 'Read the business profile / branding / payment defaults.',
+    description:
+      'Read business contact/branding details (company name, ABN, address, email, phone, colours). ONLY when the user asks about the business profile, branding, or contact details. NEVER use for bank-feed connectivity, sync status, imported bank transactions, or connection health — those are not in the business profile. Prefer get_bank_feed_status for bank-feed questions.',
     category: 'profile',
     milestone: 'M1',
     confirmation: 'none',
     undo: 'none',
+    domain: 'profile',
+    intents: ['business_contact', 'branding'],
+    sensitivity: 'high',
+    latencyClass: 'fast',
+    mutates: false,
+    conclusiveFor: ['business_contact', 'branding'],
     inputSchema: z.object({}),
     async execute(_input, ctx) {
       const profile = await ctx.db.getBusinessProfile();

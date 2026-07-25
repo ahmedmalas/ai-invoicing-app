@@ -22,6 +22,9 @@ export type ToolCategory =
   | 'meta'
   | 'undo';
 
+export type ToolSensitivity = 'low' | 'medium' | 'high';
+export type ToolLatencyClass = 'fast' | 'standard' | 'slow';
+
 export interface UiSyncInstruction {
   refresh?: Array<'invoices' | 'customers' | 'templates' | 'profile' | 'payments' | 'search'>;
   openRoute?: string | null;
@@ -101,6 +104,20 @@ export interface AleyaToolDefinition<TInput extends z.ZodTypeAny = z.ZodTypeAny>
   undo: UndoSupport;
   /** Milestone label for capability matrix (e.g. "M1"). */
   milestone: string;
+  /** Capability domain for routing (e.g. banking, invoices). */
+  domain?: string;
+  /** Intents this tool is appropriate for. */
+  intents?: string[];
+  /** Privacy sensitivity of typical outputs. */
+  sensitivity?: ToolSensitivity;
+  /** Expected latency class. */
+  latencyClass?: ToolLatencyClass;
+  /** Whether the tool mutates application data. */
+  mutates?: boolean;
+  /** Status questions this tool can answer conclusively. */
+  conclusiveFor?: string[];
+  /** Required permission hint for matrix/docs. */
+  requiredPermission?: string;
   execute: (input: z.infer<TInput>, ctx: AleyaToolContext) => Promise<ToolResult>;
 }
 

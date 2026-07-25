@@ -116,11 +116,24 @@ export class AleyaActionRegistry {
   }
 
   /** Convert registered tools into an AI SDK ToolSet for the model. */
-  toAiSdkTools(ctx: AleyaToolContext): ToolSet {
+  toAiSdkTools(ctx: AleyaToolContext, options?: { includeTools?: Set<string> }): ToolSet {
     const set: ToolSet = {};
     for (const definition of this.tools.values()) {
+      if (options?.includeTools && !options.includeTools.has(definition.name)) continue;
+      const metaBits = [
+        definition.domain ? `domain=${definition.domain}` : null,
+        definition.mutates ? 'mutates' : 'read-only',
+        definition.sensitivity ? `sensitivity=${definition.sensitivity}` : null,
+        definition.conclusiveFor?.length
+          ? `conclusiveFor=${definition.conclusiveFor.join(',')}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('; ');
       set[definition.name] = tool({
-        description: definition.description,
+        description: metaBits
+          ? `${definition.description} [${metaBits}]`
+          : definition.description,
         inputSchema: definition.inputSchema,
         execute: async (input) => this.execute(definition.name, input, ctx),
       });
@@ -135,6 +148,12 @@ export class AleyaActionRegistry {
     undo: string;
     milestone: string;
     description: string;
+    domain?: string;
+    intents?: string[];
+    sensitivity?: string;
+    latencyClass?: string;
+    mutates?: boolean;
+    conclusiveFor?: string[];
   }> {
     return this.list().map((item) => ({
       tool: item.name,
@@ -143,6 +162,12 @@ export class AleyaActionRegistry {
       undo: item.undo,
       milestone: item.milestone,
       description: item.description,
+      ...(item.domain ? { domain: item.domain } : {}),
+      ...(item.intents ? { intents: item.intents } : {}),
+      ...(item.sensitivity ? { sensitivity: item.sensitivity } : {}),
+      ...(item.latencyClass ? { latencyClass: item.latencyClass } : {}),
+      ...(item.mutates != null ? { mutates: item.mutates } : {}),
+      ...(item.conclusiveFor ? { conclusiveFor: item.conclusiveFor } : {}),
     }));
   }
 }
