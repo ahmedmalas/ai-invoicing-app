@@ -276,6 +276,7 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/reset-password',
     '/auth/callback',
     '/dashboard',
+    '/aleya-ai',
     '/workspace/customers',
     '/workspace/quotes',
     '/workspace/invoices',
