@@ -1322,14 +1322,19 @@ ALTER TABLE invoice_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
+`;
+}
 
+/** Idempotent bank-feed DDL for one tenant schema (search_path already set). */
+function loadPostgresBankFeedUpgradeSql(): string {
+  return `
 CREATE TABLE IF NOT EXISTS bank_connections (
   id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  provider_user_id TEXT NOT NULL,
+  business_id TEXT,
+  provider TEXT,
+  provider_user_id TEXT,
   provider_connection_id TEXT,
-  status TEXT NOT NULL,
+  status TEXT,
   consent_id TEXT,
   consent_status TEXT,
   consent_started_at TEXT,
@@ -1338,17 +1343,32 @@ CREATE TABLE IF NOT EXISTS bank_connections (
   last_successful_sync_at TEXT,
   error_code TEXT,
   error_message TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  created_at TEXT,
+  updated_at TEXT
 );
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS provider_connection_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_id TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_status TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_started_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS consent_expires_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_sync_attempt_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_successful_sync_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_code TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS updated_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_bank_connections_business ON bank_connections(business_id);
 CREATE INDEX IF NOT EXISTS idx_bank_connections_provider_user ON bank_connections(provider, provider_user_id);
 
 CREATE TABLE IF NOT EXISTS bank_accounts (
   id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL,
-  bank_connection_id TEXT NOT NULL,
-  provider_account_id TEXT NOT NULL,
+  business_id TEXT,
+  bank_connection_id TEXT,
+  provider_account_id TEXT,
   institution_name TEXT,
   account_name TEXT,
   masked_account_number TEXT,
@@ -1357,33 +1377,64 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   current_balance DOUBLE PRECISION,
   available_balance DOUBLE PRECISION,
   balance_updated_at TEXT,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE (business_id, provider_account_id)
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT,
+  updated_at TEXT
 );
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS provider_account_id TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS institution_name TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_name TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS masked_account_number TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS account_type TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS currency TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS current_balance DOUBLE PRECISION;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS available_balance DOUBLE PRECISION;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS balance_updated_at TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS updated_at TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_accounts_business_provider
+  ON bank_accounts(business_id, provider_account_id);
 CREATE INDEX IF NOT EXISTS idx_bank_accounts_business ON bank_accounts(business_id);
 CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(bank_connection_id);
 
 CREATE TABLE IF NOT EXISTS bank_transactions (
   id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL,
-  bank_account_id TEXT NOT NULL,
-  provider_transaction_id TEXT NOT NULL,
-  transaction_date TEXT NOT NULL,
+  business_id TEXT,
+  bank_account_id TEXT,
+  provider_transaction_id TEXT,
+  transaction_date TEXT,
   posted_date TEXT,
   description TEXT,
-  amount DOUBLE PRECISION NOT NULL,
-  direction TEXT NOT NULL,
+  amount DOUBLE PRECISION,
+  direction TEXT,
   status TEXT,
   merchant_name TEXT,
   reference TEXT,
   provider_category TEXT,
-  imported_at TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE (business_id, provider_transaction_id)
+  imported_at TEXT,
+  created_at TEXT,
+  updated_at TEXT
 );
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS business_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS bank_account_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS provider_transaction_id TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS transaction_date TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS posted_date TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS amount DOUBLE PRECISION;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS direction TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS merchant_name TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reference TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS provider_category TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS imported_at TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_transactions_business_provider
+  ON bank_transactions(business_id, provider_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_business_date ON bank_transactions(business_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(bank_account_id);
 `;
@@ -1534,14 +1585,21 @@ export async function createPostgresDatabase(
       );
       CREATE TABLE IF NOT EXISTS public.basiq_connect_states (
         state_token TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        workspace_schema TEXT NOT NULL,
-        business_id TEXT NOT NULL,
+        workspace_id TEXT,
+        workspace_schema TEXT,
+        business_id TEXT,
         provider_user_id TEXT,
         bank_connection_id TEXT,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        expires_at TEXT,
+        created_at TEXT
       );
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_schema TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS business_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS expires_at TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS created_at TEXT;
       CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires
         ON public.basiq_connect_states(expires_at);
     `);
@@ -1609,10 +1667,12 @@ export async function createPostgresDatabase(
       workspaceSchemas.rows.push({ schema_name: 'public' });
     }
     const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
+    const bankFeedUpgradeSql = loadPostgresBankFeedUpgradeSql();
     for (const workspace of workspaceSchemas.rows) {
       const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
       await schemaClient.query(`SET LOCAL search_path TO "${schemaName}", public`);
       await schemaClient.query(workspaceUpgradeSql);
+      await schemaClient.query(bankFeedUpgradeSql);
       await schemaClient.query(
         `CREATE TABLE IF NOT EXISTS app_database_metadata (
           singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
