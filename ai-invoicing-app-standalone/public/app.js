@@ -30,6 +30,7 @@ let logoStudioNotice = '';
 let invoiceEditor = null;
 let invoiceTemplatesUi = null;
 let aleyaAiUi = null;
+let bankingUi = null;
 
 function getAleyaAiUi() {
   if (!aleyaAiUi) {
@@ -59,6 +60,14 @@ function getInvoiceTemplatesUi() {
     });
   }
   return invoiceTemplatesUi;
+}
+
+async function getBankingUi() {
+  if (!bankingUi) {
+    const mod = await import('/assets/banking-ui.js');
+    bankingUi = mod.createBankingUi({ api, shell });
+  }
+  return bankingUi;
 }
 
 const escapeHtml = (value) =>
@@ -357,6 +366,7 @@ const navItems = [
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
   ['/workspace/payments', 'PA', 'Payments'],
+  ['/workspace/banking', 'BK', 'Banking'],
   ['/workspace/inventory', 'IV', 'Inventory'],
   ['/workspace/purchase-orders', 'PO', 'Purchase Orders'],
   ['/workspace/suppliers', 'SU', 'Suppliers'],
@@ -2371,22 +2381,23 @@ async function renderRoute({ forceReload = false } = {}) {
   const path = location.pathname === '/' ? '/dashboard' : location.pathname;
   const invoiceRoute = parseInvoiceWorkspacePath(path);
   const isAleyaAi = path === '/aleya-ai';
+  const isBanking = path === '/workspace/banking';
   const warm =
     !forceReload &&
     workspaceCacheAt &&
     Date.now() - workspaceCacheAt < WORKSPACE_CACHE_TTL_MS &&
     Array.isArray(cache.customers) &&
     Boolean(document.querySelector('.app-shell'));
-  // Aleya AI must not wait on full invoice/customer/report preload to become usable.
-  if (!warm && !isAleyaAi) {
+  // Aleya AI / Banking must not wait on full invoice/customer/report preload.
+  if (!warm && !isAleyaAi && !isBanking) {
     root.innerHTML =
       '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
   }
   try {
-    if (!isAleyaAi) {
+    if (!isAleyaAi && !isBanking) {
       await loadWorkspace({ force: forceReload });
     } else if (!document.querySelector('.app-shell')) {
-      // Minimal shell only — capabilities load inside the Aleya page.
+      // Minimal shell only — page-specific data loads inside the route.
       shell('');
     }
     if (invoiceRoute) {
@@ -2408,6 +2419,7 @@ async function renderRoute({ forceReload = false } = {}) {
     else if (path === '/workspace/quotes') quotesPage();
     else if (path === '/workspace/invoices') invoicesPage();
     else if (path === '/workspace/payments') paymentsPage();
+    else if (path === '/workspace/banking') await (await getBankingUi()).bankingPage();
     else if (path === '/workspace/inventory') await inventoryPage();
     else if (path === '/workspace/purchase-orders') await purchaseOrdersPage();
     else if (path === '/workspace/suppliers') await suppliersPage();

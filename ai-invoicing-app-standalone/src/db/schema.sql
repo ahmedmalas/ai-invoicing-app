@@ -1202,3 +1202,83 @@ BEFORE DELETE ON stock_movements
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_STOCK_MOVEMENT');
 END;
+
+-- Bank feeds (Basiq) — Phase 1
+CREATE TABLE IF NOT EXISTS bank_connections (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  provider_connection_id TEXT,
+  status TEXT NOT NULL,
+  consent_id TEXT,
+  consent_status TEXT,
+  consent_started_at TEXT,
+  consent_expires_at TEXT,
+  last_sync_attempt_at TEXT,
+  last_successful_sync_at TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bank_connections_business ON bank_connections(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_connections_provider_user ON bank_connections(provider, provider_user_id);
+
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  bank_connection_id TEXT NOT NULL,
+  provider_account_id TEXT NOT NULL,
+  institution_name TEXT,
+  account_name TEXT,
+  masked_account_number TEXT,
+  account_type TEXT,
+  currency TEXT,
+  current_balance REAL,
+  available_balance REAL,
+  balance_updated_at TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (business_id, provider_account_id),
+  FOREIGN KEY (bank_connection_id) REFERENCES bank_connections(id)
+);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_business ON bank_accounts(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(bank_connection_id);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  bank_account_id TEXT NOT NULL,
+  provider_transaction_id TEXT NOT NULL,
+  transaction_date TEXT NOT NULL,
+  posted_date TEXT,
+  description TEXT,
+  amount REAL NOT NULL,
+  direction TEXT NOT NULL,
+  status TEXT,
+  merchant_name TEXT,
+  reference TEXT,
+  provider_category TEXT,
+  imported_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (business_id, provider_transaction_id),
+  FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_business_date ON bank_transactions(business_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(bank_account_id);
+
+-- Basiq OAuth/connect CSRF state (SQLite single-file DB)
+CREATE TABLE IF NOT EXISTS basiq_connect_states (
+  state_token TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  workspace_schema TEXT NOT NULL,
+  business_id TEXT NOT NULL,
+  provider_user_id TEXT,
+  bank_connection_id TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires ON basiq_connect_states(expires_at);

@@ -1,54 +1,9 @@
 import { z } from 'zod';
 
-import {
-  PRODUCT_CAPABILITIES,
-  bankFeedStatusPayload,
-} from '../product-capabilities.js';
+import { PRODUCT_CAPABILITIES } from '../product-capabilities.js';
 import type { AleyaActionRegistry } from '../registry.js';
 
 export function registerCapabilityTools(registry: AleyaActionRegistry): void {
-  registry.register({
-    name: 'get_bank_feed_status',
-    description:
-      'Answer bank-feed / open-banking / connected-bank / bank-sync status questions. Conclusive for “is my bank feed connected?”, last sync, bank-feed errors, and imported bank transactions. Bank feeds are not implemented in this product — returns that fact. Do NOT call get_business_profile for these questions.',
-    category: 'meta',
-    milestone: 'M1',
-    confirmation: 'none',
-    undo: 'none',
-    domain: 'banking',
-    intents: [
-      'bank_feed_connected',
-      'bank_feed_sync',
-      'bank_feed_errors',
-      'bank_transactions',
-      'bank_accounts',
-    ],
-    sensitivity: 'low',
-    latencyClass: 'fast',
-    mutates: false,
-    conclusiveFor: [
-      'bank_feed_connected',
-      'bank_feed_sync',
-      'bank_feed_errors',
-      'bank_transactions',
-    ],
-    inputSchema: z.object({
-      question: z
-        .string()
-        .optional()
-        .describe('Optional user question fragment for logging only.'),
-    }),
-    async execute() {
-      const data = bankFeedStatusPayload();
-      return {
-        ok: true,
-        data,
-        summary:
-          'Bank feeds are not implemented in this workspace — no live connection, sync, or imported transactions.',
-      };
-    },
-  });
-
   registry.register({
     name: 'list_product_capabilities',
     description:

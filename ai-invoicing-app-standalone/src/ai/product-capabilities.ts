@@ -99,14 +99,25 @@ export const PRODUCT_CAPABILITIES: ProductCapability[] = [
     id: 'bank_feeds',
     domain: 'banking',
     label: 'Bank feeds / open banking',
-    appExists: 'no',
-    aiAccess: 'read',
-    tools: ['get_bank_feed_status'],
-    confirmation: '—',
-    undo: '—',
+    appExists: 'partial',
+    aiAccess: 'write',
+    tools: [
+      'get_bank_feed_status',
+      'list_connected_bank_accounts',
+      'get_bank_account_connection',
+      'get_last_bank_sync',
+      'list_bank_feed_errors',
+      'refresh_bank_feed',
+      'list_recent_bank_transactions',
+      'search_bank_transactions',
+      'disconnect_bank_feed',
+      'reconnect_bank_feed',
+    ],
+    confirmation: 'disconnect_bank_feed, reconnect_bank_feed',
+    undo: 'none',
     permissions: 'authenticated workspace',
     limitation:
-      'Not implemented. Static BSB/account on invoice templates are payment instructions, not a live bank feed.',
+      'Phase 1 Basiq sandbox/test institutions only. Live Australian bank access requires verified production consent configuration. Static BSB/account on invoice templates remain payment instructions, not the feed.',
     priority: 'P1',
     conclusiveIntents: [
       'bank_feed_connected',
@@ -375,26 +386,25 @@ export function getBankFeedCapability() {
   return PRODUCT_CAPABILITIES.find((item) => item.id === 'bank_feeds')!;
 }
 
+/** @deprecated Prefer db.getBankFeedStatus — kept for capability-map docs only. */
 export function bankFeedStatusPayload() {
   return {
-    implemented: false,
+    implemented: true,
     connected: false,
-    status: 'not_implemented' as const,
-    provider: null,
+    status: 'not_connected' as const,
+    provider: 'basiq' as const,
     institution: null,
     maskedAccount: null,
     lastSuccessfulSyncAt: null,
     lastSyncAttemptAt: null,
     errors: [] as string[],
-    warning:
-      'Bank feeds have not yet been implemented in this Aleya workspace. Static BSB/account details on invoice templates are payment instructions printed on invoices — not a live bank-feed connection.',
-    nextAction:
-      'No bank-feed page or connection flow exists to open. Bank feeds are on the product backlog (P1).',
+    warning: null,
+    nextAction: 'Open Banking and connect a Basiq sandbox test institution.',
     distinction: {
-      featureAbsent: true,
+      featureAbsent: false,
       toolAbsentForExistingFeature: false,
       permissionDenied: false,
-      providerDisconnected: false,
+      providerDisconnected: true,
       temporaryFailure: false,
     },
   };
@@ -502,32 +512,32 @@ export function answerForStatusIntent(intent: Exclude<StatusIntent, null>): {
 
   if (intent === 'bank_feed_sync') {
     return {
-      toolName: 'get_bank_feed_status',
+      toolName: 'get_last_bank_sync',
       assistantMessage:
-        'Bank feeds are not currently implemented in your Aleya account, so there is no live bank connection and no last sync time to report.',
+        'Use get_last_bank_sync / Banking to read the stored provider sync timestamps for this workspace.',
       data: status,
     };
   }
   if (intent === 'bank_feed_errors') {
     return {
-      toolName: 'get_bank_feed_status',
+      toolName: 'list_bank_feed_errors',
       assistantMessage:
-        'Bank feeds are not currently implemented in your Aleya account, so there are no bank-feed errors to show. This is a missing feature, not a failed sync.',
+        'Use list_bank_feed_errors / Banking to read the current bank-feed error state for this workspace.',
       data: status,
     };
   }
   if (intent === 'bank_transactions') {
     return {
-      toolName: 'get_bank_feed_status',
+      toolName: 'list_recent_bank_transactions',
       assistantMessage:
-        'Bank feeds are not currently implemented in your Aleya account, so there are no imported bank transactions to show.',
+        'Use list_recent_bank_transactions / Banking to read imported bank transactions for this workspace.',
       data: status,
     };
   }
   return {
     toolName: 'get_bank_feed_status',
     assistantMessage:
-      'Bank feeds are not currently implemented in your Aleya account, so there is no live bank connection to verify.',
+      'Bank feeds are available via Basiq Phase 1. Open /workspace/banking or ask Aleya AI for the live connection status.',
     data: status,
   };
 }

@@ -35,6 +35,7 @@ const tracedAssets = {
   'logo-studio-ui.js': new URL('../../public/logo-studio-ui.js', import.meta.url),
   'invoice-templates-ui.js': new URL('../../public/invoice-templates-ui.js', import.meta.url),
   'aleya-ai-ui.js': new URL('../../public/aleya-ai-ui.js', import.meta.url),
+  'banking-ui.js': new URL('../../public/banking-ui.js', import.meta.url),
   'launch-app.js': new URL('../../public/launch-app.js', import.meta.url),
   'auth-controls.css': new URL('../../public/auth-controls.css', import.meta.url),
   'auth-controls.js': new URL('../../public/auth-controls.js', import.meta.url),
@@ -199,6 +200,9 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
   app.get('/assets/aleya-ai-ui.js', async (_request, reply) =>
     sendJs(reply, asset('aleya-ai-ui.js')),
   );
+  app.get('/assets/banking-ui.js', async (_request, reply) =>
+    sendJs(reply, asset('banking-ui.js')),
+  );
   app.get('/assets/logo-studio-ui.js', async (_request, reply) =>
     sendJs(reply, asset('logo-studio-ui.js')),
   );
@@ -286,6 +290,7 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
     '/workspace/purchase-orders',
     '/workspace/suppliers',
     '/workspace/stocktakes',
+    '/workspace/banking',
     '/reports',
     '/timeline',
     '/settings',

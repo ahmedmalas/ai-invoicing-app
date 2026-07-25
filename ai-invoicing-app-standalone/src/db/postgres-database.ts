@@ -63,9 +63,27 @@ import type {
   PurchaseOrderReceiptStatus,
 } from '../domain/inventory/types.js';
 import { createPostgresInventoryStore } from './postgres-inventory-store.js';
+import { createBankStore } from './bank-store.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
-import { assertWorkspaceSchemaName, getWorkspaceContext } from '../auth/workspace-context.js';
+import {
+  assertWorkspaceSchemaName,
+  enterWorkspaceContext,
+  getWorkspaceContext,
+} from '../auth/workspace-context.js';
+import type {
+  BankAccount,
+  BankConnection,
+  BankFeedStatusView,
+  BankSyncResult,
+  BankTransaction,
+  ListBankTransactionsFilter,
+} from '../domain/banking/types.js';
+import {
+  disconnectBankFeed as disconnectBankFeedService,
+  startBasiqConnect,
+} from '../domain/banking/connection-service.js';
+import { syncBankConnection } from '../domain/banking/sync-service.js';
 
 interface DbInvoiceLineItem {
   description: string;
@@ -688,7 +706,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 45;
+export const DATABASE_SCHEMA_VERSION = 46;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -992,6 +1010,37 @@ export interface AppDatabase {
   getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  getBankFeedStatus(businessId: string): DatabaseResult<BankFeedStatusView>;
+  listBankAccounts(businessId: string, activeOnly?: boolean): DatabaseResult<BankAccount[]>;
+  listBankTransactions(
+    filter: ListBankTransactionsFilter,
+  ): DatabaseResult<{ items: BankTransaction[]; total: number }>;
+  getBankConnection(businessId: string): DatabaseResult<BankConnection | null>;
+  startBasiqBankConnect(input: {
+    businessId: string;
+    workspaceId: string;
+    workspaceSchema: string;
+    email: string;
+    mobile?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+  }): DatabaseResult<{
+    authLinkUrl: string;
+    stateToken: string;
+    connection: BankConnection;
+    expiresAt: string | null;
+  }>;
+  completeBasiqBankCallback(input: {
+    stateToken: string;
+    cookieState?: string | null;
+  }): DatabaseResult<{
+    workspaceId: string;
+    workspaceSchema: string;
+    businessId: string;
+    sync: BankSyncResult;
+  }>;
+  refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
+  disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
 }
 
 function nowIso(): string {
@@ -1273,6 +1322,70 @@ ALTER TABLE invoice_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS product_id TEXT;
 ALTER TABLE purchase_order_line_items ADD COLUMN IF NOT EXISTS quantity_received DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS bank_connections (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  provider_connection_id TEXT,
+  status TEXT NOT NULL,
+  consent_id TEXT,
+  consent_status TEXT,
+  consent_started_at TEXT,
+  consent_expires_at TEXT,
+  last_sync_attempt_at TEXT,
+  last_successful_sync_at TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bank_connections_business ON bank_connections(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_connections_provider_user ON bank_connections(provider, provider_user_id);
+
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  bank_connection_id TEXT NOT NULL,
+  provider_account_id TEXT NOT NULL,
+  institution_name TEXT,
+  account_name TEXT,
+  masked_account_number TEXT,
+  account_type TEXT,
+  currency TEXT,
+  current_balance DOUBLE PRECISION,
+  available_balance DOUBLE PRECISION,
+  balance_updated_at TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (business_id, provider_account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_business ON bank_accounts(business_id);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(bank_connection_id);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  bank_account_id TEXT NOT NULL,
+  provider_transaction_id TEXT NOT NULL,
+  transaction_date TEXT NOT NULL,
+  posted_date TEXT,
+  description TEXT,
+  amount DOUBLE PRECISION NOT NULL,
+  direction TEXT NOT NULL,
+  status TEXT,
+  merchant_name TEXT,
+  reference TEXT,
+  provider_category TEXT,
+  imported_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (business_id, provider_transaction_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_business_date ON bank_transactions(business_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(bank_account_id);
 `;
 }
 function pgSql(sql: string): string {
@@ -1419,6 +1532,18 @@ export async function createPostgresDatabase(
         schema_version INTEGER NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS public.basiq_connect_states (
+        state_token TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        workspace_schema TEXT NOT NULL,
+        business_id TEXT NOT NULL,
+        provider_user_id TEXT,
+        bank_connection_id TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires
+        ON public.basiq_connect_states(expires_at);
     `);
     const version = await schemaClient.query<{ schema_version: number }>(
       'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
@@ -1681,6 +1806,7 @@ export async function createPostgresDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
+  const bankStore = createBankStore(db, { connectStatesTable: 'public.basiq_connect_states' });
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -6832,6 +6958,87 @@ export async function createPostgresDatabase(
     async restorePlatformSnapshot(snapshot) {
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       await restorePlatformSnapshot(parsedSnapshot);
+    },
+
+    async getBankFeedStatus(businessId) {
+      return bankStore.getFeedStatusView(businessId);
+    },
+    async listBankAccounts(businessId, activeOnly = false) {
+      return bankStore.listAccounts(businessId, activeOnly);
+    },
+    async listBankTransactions(filter) {
+      return bankStore.listTransactions(filter);
+    },
+    async getBankConnection(businessId) {
+      return bankStore.getConnectionByBusiness(businessId);
+    },
+    async startBasiqBankConnect(input) {
+      return startBasiqConnect(bankStore, input);
+    },
+    async completeBasiqBankCallback(input) {
+      if (!input.cookieState || input.cookieState !== input.stateToken) {
+        throw new Error('BANK_CONNECT_STATE_MISMATCH');
+      }
+      // Transaction starts with public search_path (no auth workspace on callback).
+      const stateRow = await bankStore.consumeConnectState(input.stateToken);
+      if (!stateRow) {
+        throw new Error('BANK_CONNECT_STATE_INVALID');
+      }
+      const client = storage.getStore();
+      if (!client) throw new Error('DATABASE_TRANSACTION_REQUIRED');
+      const schemaName = assertWorkspaceSchemaName(stateRow.workspaceSchema);
+      await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
+      enterWorkspaceContext({
+        authUserId: 'basiq-callback',
+        workspaceId: stateRow.workspaceId,
+        schemaName,
+      });
+
+      const connectionId = stateRow.bankConnectionId;
+      let connection = connectionId
+        ? await bankStore.getConnectionById(stateRow.businessId, connectionId)
+        : null;
+      if (!connection) {
+        const upsertInput: Parameters<typeof bankStore.upsertConnection>[0] = {
+          businessId: stateRow.businessId,
+          provider: 'basiq',
+          providerUserId: stateRow.providerUserId || 'unknown',
+          status: 'connecting',
+        };
+        if (connectionId) upsertInput.id = connectionId;
+        connection = await bankStore.upsertConnection(upsertInput);
+      } else {
+        await bankStore.updateConnectionFields(stateRow.businessId, connection.id, {
+          status: 'connecting',
+          errorCode: null,
+          errorMessage: null,
+        });
+      }
+      const sync = await syncBankConnection(bankStore, {
+        businessId: stateRow.businessId,
+        connectionId: connection.id,
+        triggerRefresh: false,
+      });
+      return {
+        workspaceId: stateRow.workspaceId,
+        workspaceSchema: schemaName,
+        businessId: stateRow.businessId,
+        sync,
+      };
+    },
+    async refreshBankFeed(businessId) {
+      const connection = await bankStore.getConnectionByBusiness(businessId);
+      if (!connection || connection.status === 'disconnected') {
+        throw new Error('BANK_CONNECTION_NOT_FOUND');
+      }
+      return syncBankConnection(bankStore, {
+        businessId,
+        connectionId: connection.id,
+        triggerRefresh: true,
+      });
+    },
+    async disconnectBankFeed(businessId, confirmed) {
+      return disconnectBankFeedService(bankStore, { businessId, confirmed });
     },
   };
   const proxy = new Proxy(implementation, {

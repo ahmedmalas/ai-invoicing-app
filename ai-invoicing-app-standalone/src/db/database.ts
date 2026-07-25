@@ -54,6 +54,7 @@ import {
 import { assertValidJobStatusTransitionOrThrow } from '../domain/jobs/workflow.js';
 import { assertValidPurchaseOrderStatusTransitionOrThrow } from '../domain/purchase-orders/workflow.js';
 import { createInventoryStore, ensureInventorySchemaSqlite } from './inventory-store.js';
+import { createBankStore } from './bank-store.js';
 import type {
   Product,
   StockMovement,
@@ -62,6 +63,20 @@ import type {
   InventoryReportBundle,
   PurchaseOrderReceiptStatus,
 } from '../domain/inventory/types.js';
+import type {
+  BankAccount,
+  BankConnection,
+  BankFeedStatusView,
+  BankSyncResult,
+  BankTransaction,
+  ListBankTransactionsFilter,
+} from '../domain/banking/types.js';
+import {
+  completeBasiqCallback,
+  disconnectBankFeed as disconnectBankFeedService,
+  startBasiqConnect,
+} from '../domain/banking/connection-service.js';
+import { syncBankConnection } from '../domain/banking/sync-service.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
 
@@ -702,7 +717,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 45;
+export const DATABASE_SCHEMA_VERSION = 46;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -1006,6 +1021,37 @@ export interface AppDatabase {
   getInventoryReports(): DatabaseResult<InventoryReportBundle>;
   exportPlatformSnapshot(): DatabaseResult<PlatformSnapshot>;
   restorePlatformSnapshot(snapshot: unknown): DatabaseResult<void>;
+  getBankFeedStatus(businessId: string): DatabaseResult<BankFeedStatusView>;
+  listBankAccounts(businessId: string, activeOnly?: boolean): DatabaseResult<BankAccount[]>;
+  listBankTransactions(
+    filter: ListBankTransactionsFilter,
+  ): DatabaseResult<{ items: BankTransaction[]; total: number }>;
+  getBankConnection(businessId: string): DatabaseResult<BankConnection | null>;
+  startBasiqBankConnect(input: {
+    businessId: string;
+    workspaceId: string;
+    workspaceSchema: string;
+    email: string;
+    mobile?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+  }): DatabaseResult<{
+    authLinkUrl: string;
+    stateToken: string;
+    connection: BankConnection;
+    expiresAt: string | null;
+  }>;
+  completeBasiqBankCallback(input: {
+    stateToken: string;
+    cookieState?: string | null;
+  }): DatabaseResult<{
+    workspaceId: string;
+    workspaceSchema: string;
+    businessId: string;
+    sync: BankSyncResult;
+  }>;
+  refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
+  disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
 }
 
 export interface DatabaseInitOptions {
@@ -1647,6 +1693,7 @@ export function createDatabase(
     timeline,
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
+  const bankStore = createBankStore(db);
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -6575,6 +6622,58 @@ export function createDatabase(
     restorePlatformSnapshot(snapshot) {
       const parsedSnapshot = parseAndValidateSnapshot(snapshot);
       restorePlatformSnapshot(parsedSnapshot);
+    },
+
+    // Banking methods are async (provider I/O). Callers always await; cast satisfies SqliteAppDatabase.
+    getBankFeedStatus(businessId) {
+      return bankStore.getFeedStatusView(businessId) as unknown as BankFeedStatusView;
+    },
+    listBankAccounts(businessId, activeOnly = false) {
+      return bankStore.listAccounts(businessId, activeOnly) as unknown as BankAccount[];
+    },
+    listBankTransactions(filter) {
+      return bankStore.listTransactions(filter) as unknown as {
+        items: BankTransaction[];
+        total: number;
+      };
+    },
+    getBankConnection(businessId) {
+      return bankStore.getConnectionByBusiness(businessId) as unknown as BankConnection | null;
+    },
+    startBasiqBankConnect(input) {
+      return startBasiqConnect(bankStore, input) as unknown as {
+        authLinkUrl: string;
+        stateToken: string;
+        connection: BankConnection;
+        expiresAt: string | null;
+      };
+    },
+    completeBasiqBankCallback(input) {
+      return completeBasiqCallback(bankStore, input) as unknown as {
+        workspaceId: string;
+        workspaceSchema: string;
+        businessId: string;
+        sync: BankSyncResult;
+      };
+    },
+    refreshBankFeed(businessId) {
+      return (async () => {
+        const connection = await bankStore.getConnectionByBusiness(businessId);
+        if (!connection || connection.status === 'disconnected') {
+          throw new Error('BANK_CONNECTION_NOT_FOUND');
+        }
+        return syncBankConnection(bankStore, {
+          businessId,
+          connectionId: connection.id,
+          triggerRefresh: true,
+        });
+      })() as unknown as BankSyncResult;
+    },
+    disconnectBankFeed(businessId, confirmed) {
+      return disconnectBankFeedService(bankStore, {
+        businessId,
+        confirmed,
+      }) as unknown as BankConnection;
     },
   };
 }

@@ -26,7 +26,9 @@ export type ToolSensitivity = 'low' | 'medium' | 'high';
 export type ToolLatencyClass = 'fast' | 'standard' | 'slow';
 
 export interface UiSyncInstruction {
-  refresh?: Array<'invoices' | 'customers' | 'templates' | 'profile' | 'payments' | 'search'>;
+  refresh?: Array<
+    'invoices' | 'customers' | 'templates' | 'profile' | 'payments' | 'search' | 'banking'
+  >;
   openRoute?: string | null;
   focusInvoiceId?: string | null;
   focusCustomerId?: string | null;

@@ -31,6 +31,7 @@ import { platformSnapshotRoutes } from './routes/platform-snapshot.js';
 import { createSystemRoutes } from './routes/system.js';
 import { invoiceTemplateRoutes } from './routes/invoice-templates.js';
 import { frontendRoutes } from './routes/frontend.js';
+import { bankingRoutes } from './routes/banking.js';
 import { enterWorkspaceContext, runWithWorkspaceContext } from './auth/workspace-context.js';
 
 import type { AppDatabase } from './db/database.js';
@@ -252,6 +253,10 @@ export async function buildApp(options: BuildAppOptions) {
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/auth/refresh',
+    '/banking/basiq/callback',
+    '/api/banking/basiq/callback',
+    '/banking/basiq/webhook',
+    '/api/banking/basiq/webhook',
   ]);
   if (servesFrontend) {
     for (const path of [
@@ -272,6 +277,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/workspace/stocktakes',
       '/workspace/purchase-orders',
       '/workspace/suppliers',
+      '/workspace/banking',
       '/reports',
       '/timeline',
       '/settings',
@@ -289,6 +295,7 @@ export async function buildApp(options: BuildAppOptions) {
       '/assets/invoice-editor.js',
       '/assets/invoice-templates-ui.js',
       '/assets/aleya-ai-ui.js',
+      '/assets/banking-ui.js',
       '/assets/build-identity.js',
       '/assets/logo-studio-ui.js',
       '/assets/launch-app.js',
@@ -628,6 +635,10 @@ export async function buildApp(options: BuildAppOptions) {
 
     if (normalizedMessage.includes('not found') || normalizedMessage.includes('not_found')) {
       return reply.code(404).send(standardizeErrorPayload(404, errorMessage));
+    }
+
+    if (errorMessage.includes('BANK_RATE_LIMITED')) {
+      return reply.code(429).send(standardizeErrorPayload(429, 'BANK_RATE_LIMITED'));
     }
 
     if (errorMessage.includes('AUTH_UNAUTHENTICATED')) {
@@ -976,6 +987,7 @@ export async function buildApp(options: BuildAppOptions) {
     supplierPaymentRoutes,
     purchaseOrderRoutes,
     productRoutes,
+    bankingRoutes,
   ];
   for (const plugin of businessPlugins) {
     await app.register(plugin);
