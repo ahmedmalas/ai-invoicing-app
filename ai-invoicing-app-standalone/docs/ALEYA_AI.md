@@ -37,9 +37,11 @@ Agent loop uses the Vercel AI SDK with `stopWhen: stepCountIs(N)` where **N defa
 
 ### Provider configuration
 
-- Preferred: Vercel AI Gateway (`AI_GATEWAY_API_KEY` or OIDC on Vercel).
+- Preferred: Vercel AI Gateway via OIDC on Vercel deployments (`@vercel/oidc` / request context). Optional static `AI_GATEWAY_API_KEY` for non-Vercel/CI.
 - Model: `ALEYA_AI_MODEL` (default `openai/gpt-5.4`).
-- Offline/tests: prefix a message with `ALEYA_PLAN:` + JSON tool plan to exercise the registry without a model.
+- `providerConfigured` is true only when Gateway auth material is present — never via simulated/unconfigured flags.
+- Deterministic `ALEYA_PLAN:` harness is **test-only** (`ALEYA_AI_ALLOW_DETERMINISTIC_PLAN=1` or `NODE_ENV=test`). It is disabled in production and is not proof of natural-language operation.
+- Provider/tool failures are returned honestly; there is no silent fallback to simulated success.
 
 ## M1 initial tool set
 

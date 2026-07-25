@@ -2087,6 +2087,13 @@ td.primary-cell {
 .aleya-msg-user {
   background: rgba(24, 72, 52, 0.08);
 }
+.aleya-msg-progress {
+  background: rgba(40, 90, 140, 0.08);
+}
+.aleya-msg-error {
+  background: rgba(160, 40, 30, 0.1);
+  border: 1px solid rgba(160, 40, 30, 0.25);
+}
 .aleya-msg-role {
   font-size: 11px;
   letter-spacing: 0.08em;
