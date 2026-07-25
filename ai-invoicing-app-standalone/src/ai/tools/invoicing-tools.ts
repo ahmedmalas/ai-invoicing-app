@@ -6,6 +6,7 @@ import {
   listInvoiceTemplates,
   setInvoiceTemplateBinding,
 } from '../../domain/templates/invoice-template-store.js';
+import { readInvoiceTemplateBindingsForSearch } from '../../domain/templates/invoice-template-bindings-read.js';
 import { generateInvoicePdfBuffer } from '../../services/pdf-service.js';
 import type { AleyaActionRegistry } from '../registry.js';
 import { pushInvoiceUndoSnapshot } from '../tool-context.js';
