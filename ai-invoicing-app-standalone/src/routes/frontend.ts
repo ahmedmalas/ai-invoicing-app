@@ -1,9 +1,20 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { createBuildIdentity, formatBuildIdentityLog } from '../build-identity.js';
+
+function brandingPng(name: 'quantum-hire-logo.png' | 'quantum-hire-thank-you.png'): Buffer | null {
+  const candidates = [
+    join(process.cwd(), 'src', 'assets', 'branding', name),
+    join(process.cwd(), 'ai-invoicing-app-standalone', 'src', 'assets', 'branding', name),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return readFileSync(candidate);
+  }
+  return null;
+}
 
 const tracedAssets = {
   'index.html': new URL('../../public/index.html', import.meta.url),
@@ -204,6 +215,25 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
       .header('Cache-Control', 'public, max-age=86400')
       .send(asset('favicon.svg')),
   );
+
+  // Quantum Hire brand marks for the dedicated editor document shell (not the
+  // reference invoice PDF). Kept out of the static CDN root intentionally.
+  app.get('/assets/quantum-hire-logo.png', async (_request, reply) => {
+    const bytes = brandingPng('quantum-hire-logo.png');
+    if (!bytes) return reply.code(404).send({ message: 'NOT_FOUND' });
+    return reply
+      .type('image/png')
+      .header('Cache-Control', 'public, max-age=86400')
+      .send(bytes);
+  });
+  app.get('/assets/quantum-hire-thank-you.png', async (_request, reply) => {
+    const bytes = brandingPng('quantum-hire-thank-you.png');
+    if (!bytes) return reply.code(404).send({ message: 'NOT_FOUND' });
+    return reply
+      .type('image/png')
+      .header('Cache-Control', 'public, max-age=86400')
+      .send(bytes);
+  });
 
   // Never expose reference invoices, tests, or private branding files over HTTP.
   // (Also rely on vercel.json outputDirectory=public so these paths are not CDN-static.)

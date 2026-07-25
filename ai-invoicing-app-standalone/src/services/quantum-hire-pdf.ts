@@ -169,9 +169,12 @@ function drawParties(
     lineBreak: true,
   });
 
+  // Brand block matches the reference Title Case supplier name. Live profile
+  // contact fields still win below; do not let ALL CAPS profile names reshape
+  // the Cart N Tip composition.
   const fromName =
+    design.businessDefaults.companyName?.trim() ||
     profile?.companyName?.trim() ||
-    design.businessDefaults.companyName ||
     'Business Name';
   textTop(doc, fromName, QH.from.x, QH.partyName.y, {
     fontSize: QH.partyName.size,
@@ -300,7 +303,10 @@ function drawFooter(
   tableBottom: number,
 ): void {
   const f = QH.footer;
-  const ruleY = tableBottom + f.ruleYGap;
+  // Pin the footer to the reference page composition whenever the table ends
+  // above the reference footer zone. Only push downward when the table grows.
+  const referenceRuleY = 646.89;
+  const ruleY = Math.max(tableBottom + f.ruleYGap, referenceRuleY);
   doc.strokeColor(RULE).lineWidth(1).moveTo(QH.left, ruleY).lineTo(f.ruleX1, ruleY).stroke();
 
   const dividerTop = ruleY + f.dividerTopGap;
