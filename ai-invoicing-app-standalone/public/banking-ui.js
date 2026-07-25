@@ -86,7 +86,7 @@ export function createBankingUi({ api, shell }) {
       '<header class="banking-panel-head">',
       '<h2>' + escapeHtml(title) + '</h2>',
       sandbox
-        ? '<p class="banking-warning" role="status">Sandbox test connection — AuthLink opens in the browser; Basiq does not SMS-deliver the AuthLink URL.</p>'
+        ? '<p class="banking-warning" role="status">Sandbox test connection — AuthLink opens in the browser; Basiq does not text you the AuthLink URL.</p>'
         : '',
       '<p class="muted">' + escapeHtml(intro) + '</p>',
       '</header>',

@@ -639,7 +639,7 @@ export function createBankStore(
           consentExpiresAt: null,
           errors: [],
           warning: sandbox
-            ? 'Sandbox mode: Connect opens the Basiq AuthLink in your browser. No AuthLink SMS is sent.'
+            ? 'Sandbox mode: Connect opens the Basiq AuthLink in your browser. Basiq does not text you the AuthLink URL.'
             : null,
           nextAction: nextActionForStatus('not_connected'),
           distinction: {
