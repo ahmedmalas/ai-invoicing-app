@@ -176,4 +176,25 @@ describe('Vercel Node runtime handler', () => {
     expect(second.status).toBe(200);
     expect(builds).toBe(2);
   });
+
+  it('serves /assets/* without building the app (no Postgres boot)', async () => {
+    let builds = 0;
+    const handler = createVercelHandler(async () => {
+      builds += 1;
+      throw new Error('app build must not run for static assets');
+    });
+    server = createServer((request, response) => {
+      void handler(request, response);
+    });
+    const baseUrl = await listen(server);
+
+    const css = await fetch(`${baseUrl}/assets/styles.css`);
+    expect(css.status).toBe(200);
+    expect(css.headers.get('content-type')).toContain('text/css');
+    expect(builds).toBe(0);
+
+    const js = await fetch(`${baseUrl}/assets/auth-controls.js`);
+    expect(js.status).toBe(200);
+    expect(builds).toBe(0);
+  });
 });

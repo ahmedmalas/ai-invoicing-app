@@ -707,6 +707,8 @@ interface ListQueryOptions {
 }
 
 export const DATABASE_SCHEMA_VERSION = 46;
+/** Advisory lock key for controlled schema migrations (must not run on every cold start). */
+export const POSTGRES_SCHEMA_BOOT_LOCK_KEY = 1_905_052;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -1451,6 +1453,319 @@ function pgSql(sql: string): string {
     .replace(/\? IS NOT NULL/g, 'CAST(? AS TEXT) IS NOT NULL')
     .replace(/\?/g, () => `$${++index}`);
 }
+
+type PostgresBootPath = 'skip' | 'waited' | 'full' | 'ahead';
+
+function pgErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? (error as { code?: string }).code
+    : undefined;
+}
+
+async function runBootStatement(
+  client: PoolClient,
+  statement: string,
+  sql: string,
+  values: unknown[] = [],
+): Promise<void> {
+  const startedAt = Date.now();
+  console.info(
+    JSON.stringify({
+      event: 'postgres.boot.sql.start',
+      statement,
+    }),
+  );
+  try {
+    await client.query(sql, values);
+    console.info(
+      JSON.stringify({
+        event: 'postgres.boot.sql.complete',
+        statement,
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: 'postgres.boot.sql.failed',
+        statement,
+        durationMs: Date.now() - startedAt,
+        code: pgErrorCode(error),
+        message: error instanceof Error ? error.message : 'unknown',
+      }),
+    );
+    throw error;
+  }
+}
+
+async function readPublicSchemaVersion(client: PoolClient): Promise<number | null> {
+  try {
+    const version = await client.query<{ schema_version: number }>(
+      'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
+    );
+    return version.rows[0]?.schema_version ?? 0;
+  } catch (error) {
+    if (pgErrorCode(error) === '42P01') return null;
+    throw error;
+  }
+}
+
+async function waitForSchemaVersion(
+  pool: Pool,
+  minimumVersion: number,
+  options?: { timeoutMs?: number; pollMs?: number },
+): Promise<number | null> {
+  const timeoutMs = options?.timeoutMs ?? 20_000;
+  const pollMs = options?.pollMs ?? 500;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const client = await pool.connect();
+    try {
+      const current = await readPublicSchemaVersion(client);
+      if (current != null && current >= minimumVersion) return current;
+    } finally {
+      client.release();
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return null;
+}
+
+/**
+ * Ensure the shared Postgres schema is at DATABASE_SCHEMA_VERSION.
+ *
+ * Production cold starts must NOT re-run full DDL when already current.
+ * Concurrent migrators use pg_try_advisory_xact_lock; lock failure does not
+ * crash the app when another instance can finish (or already finished).
+ */
+export async function ensurePostgresSchemaReady(
+  pool: Pool,
+  options?: { onPath?: (path: PostgresBootPath) => void },
+): Promise<{ path: PostgresBootPath; schemaVersion: number }> {
+  const setPath = (path: PostgresBootPath): PostgresBootPath => {
+    options?.onPath?.(path);
+    return path;
+  };
+
+  // Phase 1: lock-free probe. If schema is already current, skip all DDL.
+  {
+    const probe = await pool.connect();
+    try {
+      await probe.query("SET lock_timeout = '2s'");
+      await probe.query("SET statement_timeout = '5s'");
+      const current = await readPublicSchemaVersion(probe);
+      if (current != null && current > DATABASE_SCHEMA_VERSION) {
+        const path = setPath('ahead');
+        console.warn(
+          JSON.stringify({
+            event: 'postgres.boot.schema_ahead',
+            databaseVersion: current,
+            appVersion: DATABASE_SCHEMA_VERSION,
+          }),
+        );
+        return { path, schemaVersion: current };
+      }
+      if (current != null && current >= DATABASE_SCHEMA_VERSION) {
+        const path = setPath('skip');
+        return { path, schemaVersion: current };
+      }
+    } finally {
+      probe.release();
+    }
+  }
+
+  // Phase 2: controlled migration under try-advisory lock.
+  const migrator = await pool.connect();
+  let locked = false;
+  try {
+    await migrator.query("SET lock_timeout = '3s'");
+    await migrator.query("SET statement_timeout = '45s'");
+    await migrator.query('BEGIN');
+    const lockResult = await migrator.query<{ ok: boolean }>(
+      'SELECT pg_try_advisory_xact_lock($1) AS ok',
+      [POSTGRES_SCHEMA_BOOT_LOCK_KEY],
+    );
+    locked = Boolean(lockResult.rows[0]?.ok);
+    if (!locked) {
+      await migrator.query('ROLLBACK');
+      console.warn(
+        JSON.stringify({
+          event: 'postgres.boot.lock_busy',
+          lockKey: POSTGRES_SCHEMA_BOOT_LOCK_KEY,
+          statement: 'pg_try_advisory_xact_lock',
+          action: 'wait_for_peer_migration',
+        }),
+      );
+      const waited = await waitForSchemaVersion(pool, DATABASE_SCHEMA_VERSION);
+      if (waited != null && waited >= DATABASE_SCHEMA_VERSION) {
+        const path = setPath('waited');
+        return { path, schemaVersion: waited };
+      }
+      // Peer migration did not finish — boot without crashing the whole fleet.
+      // Request handlers that need newer columns may fail until migration completes
+      // via deploy/migrate, but static assets and healthy instances keep working.
+      console.error(
+        JSON.stringify({
+          event: 'postgres.boot.migration_deferred',
+          lockKey: POSTGRES_SCHEMA_BOOT_LOCK_KEY,
+          appVersion: DATABASE_SCHEMA_VERSION,
+          message:
+            'Schema migration lock busy and peer did not finish; continuing without DDL.',
+        }),
+      );
+      const path = setPath('waited');
+      return { path, schemaVersion: waited ?? 0 };
+    }
+
+    // Re-check under lock (another instance may have finished).
+    let current = await readPublicSchemaVersion(migrator);
+    if (current == null) current = 0;
+    if (current > DATABASE_SCHEMA_VERSION) {
+      await migrator.query('COMMIT');
+      const path = setPath('ahead');
+      return { path, schemaVersion: current };
+    }
+    if (current >= DATABASE_SCHEMA_VERSION) {
+      await migrator.query('COMMIT');
+      const path = setPath('skip');
+      return { path, schemaVersion: current };
+    }
+
+    const path = setPath('full');
+    await runBootStatement(
+      migrator,
+      'public.bootstrap_auth_and_metadata_tables',
+      `
+      CREATE TABLE IF NOT EXISTS public.auth_workspaces (
+        id UUID PRIMARY KEY,
+        schema_name TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS public.auth_workspace_memberships (
+        auth_user_id UUID PRIMARY KEY,
+        workspace_id UUID NOT NULL REFERENCES public.auth_workspaces(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role = 'owner'),
+        created_at TEXT NOT NULL
+      );
+      ALTER TABLE public.auth_workspaces ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.auth_workspace_memberships ENABLE ROW LEVEL SECURITY;
+      CREATE TABLE IF NOT EXISTS public.app_database_metadata (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        schema_version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS public.basiq_connect_states (
+        state_token TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        workspace_schema TEXT,
+        business_id TEXT,
+        provider_user_id TEXT,
+        bank_connection_id TEXT,
+        expires_at TEXT,
+        created_at TEXT
+      );
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_schema TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS business_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS expires_at TEXT;
+      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS created_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires
+        ON public.basiq_connect_states(expires_at);
+      `,
+    );
+
+    await runBootStatement(migrator, 'public.load_postgres_schema.sql', loadPostgresSchema());
+    await runBootStatement(
+      migrator,
+      'public.seed_legacy_workspace_row',
+      `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
+       VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [nowIso()],
+    );
+    await runBootStatement(
+      migrator,
+      'public.seed_legacy_workspace_memberships',
+      `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
+       SELECT id::uuid, '00000000-0000-0000-0000-000000000001', 'owner', $1
+       FROM public.users
+       WHERE id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       ON CONFLICT (auth_user_id) DO NOTHING`,
+      [nowIso()],
+    );
+
+    const workspaceSchemas = await migrator.query<{ schema_name: string }>(
+      `SELECT schema_name FROM public.auth_workspaces ORDER BY schema_name`,
+    );
+    if (workspaceSchemas.rows.length === 0) {
+      workspaceSchemas.rows.push({ schema_name: 'public' });
+    }
+    const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
+    const bankFeedUpgradeSql = loadPostgresBankFeedUpgradeSql();
+    for (const workspace of workspaceSchemas.rows) {
+      const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
+      await runBootStatement(
+        migrator,
+        `workspace.set_search_path:${schemaName}`,
+        `SET LOCAL search_path TO "${schemaName}", public`,
+      );
+      await runBootStatement(
+        migrator,
+        `workspace.additive_columns:${schemaName}`,
+        workspaceUpgradeSql,
+      );
+      await runBootStatement(
+        migrator,
+        `workspace.bank_feed_tables:${schemaName}`,
+        bankFeedUpgradeSql,
+      );
+      await runBootStatement(
+        migrator,
+        `workspace.ensure_metadata:${schemaName}`,
+        `CREATE TABLE IF NOT EXISTS app_database_metadata (
+          singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+          schema_version INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+      );
+      const workspaceVersion = await migrator.query<{ schema_version: number }>(
+        'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
+      );
+      const workspaceCurrent = workspaceVersion.rows[0]?.schema_version ?? 0;
+      if (workspaceCurrent > DATABASE_SCHEMA_VERSION) continue;
+      await runBootStatement(
+        migrator,
+        `workspace.write_metadata:${schemaName}`,
+        `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at)
+         VALUES (1, $1, $2)
+         ON CONFLICT(singleton_id) DO UPDATE
+         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+        [DATABASE_SCHEMA_VERSION, nowIso()],
+      );
+    }
+
+    await runBootStatement(
+      migrator,
+      'public.write_schema_version',
+      `INSERT INTO public.app_database_metadata(singleton_id, schema_version, updated_at)
+       VALUES (1, $1, $2)
+       ON CONFLICT(singleton_id) DO UPDATE
+       SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
+      [DATABASE_SCHEMA_VERSION, nowIso()],
+    );
+    await migrator.query('SET LOCAL search_path TO public');
+    await migrator.query('COMMIT');
+    return { path, schemaVersion: DATABASE_SCHEMA_VERSION };
+  } catch (error) {
+    await migrator.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    migrator.release();
+  }
+}
 function mapPostgresError(error: unknown): unknown {
   if (!error || typeof error !== 'object') return error;
   const candidate = error as {
@@ -1558,165 +1873,23 @@ export async function createPostgresDatabase(
       return (...args: TArgs) => fn(...args);
     },
   };
-  const schemaClient = await pool.connect();
   const bootStartedAt = Date.now();
-  let bootPath: 'full' | 'fast' = 'full';
+  let bootPath: 'skip' | 'waited' | 'full' | 'ahead' = 'skip';
   try {
-    // Bound lock waits and DDL so a contended advisory lock or sleepy Postgres
-    // cannot hold the Vercel isolate until the hard 60s FUNCTION_INVOCATION_TIMEOUT.
-    await schemaClient.query("SET lock_timeout = '8s'");
-    await schemaClient.query("SET statement_timeout = '25s'");
-    await schemaClient.query('BEGIN');
-    await schemaClient.query('SELECT pg_advisory_xact_lock($1)', [1_905_052]);
-    await schemaClient.query(`
-      CREATE TABLE IF NOT EXISTS public.auth_workspaces (
-        id UUID PRIMARY KEY,
-        schema_name TEXT NOT NULL UNIQUE,
-        display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS public.auth_workspace_memberships (
-        auth_user_id UUID PRIMARY KEY,
-        workspace_id UUID NOT NULL REFERENCES public.auth_workspaces(id) ON DELETE CASCADE,
-        role TEXT NOT NULL CHECK (role = 'owner'),
-        created_at TEXT NOT NULL
-      );
-      ALTER TABLE public.auth_workspaces ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.auth_workspace_memberships ENABLE ROW LEVEL SECURITY;
-      CREATE TABLE IF NOT EXISTS public.app_database_metadata (
-        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-        schema_version INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS public.basiq_connect_states (
-        state_token TEXT PRIMARY KEY,
-        workspace_id TEXT,
-        workspace_schema TEXT,
-        business_id TEXT,
-        provider_user_id TEXT,
-        bank_connection_id TEXT,
-        expires_at TEXT,
-        created_at TEXT
-      );
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_id TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS workspace_schema TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS business_id TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS provider_user_id TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS bank_connection_id TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS expires_at TEXT;
-      ALTER TABLE public.basiq_connect_states ADD COLUMN IF NOT EXISTS created_at TEXT;
-      CREATE INDEX IF NOT EXISTS idx_basiq_connect_states_expires
-        ON public.basiq_connect_states(expires_at);
-    `);
-    const version = await schemaClient.query<{ schema_version: number }>(
-      'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
-    );
-    const currentVersion = version.rows[0]?.schema_version ?? 0;
-    let shouldWriteVersion = true;
-
-    // Cold-start fast path: when the DB is already on this schema version, skip the
-    // full ~50KB CREATE/ALTER script (197 statements). Preview isolates always cold
-    // start; re-running full DDL was the dominant cause of 60s FUNCTION_INVOCATION_TIMEOUT.
-    //
-    // If a newer feature-branch deployment advanced shared metadata (common when
-    // Preview + Production share one DATABASE_URL), do not refuse to boot and do
-    // not write the version downward.
-    if (currentVersion > DATABASE_SCHEMA_VERSION) {
-      bootPath = 'fast';
-      shouldWriteVersion = false;
-      console.warn(
-        JSON.stringify({
-          event: 'postgres.boot.schema_ahead',
-          databaseVersion: currentVersion,
-          appVersion: DATABASE_SCHEMA_VERSION,
-        }),
-      );
-    } else if (currentVersion === DATABASE_SCHEMA_VERSION) {
-      bootPath = 'fast';
-    } else {
-      bootPath = 'full';
-      await schemaClient.query(loadPostgresSchema());
-      await schemaClient.query(
-        `INSERT INTO public.auth_workspaces (id, schema_name, display_name, created_at)
-         VALUES ('00000000-0000-0000-0000-000000000001', 'public', 'Existing production workspace', $1)
-         ON CONFLICT (id) DO NOTHING`,
-        [nowIso()],
-      );
-      await schemaClient.query(
-        `INSERT INTO public.auth_workspace_memberships (auth_user_id, workspace_id, role, created_at)
-         SELECT id::uuid, '00000000-0000-0000-0000-000000000001', 'owner', $1
-         FROM public.users
-         WHERE id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-         ON CONFLICT (auth_user_id) DO NOTHING`,
-        [nowIso()],
-      );
-    }
-
-    if (shouldWriteVersion) {
-      await schemaClient.query(
-        `INSERT INTO public.app_database_metadata(singleton_id, schema_version, updated_at)
-         VALUES (1, $1, $2)
-         ON CONFLICT(singleton_id) DO UPDATE
-         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
-        [DATABASE_SCHEMA_VERSION, nowIso()],
-      );
-    }
-
-    // Cheap additive upgrades for every tenant schema (including public). Safe to
-    // re-run: all statements use IF NOT EXISTS / defaults.
-    const workspaceSchemas = await schemaClient.query<{ schema_name: string }>(
-      `SELECT schema_name FROM public.auth_workspaces ORDER BY schema_name`,
-    );
-    if (workspaceSchemas.rows.length === 0) {
-      // Brand-new DB with no workspace row yet — ensure public upgrades still run.
-      workspaceSchemas.rows.push({ schema_name: 'public' });
-    }
-    const workspaceUpgradeSql = loadPostgresWorkspaceUpgradeSql();
-    const bankFeedUpgradeSql = loadPostgresBankFeedUpgradeSql();
-    for (const workspace of workspaceSchemas.rows) {
-      const schemaName = assertWorkspaceSchemaName(workspace.schema_name);
-      await schemaClient.query(`SET LOCAL search_path TO "${schemaName}", public`);
-      await schemaClient.query(workspaceUpgradeSql);
-      await schemaClient.query(bankFeedUpgradeSql);
-      await schemaClient.query(
-        `CREATE TABLE IF NOT EXISTS app_database_metadata (
-          singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-          schema_version INTEGER NOT NULL,
-          updated_at TEXT NOT NULL
-        )`,
-      );
-      const workspaceVersion = await schemaClient.query<{ schema_version: number }>(
-        'SELECT schema_version FROM app_database_metadata WHERE singleton_id = 1',
-      );
-      const workspaceCurrent = workspaceVersion.rows[0]?.schema_version ?? 0;
-      if (workspaceCurrent > DATABASE_SCHEMA_VERSION) {
-        // Leave newer metadata intact; additive upgrades above already applied.
-        continue;
-      }
-      await schemaClient.query(
-        `INSERT INTO app_database_metadata(singleton_id, schema_version, updated_at)
-         VALUES (1, $1, $2)
-         ON CONFLICT(singleton_id) DO UPDATE
-         SET schema_version = excluded.schema_version, updated_at = excluded.updated_at`,
-        [DATABASE_SCHEMA_VERSION, nowIso()],
-      );
-    }
-    await schemaClient.query('SET LOCAL search_path TO public');
-    await schemaClient.query('COMMIT');
-    await schemaClient.query('RESET lock_timeout');
-    await schemaClient.query('RESET statement_timeout');
+    await ensurePostgresSchemaReady(pool, {
+      onPath: (path) => {
+        bootPath = path;
+      },
+    });
     console.info(
       JSON.stringify({
         event: 'postgres.boot.complete',
         path: bootPath,
         schemaVersion: DATABASE_SCHEMA_VERSION,
-        workspaceCount: workspaceSchemas.rows.length,
         durationMs: Date.now() - bootStartedAt,
       }),
     );
-    schemaClient.release();
   } catch (error) {
-    await schemaClient.query('ROLLBACK').catch(() => undefined);
     console.error(
       JSON.stringify({
         event: 'postgres.boot.failed',
@@ -1729,7 +1902,6 @@ export async function createPostgresDatabase(
         message: error instanceof Error ? error.message : 'unknown',
       }),
     );
-    schemaClient.release();
     await pool.end();
     throw error;
   }
