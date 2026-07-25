@@ -10,6 +10,7 @@
     "start": "node dist/src/index.js",
     "smoke:release": "npm run build && node dist/src/scripts/release-smoke.js",
     "migrate:postgres": "tsx src/scripts/migrate-postgres.ts",
+    "migrate:schema": "tsx src/scripts/ensure-postgres-schema.ts",
     "release:verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "release:acceptance": "npm run release:verify && npm run smoke:release",
     "lint": "eslint .",

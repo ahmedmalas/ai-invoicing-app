@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import { resolveSupabaseAuthConfig } from '../src/config/supabase-auth.js';
+import { tryServeStaticAsset } from './static-assets.js';
 
 type AppBuilder = () => Promise<FastifyInstance>;
 export type VercelNodeHandler = (
@@ -126,6 +127,10 @@ export function createVercelHandler(
   return async (request, response) => {
     let hardTimeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      // Static assets must never wait on Postgres schema boot / advisory locks.
+      if (tryServeStaticAsset(request, response)) {
+        return;
+      }
       const app = await getApp();
       await Promise.race([
         new Promise<void>((resolve, reject) => {
