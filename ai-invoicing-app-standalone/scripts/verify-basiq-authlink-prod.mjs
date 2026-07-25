@@ -161,6 +161,47 @@ async function main() {
     writeFileSync(join(OUT, 'connect-api.json'), JSON.stringify(connectApi, null, 2));
 
     if (connectApi.status !== 201 || !connectApi.body?.authLinkUrl) {
+      // Capture UI + provider error evidence even when BASIQ_API_KEY is invalid.
+      // Basiq returns HTTP 404 on /token for bad keys ("Unable to authenticate").
+      const providerMsg = String(connectApi.body?.message || connectApi.body?.providerDetail || '');
+      report.steps.push({
+        step: 'connect-api-provider-error',
+        ok: Boolean(providerMsg),
+        providerMessage: providerMsg,
+      });
+      await page.screenshot({
+        path: join(OUT, '02-bank-feeds-connect-error.png'),
+        fullPage: true,
+      });
+      if (/authenticate|API key|auth_failed|BASIQ_/i.test(providerMsg)) {
+        report.ok = false;
+        report.blockedBy = 'basiq_api_key_invalid';
+        report.finishedAt = new Date().toISOString();
+        writeFileSync(join(OUT, 'prod-verify-report.json'), JSON.stringify(report, null, 2));
+        writeFileSync(
+          join(OUT, 'EVIDENCE.md'),
+          [
+            '# Basiq AuthLink sandbox flow — production evidence',
+            '',
+            `- Base: ${BASE}`,
+            `- Signed in as: ${EMAIL}`,
+            `- UI: no misleading AuthLink SMS phone prompt (${!hasSmsPromptLabel})`,
+            `- Sandbox labeling present: ${hasSandboxLabel}`,
+            `- Connect button: ${connectBtnText}`,
+            `- Connect API status: ${connectApi.status}`,
+            `- Provider error surfaced: ${providerMsg}`,
+            '',
+            'AuthLink URL open could not be completed because Basiq rejected BASIQ_API_KEY',
+            '(documented Basiq behaviour: HTTP 404 on POST /token means check your API key).',
+            '',
+            'Screenshots: 01-bank-feeds-before-connect.png, 02-bank-feeds-connect-error.png',
+            '',
+          ].join('\n'),
+        );
+        throw new Error(
+          `Connect blocked by invalid Basiq API key (provider error surfaced): ${providerMsg}`,
+        );
+      }
       throw new Error(
         `Connect API failed: ${connectApi.status} ${JSON.stringify(connectApi.body).slice(0, 400)}`,
       );

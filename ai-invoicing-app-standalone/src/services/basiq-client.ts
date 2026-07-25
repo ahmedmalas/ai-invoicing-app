@@ -5,11 +5,18 @@
 
 import { createHash } from 'node:crypto';
 
-const BASIQ_API_BASE = process.env.BASIQ_API_BASE_URL || 'https://au-api.basiq.io';
-const BASIQ_VERSION = process.env.BASIQ_API_VERSION || '3.0';
 const TOKEN_SKEW_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_RETRIES = 2;
+
+function basiqApiBase(): string {
+  const raw = (process.env.BASIQ_API_BASE_URL || 'https://au-api.basiq.io').trim();
+  return raw.replace(/\/+$/, '') || 'https://au-api.basiq.io';
+}
+
+function basiqApiVersion(): string {
+  return (process.env.BASIQ_API_VERSION || '3.0').trim() || '3.0';
+}
 
 export type BasiqErrorCategory =
   | 'not_configured'
@@ -68,9 +75,13 @@ export function isBasiqSandboxEnvironment(): boolean {
 }
 
 function apiKey(): string {
-  const key = process.env.BASIQ_API_KEY?.trim();
+  let key = process.env.BASIQ_API_KEY?.trim() || '';
   if (!key) {
     throw new BasiqClientError('not_configured', 'BASIQ_API_KEY is not configured');
+  }
+  // Dashboard keys are used verbatim after "Basic ". Strip a duplicated prefix if pasted.
+  if (/^basic\s+/i.test(key)) {
+    key = key.replace(/^basic\s+/i, '').trim();
   }
   return key;
 }
@@ -124,29 +135,52 @@ export async function getBasiqAccessToken(): Promise<string> {
 
   const key = apiKey();
   const started = Date.now();
-  const response = await fetchWithTimeout(`${BASIQ_API_BASE}/token`, {
+  const base = basiqApiBase();
+  const response = await fetchWithTimeout(`${base}/token`, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${key}`,
       'Content-Type': 'application/x-www-form-urlencoded',
-      'basiq-version': BASIQ_VERSION,
+      'basiq-version': basiqApiVersion(),
       Accept: 'application/json',
     },
     body: 'scope=SERVER_ACCESS',
   });
   const durationMs = Date.now() - started;
   if (!response.ok) {
+    // Basiq documents HTTP 404 on /token as "Unable to authenticate. Check your API key."
+    const providerDetail = await readBasiqErrorDetail(response);
+    const category: BasiqErrorCategory =
+      response.status === 404 || response.status === 401 || response.status === 403
+        ? 'auth_failed'
+        : categorizeStatus(response.status);
     logSafe('warn', {
       event: 'basiq.token',
       endpoint: '/token',
+      host: (() => {
+        try {
+          return new URL(base).host;
+        } catch {
+          return 'invalid-base';
+        }
+      })(),
       status: response.status,
       durationMs,
-      category: categorizeStatus(response.status),
+      category,
+      ...(providerDetail ? { providerDetail } : {}),
     });
-    throw new BasiqClientError(categorizeStatus(response.status), 'Basiq authentication failed', {
-      status: response.status,
-      endpoint: '/token',
-    });
+    throw new BasiqClientError(
+      category,
+      providerDetail ||
+        (response.status === 404
+          ? 'Basiq rejected the API key (HTTP 404 on /token). Check BASIQ_API_KEY in Vercel.'
+          : 'Basiq authentication failed'),
+      {
+        status: response.status,
+        endpoint: '/token',
+        ...(providerDetail ? { providerDetail } : {}),
+      },
+    );
   }
   const body = (await response.json()) as {
     access_token?: string;
@@ -185,7 +219,7 @@ export async function basiqRequest<T = unknown>(
   while (attempt <= MAX_RETRIES) {
     attempt += 1;
     const token = await getBasiqAccessToken();
-    const url = new URL(path.startsWith('http') ? path : `${BASIQ_API_BASE}${path}`);
+    const url = new URL(path.startsWith('http') ? path : `${basiqApiBase()}${path}`);
     if (options?.query) {
       for (const [key, value] of Object.entries(options.query)) {
         if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
@@ -199,7 +233,7 @@ export async function basiqRequest<T = unknown>(
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          'basiq-version': BASIQ_VERSION,
+          'basiq-version': basiqApiVersion(),
         },
         ...(options?.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
       });
@@ -333,7 +367,8 @@ export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
     return {
       configured: true,
       authenticated: category !== 'auth_failed' && category !== 'not_configured',
-      providerReachable: category !== 'network' && category !== 'timeout',
+      providerReachable:
+        category !== 'network' && category !== 'timeout' && category !== 'auth_failed',
       environment: basiqEnvironmentLabel(),
       latencyMs: Date.now() - started,
       errorCategory: category,
