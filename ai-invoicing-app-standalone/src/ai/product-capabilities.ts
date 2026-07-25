@@ -462,7 +462,10 @@ export function answerForStatusIntent(intent: Exclude<StatusIntent, null>): {
 } {
   const status = bankFeedStatusPayload();
   if (intent === 'list_controllable') {
-    const controllable = PRODUCT_CAPABILITIES.filter((item) => item.aiAccess !== 'none');
+    // Only features that exist in the app and have AI tools.
+    const controllable = PRODUCT_CAPABILITIES.filter(
+      (item) => item.appExists !== 'no' && item.aiAccess !== 'none',
+    );
     const missingInApp = PRODUCT_CAPABILITIES.filter((item) => item.appExists === 'no');
     const inAppNoAi = PRODUCT_CAPABILITIES.filter(
       (item) => item.appExists !== 'no' && item.aiAccess === 'none',
@@ -470,7 +473,7 @@ export function answerForStatusIntent(intent: Exclude<StatusIntent, null>): {
     const lines = [
       'Here is an accurate split of what exists versus what I can control today:',
       '',
-      'I can currently help with:',
+      'I can currently help with (features that exist and have registered tools):',
       ...controllable.map(
         (item) =>
           `- ${item.label} (${item.aiAccess}${item.tools.length ? `; tools: ${item.tools.join(', ')}` : ''})`,
@@ -481,7 +484,7 @@ export function answerForStatusIntent(intent: Exclude<StatusIntent, null>): {
         ? inAppNoAi.map((item) => `- ${item.label} — ${item.limitation}`)
         : ['- (none listed)']),
       '',
-      'These are not implemented in the product yet:',
+      'These are not implemented in the product yet (I will say so honestly if asked — I will not invent a page or connection):',
       ...missingInApp.map((item) => `- ${item.label}`),
       '',
       'I am not a complete operating layer over every Aleya screen yet. I only use tools for features that are registered.',
