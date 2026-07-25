@@ -29,6 +29,23 @@ function addDaysIso(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Models often fill optional UUID fields with nil placeholders — treat as omitted. */
+function realUuid(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '00000000-0000-0000-0000-000000000000') return undefined;
+  return trimmed;
+}
+
+function realString(value: string | null | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return undefined;
+  }
+  return trimmed;
+}
+
 export function registerInvoicingTools(registry: AleyaActionRegistry): void {
   registry.register({
     name: 'search_invoices',
@@ -39,12 +56,20 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
     confirmation: 'none',
     undo: 'none',
     inputSchema: z.object({
-      customerId: z.string().uuid().optional(),
-      status: z.enum(['Draft', 'Finalised']).optional(),
+      customerId: z
+        .string()
+        .uuid()
+        .optional()
+        .describe('Omit entirely when not filtering by customer. Do not pass a nil UUID.'),
+      status: z
+        .enum(['Draft', 'Finalised'])
+        .optional()
+        .describe('Omit when finding a source invoice to duplicate (include Finalised).'),
       paymentState: z
         .enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled'])
-        .optional(),
-      query: z.string().optional(),
+        .optional()
+        .describe('Omit when not filtering by payment state.'),
+      query: z.string().optional().describe('Omit when unused.'),
       templateQuery: z
         .string()
         .optional()
@@ -52,15 +77,15 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       limit: z.number().int().min(1).max(100).default(50),
     }),
     async execute(input, ctx) {
-      const q = String(input.query || '')
+      const q = String(realString(input.query) || '')
         .trim()
         .toLowerCase();
-      const templateNeedle = String(input.templateQuery || '')
+      const templateNeedle = String(realString(input.templateQuery) || '')
         .trim()
         .toLowerCase();
       const queryLooksLikeTemplate =
         !templateNeedle &&
-        /quantum\s*hire|cart\s*n\s*tip|template|layout/i.test(String(input.query || ''));
+        /quantum\s*hire|cart\s*n\s*tip|template|layout/i.test(q);
       const effectiveTemplateNeedle =
         templateNeedle ||
         (queryLooksLikeTemplate
@@ -72,7 +97,8 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
         status?: 'Draft' | 'Finalised';
         paymentState?: 'Draft' | 'Sent' | 'Awaiting Payment' | 'Paid' | 'Cancelled';
       } = {};
-      if (input.customerId) filter.customerId = input.customerId;
+      const customerId = realUuid(input.customerId);
+      if (customerId) filter.customerId = customerId;
       // Template/"most recent Quantum Hire" lookups must include Finalised sources.
       // Models often pass status=Draft because the *result* should be a draft — ignore that.
       if (input.status && !effectiveTemplateNeedle) filter.status = input.status;
