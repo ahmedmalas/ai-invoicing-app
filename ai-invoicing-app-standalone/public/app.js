@@ -12,6 +12,7 @@ import {
 } from './business-profile-readiness.js';
 import { brandMarkHtml, buildLogoCreatorPageHtml, logoSrcFromProfile } from './logo-studio-ui.js';
 import { createInvoiceTemplatesUi } from './invoice-templates-ui.js';
+import { createAleyaAiUi } from './aleya-ai-ui.js';
 
 const root = document.querySelector('#app');
 const SESSION_KEY = 'aboss-invoicing-session';
@@ -28,6 +29,24 @@ let logoStudioConcepts = [];
 let logoStudioNotice = '';
 let invoiceEditor = null;
 let invoiceTemplatesUi = null;
+let aleyaAiUi = null;
+
+function getAleyaAiUi() {
+  if (!aleyaAiUi) {
+    aleyaAiUi = createAleyaAiUi({
+      api,
+      toast,
+      navigate,
+      shell,
+      pageHead,
+      invalidateCache: () => {
+        cache = {};
+        workspaceCacheAt = 0;
+      },
+    });
+  }
+  return aleyaAiUi;
+}
 
 function getInvoiceTemplatesUi() {
   if (!invoiceTemplatesUi) {
@@ -333,6 +352,7 @@ async function completeWorkspaceSetup(payload = {}) {
 
 const navItems = [
   ['/dashboard', 'DB', 'Dashboard'],
+  ['/aleya-ai', 'AI', 'Aleya AI'],
   ['/workspace/customers', 'CU', 'Customers'],
   ['/workspace/quotes', 'QU', 'Quotes'],
   ['/workspace/invoices', 'IN', 'Invoices'],
@@ -2376,6 +2396,7 @@ async function renderRoute({ forceReload = false } = {}) {
     }
     document.querySelector('[data-invoice-editor]')?.remove();
     if (path === '/dashboard') dashboardPage();
+    else if (path === '/aleya-ai') await getAleyaAiUi().aleyaAiPage();
     else if (path === '/workspace/customers') customersPage();
     else if (path === '/workspace/quotes') quotesPage();
     else if (path === '/workspace/invoices') invoicesPage();

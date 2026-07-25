@@ -948,6 +948,7 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(
     createSystemRoutes({ url: supabaseUrl, anonKey: supabaseAnonKey, publicAppUrl }),
   );
+  const { aleyaAiRoutes } = await import('./routes/aleya-ai.js');
   const businessPlugins = [
     platformSnapshotRoutes,
     customerRoutes,
@@ -956,6 +957,7 @@ export async function buildApp(options: BuildAppOptions) {
     preferenceRoutes,
     invoiceRoutes,
     invoiceTemplateRoutes,
+    aleyaAiRoutes,
     quoteRoutes,
     jobRoutes,
     roleRoutes,

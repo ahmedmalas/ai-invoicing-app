@@ -2055,3 +2055,91 @@ td.primary-cell {
     flex-wrap: wrap;
   }
 }
+
+/* Aleya AI operating layer */
+.aleya-ai-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(240px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+.aleya-ai-panel,
+.aleya-ai-side {
+  background: var(--paper, #fff);
+  border: 1px solid var(--line, #e5e1d8);
+  border-radius: 16px;
+  padding: 16px;
+}
+.aleya-ai-thread {
+  min-height: 360px;
+  max-height: 55vh;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding-right: 4px;
+}
+.aleya-msg {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #f6f4ef;
+}
+.aleya-msg-user {
+  background: rgba(24, 72, 52, 0.08);
+}
+.aleya-msg-role {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6458);
+  margin-bottom: 6px;
+}
+.aleya-msg-body {
+  line-height: 1.45;
+  white-space: normal;
+}
+.aleya-ai-composer textarea {
+  width: 100%;
+  min-height: 84px;
+  border-radius: 12px;
+  border: 1px solid var(--line, #e5e1d8);
+  padding: 12px;
+  font: inherit;
+  resize: vertical;
+}
+.aleya-ai-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.aleya-ai-confirm {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(160, 70, 20, 0.35);
+  background: rgba(255, 196, 120, 0.18);
+  border-radius: 12px;
+}
+.aleya-ai-tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.aleya-ai-tool-list li {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line, #eee);
+}
+.aleya-ai-tool-list span {
+  color: var(--muted, #6b6458);
+  font-size: 12px;
+}
+@media (max-width: 960px) {
+  .aleya-ai-layout {
+    grid-template-columns: 1fr;
+  }
+}
