@@ -79,4 +79,36 @@ describe('basiq client', () => {
     expect(verifyBasiqWebhookSignature(body, sig)).toBe(true);
     expect(verifyBasiqWebhookSignature(body, 'bad')).toBe(false);
   });
+
+  it('maps Basiq /token HTTP 404 to auth_failed with provider detail', async () => {
+    process.env.BASIQ_API_KEY = 'invalid-key';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/token')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  title: 'Unable to authenticate',
+                  detail: 'Please, check your API key',
+                  code: 'parameter-not-valid',
+                },
+              ],
+            }),
+            { status: 404 },
+          );
+        }
+        return new Response('{}', { status: 500 });
+      }),
+    );
+    const health = await checkBasiqHealth();
+    expect(health.configured).toBe(true);
+    expect(health.authenticated).toBe(false);
+    expect(health.errorCategory).toBe('auth_failed');
+    await expect(getBasiqAccessToken()).rejects.toMatchObject({
+      category: 'auth_failed',
+      providerDetail: expect.stringContaining('Unable to authenticate'),
+    });
+  });
 });
