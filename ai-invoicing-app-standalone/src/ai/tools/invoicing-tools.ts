@@ -32,7 +32,7 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
   registry.register({
     name: 'search_invoices',
     description:
-      'Search and filter invoices by customer, status, payment state, title text, or invoice number.',
+      'Search and filter invoices by customer, status, payment state, title, invoice number, or template name (e.g. “Quantum Hire” means the Quantum Hire invoice layout template, not a customer). Prefer recent invoices when the user asks for the most recent match.',
     category: 'invoices',
     milestone: 'M1',
     confirmation: 'none',
@@ -44,6 +44,10 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
         .enum(['Draft', 'Sent', 'Awaiting Payment', 'Paid', 'Cancelled'])
         .optional(),
       query: z.string().optional(),
+      templateQuery: z
+        .string()
+        .optional()
+        .describe('Match invoices bound to a template whose name contains this text (e.g. Quantum Hire).'),
       limit: z.number().int().min(1).max(100).default(50),
     }),
     async execute(input, ctx) {
@@ -55,16 +59,52 @@ export function registerInvoicingTools(registry: AleyaActionRegistry): void {
       if (input.customerId) filter.customerId = input.customerId;
       if (input.status) filter.status = input.status;
       if (input.paymentState) filter.paymentState = input.paymentState;
-      const invoices = await ctx.db.listInvoices(filter, { limit: input.limit, offset: 0 });
+      // Pull a wider window then filter — “most recent Quantum Hire” needs template bindings.
+      const invoices = await ctx.db.listInvoices(filter, {
+        limit: Math.max(input.limit, 100),
+        offset: 0,
+      });
+      const templates = await listInvoiceTemplates(ctx.db);
+      const templateById = new Map(templates.map((item) => [item.id, item]));
       const q = String(input.query || '')
         .trim()
         .toLowerCase();
-      const filtered = q
-        ? invoices.filter((item) => {
-            const hay = `${item.title} ${item.invoiceNumber || ''} ${item.id}`.toLowerCase();
-            return hay.includes(q);
-          })
-        : invoices;
+      const templateQ = String(input.templateQuery || input.query || '')
+        .trim()
+        .toLowerCase();
+      const looksLikeTemplateName =
+        Boolean(input.templateQuery) ||
+        /quantum\s*hire|cart\s*n\s*tip|template|layout/i.test(String(input.query || ''));
+
+      const enriched = await Promise.all(
+        invoices.map(async (item) => {
+          const templateId = await getInvoiceTemplateBinding(ctx.db, item.id);
+          const template = templateId ? templateById.get(templateId) : null;
+          return {
+            ...item,
+            templateId: templateId || null,
+            templateName: template?.name || null,
+          };
+        }),
+      );
+
+      let filtered = enriched;
+      if (q) {
+        filtered = enriched.filter((item) => {
+          const hay = `${item.title} ${item.invoiceNumber || ''} ${item.id} ${item.templateName || ''}`.toLowerCase();
+          const textMatch = hay.includes(q);
+          const templateMatch =
+            looksLikeTemplateName &&
+            Boolean(item.templateName) &&
+            item.templateName!.toLowerCase().includes(templateQ.replace(/template|layout/gi, '').trim() || templateQ);
+          return textMatch || templateMatch;
+        });
+      }
+      if (input.templateQuery) {
+        const tq = input.templateQuery.trim().toLowerCase();
+        filtered = filtered.filter((item) => (item.templateName || '').toLowerCase().includes(tq));
+      }
+      filtered = filtered.slice(0, input.limit);
       return {
         ok: true,
         data: { invoices: filtered, count: filtered.length },

@@ -141,7 +141,10 @@ export function createAleyaAiUi(deps) {
         return;
       }
       openInvoiceBtn.hidden = false;
-      openInvoiceBtn.setAttribute('href', '/workspace/invoices/' + encodeURIComponent(invoiceId));
+      openInvoiceBtn.setAttribute(
+        'href',
+        '/workspace/invoices/' + encodeURIComponent(invoiceId) + '/edit',
+      );
     }
 
     function showConfirm(pending) {
