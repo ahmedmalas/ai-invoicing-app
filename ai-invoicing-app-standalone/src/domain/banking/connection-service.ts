@@ -120,7 +120,9 @@ export async function startBasiqConnect(
       sandbox,
     });
   } else {
-    // Inspect retained Basiq user mobile (masked only) and replace if stale/placeholder.
+    // Inspect retained Basiq user mobile (masked only). Prefer updating the User
+    // object; if Basiq rejects the update (some keys return 403), continue —
+    // auth_link.mobile officially overrides the User mobile for 2FA SMS.
     try {
       const remote = await getBasiqUser(providerUserId);
       const remoteEnding = mobileEndingDigits(remote.mobile);
@@ -138,13 +140,25 @@ export async function startBasiqConnect(
         category: error instanceof BasiqClientError ? error.category : 'provider_error',
       });
     }
-    await updateBasiqUser(providerUserId, { mobile: mobileForApi });
-    logSafeMobileDiag('basiq.user.mobile_updated', {
-      providerUserId,
-      mobileEnding: mobileEndingDigits(mobileForApi),
-      mobileMasked,
-      sandbox,
-    });
+    try {
+      await updateBasiqUser(providerUserId, { mobile: mobileForApi });
+      logSafeMobileDiag('basiq.user.mobile_updated', {
+        providerUserId,
+        mobileEnding: mobileEndingDigits(mobileForApi),
+        mobileMasked,
+        sandbox,
+      });
+    } catch (error) {
+      logSafeMobileDiag('basiq.user.mobile_update_deferred', {
+        providerUserId,
+        category: error instanceof BasiqClientError ? error.category : 'provider_error',
+        status: error instanceof BasiqClientError ? error.status : undefined,
+        action: 'override_via_auth_link_mobile',
+        mobileEnding: mobileEndingDigits(mobileForApi),
+        mobileMasked,
+        sandbox,
+      });
+    }
   }
 
   const upsertInput: Parameters<BankStore['upsertConnection']>[0] = {
