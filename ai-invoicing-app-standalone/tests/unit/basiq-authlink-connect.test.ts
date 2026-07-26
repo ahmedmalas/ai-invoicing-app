@@ -166,6 +166,68 @@ describe('Basiq AuthLink connect flow', () => {
     expect(started.message.toLowerCase()).not.toContain('no sms is sent');
   });
 
+  it('still creates AuthLink with mobile override when Basiq user update is denied', async () => {
+    process.env.BASIQ_API_KEY = 'test-key';
+    process.env.BASIQ_ENVIRONMENT = 'sandbox';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const href = String(url);
+        if (href.endsWith('/token')) {
+          return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), {
+            status: 200,
+          });
+        }
+        if (href.endsWith('/users/basiq-user-1') && (!init?.method || init.method === 'GET')) {
+          return new Response(
+            JSON.stringify({ id: 'basiq-user-1', mobile: '+61400000000', email: 'a@b.c' }),
+            { status: 200 },
+          );
+        }
+        if (href.endsWith('/users/basiq-user-1') && init?.method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              data: [{ title: 'Access denied.', code: 'access-denied' }],
+            }),
+            { status: 403 },
+          );
+        }
+        if (href.includes('/auth_link')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          expect(body.mobile).toBe('+61498765432');
+          return new Response(
+            JSON.stringify({
+              links: { public: 'https://connect.basiq.io/override-link' },
+              mobile: '+61498765432',
+              expiresAt: '2026-07-26T00:00:00Z',
+            }),
+            { status: 201 },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const started = await startBasiqConnect(
+      mockStore({
+        providerUserId: 'basiq-user-1',
+        status: 'connecting',
+        authLinkMobile: null,
+      }),
+      {
+        businessId: '11111111-1111-4111-8111-111111111111',
+        workspaceId: '11111111-1111-4111-8111-111111111111',
+        workspaceSchema: 'ws_test',
+        email: 'owner@example.com',
+        mobile: '+61498765432',
+        changeMobile: true,
+      },
+    );
+
+    expect(started.authLinkUrl).toBe('https://connect.basiq.io/override-link');
+    expect(started.authLinkMobileMasked).toBe('+614••••5432');
+  });
+
   it('updates an existing Basiq user when changing mobile and creates a new AuthLink', async () => {
     process.env.BASIQ_API_KEY = 'test-key';
     process.env.BASIQ_ENVIRONMENT = 'sandbox';
