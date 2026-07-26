@@ -175,6 +175,11 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         resend: z.boolean().optional(),
         /** Force a new mobile (invalidates prior AuthLink and updates Basiq user). */
         changeMobile: z.boolean().optional(),
+        /**
+         * Revoke active Basiq consent and start a fresh AuthLink.
+         * Use when Consent UI is stuck on manage-home / Stop sharing.
+         */
+        freshConsent: z.boolean().optional(),
       })
       .parse(request.body ?? {});
 
@@ -196,6 +201,7 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         email,
         mobile,
         changeMobile: Boolean(body.changeMobile),
+        freshConsent: Boolean(body.freshConsent),
         firstName: profile?.companyName?.split(/\s+/)[0] || 'Aleya',
         lastName: 'Business',
       });
@@ -212,12 +218,19 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         environment: started.environment,
         sandbox: started.sandbox,
         deliveryMode: started.deliveryMode,
+        launchMode: started.launchMode,
+        activeConsentId: started.activeConsentId,
+        redirectUrlRequired: started.redirectUrlRequired,
         authLinkMobileMasked: started.authLinkMobileMasked,
-        message: body.changeMobile
-          ? `Mobile updated. New AuthLink created — SMS verification will go to ${started.authLinkMobileMasked}.`
-          : body.resend
-            ? `AuthLink regenerated. SMS verification will go to ${started.authLinkMobileMasked}.`
-            : started.message,
+        message: body.freshConsent
+          ? `Fresh consent started. SMS verification will go to ${started.authLinkMobileMasked}.`
+          : body.changeMobile
+            ? `Mobile updated. New AuthLink created — SMS verification will go to ${started.authLinkMobileMasked}.`
+            : body.resend
+              ? started.launchMode === 'consent_ui_connect'
+                ? started.message
+                : `AuthLink regenerated. SMS verification will go to ${started.authLinkMobileMasked}.`
+              : started.message,
         // Never include the full mobile, tokens, or secrets.
       });
     } catch (error) {
@@ -315,7 +328,7 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
 
     if (hasHostedError) {
       const classified = classifyBasiqHostedError(hostedErrorInput);
-      if (stateToken && cookieState && stateToken === cookieState) {
+      if (stateToken && (!cookieState || cookieState === stateToken)) {
         try {
           await app.db.failBasiqBankCallback({
             stateToken,

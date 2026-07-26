@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { startBasiqConnect } from '../../src/domain/banking/connection-service.js';
 import {
+  resolveBasiqLaunchMode,
+  startBasiqConnect,
+} from '../../src/domain/banking/connection-service.js';
+import {
+  appendAuthLinkState,
+  buildBasiqConsentUiUrl,
   createBasiqAuthLink,
   resetBasiqTokenCacheForTests,
 } from '../../src/services/basiq-client.js';
@@ -120,12 +125,13 @@ describe('Basiq AuthLink connect flow', () => {
     process.env.BASIQ_API_KEY = 'test-key';
     process.env.BASIQ_ENVIRONMENT = 'sandbox';
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).endsWith('/token')) {
+      const href = String(url);
+      if (href.endsWith('/token')) {
         return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), {
           status: 200,
         });
       }
-      if (String(url).endsWith('/users')) {
+      if (href.endsWith('/users')) {
         const body = JSON.parse(String(init?.body || '{}')) as { mobile?: string };
         expect(body.mobile).toBe('+61412345678');
         expect(body.mobile).not.toBe('+61400000000');
@@ -133,7 +139,10 @@ describe('Basiq AuthLink connect flow', () => {
           status: 201,
         });
       }
-      if (String(url).includes('/auth_link')) {
+      if (href.includes('/consents')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (href.includes('/auth_link')) {
         const body = JSON.parse(String(init?.body || '{}')) as { mobile?: string };
         expect(body.mobile).toBe('+61412345678');
         return new Response(
@@ -159,11 +168,115 @@ describe('Basiq AuthLink connect flow', () => {
 
     expect(started.sandbox).toBe(true);
     expect(started.deliveryMode).toBe('open_auth_link');
-    expect(started.authLinkUrl).toBe('https://connect.basiq.io/hooli-test');
+    expect(started.launchMode).toBe('auth_link');
+    expect(started.authLinkUrl.startsWith('https://connect.basiq.io/hooli-test')).toBe(true);
+    expect(started.authLinkUrl).toContain('state=');
     expect(started.authLinkMobile).toBe('+61412345678');
     expect(started.authLinkMobileMasked).toBe('+614••••5678');
     expect(started.message).toContain('+614••••5678');
     expect(started.message.toLowerCase()).not.toContain('no sms is sent');
+  });
+
+  it('uses Consent UI action=connect when an active consent already exists', async () => {
+    process.env.BASIQ_API_KEY = 'test-key';
+    process.env.BASIQ_ENVIRONMENT = 'sandbox';
+    const tokenBodies: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const href = String(url);
+        if (href.endsWith('/token')) {
+          tokenBodies.push(String(init?.body || ''));
+          return new Response(
+            JSON.stringify({ access_token: 'client-tok-xyz', expires_in: 3600 }),
+            { status: 200 },
+          );
+        }
+        if (href.endsWith('/users/basiq-user-1') && (!init?.method || init.method === 'GET')) {
+          return new Response(
+            JSON.stringify({ id: 'basiq-user-1', mobile: '+61412345678' }),
+            { status: 200 },
+          );
+        }
+        if (href.endsWith('/users/basiq-user-1') && init?.method === 'POST') {
+          return new Response(
+            JSON.stringify({ id: 'basiq-user-1', mobile: '+61412345678' }),
+            { status: 200 },
+          );
+        }
+        if (href.includes('/consents')) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: 'consent-1', status: 'active', expiresAt: '2099-01-01T00:00:00Z' }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (href.includes('/auth_link')) {
+          throw new Error('AuthLink must not be used when active consent exists');
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const started = await startBasiqConnect(
+      mockStore({
+        providerUserId: 'basiq-user-1',
+        status: 'error',
+        authLinkMobile: '+61412345678',
+      }),
+      {
+        businessId: '11111111-1111-4111-8111-111111111111',
+        workspaceId: '11111111-1111-4111-8111-111111111111',
+        workspaceSchema: 'ws_test',
+        email: 'owner@example.com',
+        mobile: '+61412345678',
+      },
+    );
+
+    expect(started.launchMode).toBe('consent_ui_connect');
+    expect(started.deliveryMode).toBe('consent_ui_connect');
+    expect(started.activeConsentId).toBe('consent-1');
+    const launched = new URL(started.authLinkUrl);
+    expect(launched.origin).toBe('https://consent.basiq.io');
+    expect(launched.pathname).toBe('/home');
+    expect(launched.searchParams.get('action')).toBe('connect');
+    expect(launched.searchParams.get('state')).toBeTruthy();
+    expect(launched.searchParams.get('institutionId')).toBe('AU00000');
+    expect(launched.searchParams.get('token')).toBe('client-tok-xyz');
+    expect(tokenBodies.some((body) => body.includes('CLIENT_ACCESS'))).toBe(true);
+    expect(started.message.toLowerCase()).toContain('action=connect');
+    expect(started.message.toLowerCase()).toContain('not the manage');
+  });
+
+  it('resolveBasiqLaunchMode prefers consent_ui_connect for active consent', () => {
+    expect(
+      resolveBasiqLaunchMode({
+        activeConsent: { id: 'c1', status: 'active', expiresAt: null, active: true },
+      }),
+    ).toBe('consent_ui_connect');
+    expect(
+      resolveBasiqLaunchMode({
+        activeConsent: { id: 'c1', status: 'active', expiresAt: null, active: true },
+        freshConsent: true,
+      }),
+    ).toBe('auth_link');
+    expect(resolveBasiqLaunchMode({ activeConsent: null })).toBe('auth_link');
+  });
+
+  it('builds Consent UI URLs with action/state and appends state to AuthLink', () => {
+    const consentUrl = buildBasiqConsentUiUrl({
+      clientAccessToken: 'tok',
+      action: 'connect',
+      state: 'abc',
+      institutionId: 'AU00000',
+    });
+    expect(consentUrl).toContain('action=connect');
+    expect(consentUrl).toContain('state=abc');
+    expect(consentUrl).toContain('institutionId=AU00000');
+    expect(appendAuthLinkState('https://connect.basiq.io/xyz', 'st')).toBe(
+      'https://connect.basiq.io/xyz?state=st',
+    );
   });
 
   it('still creates AuthLink with mobile override when Basiq user update is denied', async () => {
@@ -191,6 +304,9 @@ describe('Basiq AuthLink connect flow', () => {
             }),
             { status: 403 },
           );
+        }
+        if (href.includes('/consents')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
         }
         if (href.includes('/auth_link')) {
           const body = JSON.parse(String(init?.body || '{}'));
@@ -224,7 +340,8 @@ describe('Basiq AuthLink connect flow', () => {
       },
     );
 
-    expect(started.authLinkUrl).toBe('https://connect.basiq.io/override-link');
+    expect(started.authLinkUrl.startsWith('https://connect.basiq.io/override-link')).toBe(true);
+    expect(started.authLinkUrl).toContain('state=');
     expect(started.authLinkMobileMasked).toBe('+614••••5432');
   });
 
@@ -255,6 +372,9 @@ describe('Basiq AuthLink connect flow', () => {
             JSON.stringify({ id: 'basiq-user-1', mobile: '+61498765432' }),
             { status: 200 },
           );
+        }
+        if (href.includes('/consents')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
         }
         if (href.includes('/auth_link')) {
           const body = JSON.parse(String(init?.body || '{}'));
@@ -289,7 +409,7 @@ describe('Basiq AuthLink connect flow', () => {
       },
     );
 
-    expect(started.authLinkUrl).toBe('https://connect.basiq.io/new-link');
+    expect(started.authLinkUrl.startsWith('https://connect.basiq.io/new-link')).toBe(true);
     expect(started.authLinkMobileMasked).toBe('+614••••5432');
     expect(calls.some((c) => String(c.url).includes('/users/basiq-user-1'))).toBe(true);
     expect(calls.some((c) => String(c.url).includes('/auth_link'))).toBe(true);

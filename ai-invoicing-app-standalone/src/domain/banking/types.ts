@@ -117,9 +117,11 @@ export interface BankFeedStatusView {
    * Basiq does not SMS-deliver AuthLink URLs — the browser must open `authLinkUrl`.
    * Hosted AuthLink 2FA SMS uses the confirmed mobile (masked below).
    */
-  authLinkDelivery: 'open_auth_link';
+  authLinkDelivery: 'open_auth_link' | 'consent_ui_connect';
   /** Masked destination for AuthLink SMS 2FA (never the full number). */
   authLinkMobileMasked: string | null;
+  /** Required Basiq Dashboard Redirect URL for Consent UI return. */
+  redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
   institution: string | null;
   maskedAccount: string | null;
   accounts: Array<{

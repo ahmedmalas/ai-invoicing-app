@@ -618,6 +618,8 @@ export function createBankStore(
         sandbox,
         authLinkDelivery: 'open_auth_link' as const,
         authLinkMobileMasked,
+        redirectUrlRequired:
+          'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback' as const,
       };
       if (!configured && !connection) {
         return {

@@ -185,6 +185,9 @@ export function createBankingUi({ api, shell }) {
       showChangeMobile
         ? '<button type="button" class="button secondary" data-bank-change-mobile>Change mobile number</button>'
         : '',
+      showResend || status.status === 'error' || status.status === 'connecting'
+        ? '<button type="button" class="button secondary" data-bank-fresh-consent>Start fresh consent</button>'
+        : '',
       status.connected ||
       status.status === 'connecting' ||
       status.status === 'error' ||
@@ -309,22 +312,36 @@ export function createBankingUi({ api, shell }) {
     const message = result?.message || 'AuthLink created. Opening Basiq Connect.';
     const url = result?.authLinkUrl || '';
     const masked = result?.authLinkMobileMasked || '';
+    const launchMode = result?.launchMode || result?.deliveryMode || '';
+    const redirectHint =
+      result?.redirectUrlRequired ||
+      'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
+    const safeUrlDisplay =
+      launchMode === 'consent_ui_connect' || String(url).includes('consent.basiq.io')
+        ? 'https://consent.basiq.io/home?action=connect&state=…'
+        : url;
     return (
       '<p><strong>' +
       escapeHtml(message) +
       '</strong></p>' +
-      (masked
+      (launchMode === 'consent_ui_connect'
+        ? '<p role="status">Launching Consent UI with <code>action=connect</code> (not the manage / Stop sharing page).</p>'
+        : '') +
+      (masked && launchMode !== 'consent_ui_connect'
         ? '<p data-authlink-mobile-masked>SMS verification destination: <strong>' +
           escapeHtml(masked) +
           '</strong></p>'
         : '') +
       (url
-        ? '<p>AuthLink: <a href="' +
+        ? '<p>Open: <a href="' +
           escapeHtml(url) +
           '" target="_blank" rel="noopener noreferrer" data-bank-authlink>' +
-          escapeHtml(url) +
+          escapeHtml(safeUrlDisplay) +
           '</a></p>'
-        : '')
+        : '') +
+      '<p class="muted">Basiq Dashboard Redirect URL must be <code>' +
+      escapeHtml(redirectHint) +
+      '</code> or there will be no return button after consent.</p>'
     );
   }
 
@@ -347,6 +364,7 @@ export function createBankingUi({ api, shell }) {
       isReconnect = false,
       resend = false,
       changeMobile = false,
+      freshConsent = false,
       onDone,
       onFlash,
     } = options;
@@ -354,8 +372,17 @@ export function createBankingUi({ api, shell }) {
       isReconnect &&
       !resend &&
       !changeMobile &&
+      !freshConsent &&
       !window.confirm(
         'Reconnect may replace the existing open-banking consent. Continue?',
+      )
+    ) {
+      return;
+    }
+    if (
+      freshConsent &&
+      !window.confirm(
+        'Start a fresh Basiq consent? This revokes the current consent and opens a new AuthLink (use when stuck on Stop sharing / manage home).',
       )
     ) {
       return;
@@ -370,20 +397,21 @@ export function createBankingUi({ api, shell }) {
     const body = {
       resend: Boolean(resend),
       changeMobile: Boolean(changeMobile),
+      freshConsent: Boolean(freshConsent),
     };
 
     // Always collect/confirm AU mobile for AuthLink hosted 2FA (sandbox + production).
     // Never silently reuse Basiq placeholder mobiles ending in 000.
-    if (changeMobile || !status?.authLinkMobileMasked) {
+    if (changeMobile || freshConsent || !status?.authLinkMobileMasked) {
       const entered = promptAustralianMobile('+614');
       if (entered === null) return;
       body.mobile = entered;
       body.changeMobile = true;
     } else if (
       !window.confirm(
-        'SMS verification code will be sent to ' +
+        'Continue to open Basiq Consent / AuthLink for ' +
           status.authLinkMobileMasked +
-          '. Continue to open AuthLink?',
+          '? If you previously saw only Stop sharing, Aleya will open action=connect instead.',
       )
     ) {
       return;
@@ -398,8 +426,19 @@ export function createBankingUi({ api, shell }) {
         window.alert(result?.message || 'Unable to start bank connection.');
         return;
       }
+      const launchMode = result.launchMode || result.deliveryMode || '';
       const masked = result.authLinkMobileMasked || status?.authLinkMobileMasked || '';
-      if (
+      if (launchMode === 'consent_ui_connect') {
+        if (
+          !window.confirm(
+            'Ready to open Basiq Consent UI with action=connect (adds a bank under your existing consent). Continue?',
+          )
+        ) {
+          if (typeof onFlash === 'function') onFlash(connectFlashHtml(result));
+          if (typeof onDone === 'function') await onDone();
+          return;
+        }
+      } else if (
         masked &&
         !window.confirm(
           'AuthLink ready. Basiq will send the SMS code to ' +
@@ -505,6 +544,16 @@ export function createBankingUi({ api, shell }) {
         isReconnect: false,
         resend: false,
         changeMobile: true,
+        onDone: reload,
+        onFlash: setFlash,
+      }),
+    );
+    root.querySelector('[data-bank-fresh-consent]')?.addEventListener('click', () =>
+      void connectBank({
+        isReconnect: false,
+        resend: false,
+        changeMobile: false,
+        freshConsent: true,
         onDone: reload,
         onFlash: setFlash,
       }),

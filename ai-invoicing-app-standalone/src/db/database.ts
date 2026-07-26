@@ -1039,6 +1039,7 @@ export interface AppDatabase {
     mobile?: string | null;
     storedMobile?: string | null;
     changeMobile?: boolean;
+    freshConsent?: boolean;
     firstName?: string | null;
     lastName?: string | null;
   }): DatabaseResult<{
@@ -1047,11 +1048,14 @@ export interface AppDatabase {
     connection: BankConnection;
     expiresAt: string | null;
     environment: 'sandbox' | 'production';
-    deliveryMode: 'open_auth_link';
+    deliveryMode: 'open_auth_link' | 'consent_ui_connect';
     sandbox: boolean;
     authLinkMobile: string;
     authLinkMobileMasked: string;
     message: string;
+    launchMode: 'consent_ui_connect' | 'auth_link';
+    activeConsentId: string | null;
+    redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
   }>;
   completeBasiqBankCallback(input: {
     stateToken: string;
@@ -6681,11 +6685,14 @@ export function createDatabase(
         connection: BankConnection;
         expiresAt: string | null;
         environment: 'sandbox' | 'production';
-        deliveryMode: 'open_auth_link';
+        deliveryMode: 'open_auth_link' | 'consent_ui_connect';
         sandbox: boolean;
         authLinkMobile: string;
         authLinkMobileMasked: string;
         message: string;
+        launchMode: 'consent_ui_connect' | 'auth_link';
+        activeConsentId: string | null;
+        redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
       };
     },
     completeBasiqBankCallback(input) {
@@ -6723,7 +6730,7 @@ export function createDatabase(
     },
     failBasiqBankCallback(input) {
       return (async () => {
-        if (!input.cookieState || input.cookieState !== input.stateToken) {
+        if (input.cookieState && input.cookieState !== input.stateToken) {
           throw new Error('BANK_CONNECT_STATE_MISMATCH');
         }
         const stateRow = await bankStore.consumeConnectState(input.stateToken);

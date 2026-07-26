@@ -570,6 +570,149 @@ export async function createBasiqAuthLink(
   };
 }
 
+/** CLIENT_ACCESS token bound to a user — required for Consent UI redirects. */
+export async function getBasiqClientAccessToken(userId: string): Promise<string> {
+  const key = apiKey();
+  const started = Date.now();
+  const base = basiqApiBase();
+  const body = new URLSearchParams({
+    scope: 'CLIENT_ACCESS',
+    userId,
+  });
+  const response = await fetchWithTimeout(`${base}/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${key}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'basiq-version': basiqApiVersion(),
+      Accept: 'application/json',
+    },
+    body: body.toString(),
+  });
+  const durationMs = Date.now() - started;
+  if (!response.ok) {
+    const providerDetail = await readBasiqErrorDetail(response);
+    throw new BasiqClientError(
+      response.status === 401 || response.status === 403 || response.status === 404
+        ? 'auth_failed'
+        : categorizeStatus(response.status),
+      providerDetail || 'Basiq CLIENT_ACCESS token failed',
+      {
+        status: response.status,
+        endpoint: '/token',
+        ...(providerDetail ? { providerDetail } : {}),
+      },
+    );
+  }
+  const payload = (await response.json()) as { access_token?: string };
+  if (!payload.access_token) {
+    throw new BasiqClientError('invalid_response', 'Basiq CLIENT_ACCESS response missing access_token');
+  }
+  logSafe('info', {
+    event: 'basiq.token',
+    endpoint: '/token',
+    scope: 'CLIENT_ACCESS',
+    status: response.status,
+    durationMs,
+    category: 'ok',
+  });
+  return payload.access_token;
+}
+
+export type BasiqConsentAction = 'connect' | 'manage' | 'extend' | 'update' | 'reauthorise';
+
+/** Build hosted Consent UI URL. Never log the token value. */
+export function buildBasiqConsentUiUrl(input: {
+  clientAccessToken: string;
+  action?: BasiqConsentAction | null;
+  state?: string | null;
+  institutionId?: string | null;
+}): string {
+  const url = new URL('https://consent.basiq.io/home');
+  url.searchParams.set('token', input.clientAccessToken);
+  if (input.action) url.searchParams.set('action', input.action);
+  if (input.state?.trim()) url.searchParams.set('state', input.state.trim());
+  if (input.institutionId?.trim()) {
+    url.searchParams.set('institutionId', input.institutionId.trim());
+  }
+  return url.toString();
+}
+
+/** Attach Aleya connect state to an AuthLink public URL when possible. */
+export function appendAuthLinkState(publicUrl: string, stateToken: string): string {
+  try {
+    const url = new URL(publicUrl);
+    url.searchParams.set('state', stateToken);
+    return url.toString();
+  } catch {
+    const joiner = publicUrl.includes('?') ? '&' : '?';
+    return `${publicUrl}${joiner}state=${encodeURIComponent(stateToken)}`;
+  }
+}
+
+export interface BasiqConsentSummary {
+  id: string;
+  status: string | null;
+  expiresAt: string | null;
+  active: boolean;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+export function summarizeBasiqConsent(raw: unknown): BasiqConsentSummary | null {
+  const record = asRecord(raw);
+  const id = typeof record.id === 'string' ? record.id : null;
+  if (!id) return null;
+  const status =
+    typeof record.status === 'string'
+      ? record.status
+      : typeof record.consentStatus === 'string'
+        ? record.consentStatus
+        : null;
+  const expiresAt =
+    typeof record.expiresAt === 'string'
+      ? record.expiresAt
+      : typeof record.expiryDate === 'string'
+        ? record.expiryDate
+        : null;
+  const normalized = String(status || '').toLowerCase();
+  const expired =
+    Boolean(expiresAt && Number.isFinite(Date.parse(expiresAt)) && Date.parse(expiresAt) <= Date.now()) ||
+    normalized.includes('expir') ||
+    normalized.includes('revok') ||
+    normalized.includes('inactive');
+  const active =
+    !expired &&
+    (normalized.includes('active') ||
+      normalized.includes('valid') ||
+      normalized === 'authorized' ||
+      normalized === 'authorised' ||
+      normalized === '' ||
+      // Some payloads omit status on current consents — treat non-expired as active.
+      (!normalized && Boolean(id)));
+  return { id, status, expiresAt, active };
+}
+
+export async function listBasiqConsents(userId: string): Promise<BasiqConsentSummary[]> {
+  const result = await basiqRequest<{ data?: unknown[] }>(
+    'GET',
+    `/users/${encodeURIComponent(userId)}/consents`,
+  );
+  const rows = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? (result as unknown[]) : [];
+  return rows
+    .map((row) => summarizeBasiqConsent(row))
+    .filter((row): row is BasiqConsentSummary => Boolean(row));
+}
+
+export async function deleteBasiqConsent(userId: string, consentId: string): Promise<void> {
+  await basiqRequest(
+    'DELETE',
+    `/users/${encodeURIComponent(userId)}/consents/${encodeURIComponent(consentId)}`,
+  );
+}
+
 export async function listBasiqConnections(userId: string): Promise<unknown[]> {
   const result = await basiqRequest<{ data?: unknown[] }>(
     'GET',
