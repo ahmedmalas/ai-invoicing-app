@@ -133,6 +133,8 @@ export interface BankFeedStatusView {
   lastSuccessfulSyncAt: string | null;
   lastSyncAttemptAt: string | null;
   consentExpiresAt: string | null;
+  /** Stable provider/app error code when status is error (never secrets). */
+  errorCode: string | null;
   errors: string[];
   warning: string | null;
   nextAction: string | null;

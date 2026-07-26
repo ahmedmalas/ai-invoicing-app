@@ -4,6 +4,11 @@ import { z } from 'zod';
 
 import { getWorkspaceContext } from '../auth/workspace-context.js';
 import {
+  BASIQ_CONNECTIONS_NOT_ENABLED_CODE,
+  BASIQ_CONNECTIONS_NOT_ENABLED_MESSAGE,
+  classifyBasiqHostedError,
+} from '../domain/banking/basiq-errors.js';
+import {
   BASIQ_STATE_COOKIE,
   completeBasiqCallback,
   disconnectBankFeed,
@@ -65,6 +70,28 @@ function redirectBanking(
   return reply.redirect(url.pathname + url.search);
 }
 
+function connectFailurePayload(error: BasiqClientError): {
+  code: string;
+  category: string;
+  message: string;
+  providerDetail: string | null;
+} {
+  if (error.category === 'connections_not_enabled') {
+    return {
+      code: BASIQ_CONNECTIONS_NOT_ENABLED_CODE,
+      category: error.category,
+      message: BASIQ_CONNECTIONS_NOT_ENABLED_MESSAGE,
+      providerDetail: error.providerDetail || null,
+    };
+  }
+  return {
+    code: 'BASIQ_CONNECT_FAILED',
+    category: error.category,
+    message: error.providerDetail || error.message || 'Unable to start Basiq bank connection.',
+    providerDetail: error.providerDetail || null,
+  };
+}
+
 export const bankingRoutes: FastifyPluginAsync = async (app) => {
   app.get('/banking/health', async (request, reply) => {
     businessIdFromAuth(request);
@@ -76,6 +103,8 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
       environment: health.environment,
       latencyMs: health.latencyMs,
       errorCategory: health.errorCategory,
+      hooliObInstitutionAvailable: health.hooliObInstitutionAvailable,
+      hooliObOpenBankingMethod: health.hooliObOpenBankingMethod,
     });
   });
 
@@ -83,6 +112,12 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
     const businessId = businessIdFromAuth(request);
     const cached = getCachedStatus(businessId);
     if (cached) return reply.send(cached);
+    // Detect hosted Consent UI failures (e.g. Connections not enabled) via recent jobs.
+    try {
+      await app.db.reconcileBasiqHostedFailures(businessId);
+    } catch {
+      // Status must still load if job reconciliation fails.
+    }
     const status = await app.db.getBankFeedStatus(businessId);
     setCachedStatus(businessId, status);
     return reply.send(status);
@@ -187,12 +222,10 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
       });
     } catch (error) {
       if (error instanceof BasiqClientError) {
-        return reply.code(error.category === 'not_configured' ? 503 : 502).send({
-          code: 'BASIQ_CONNECT_FAILED',
-          category: error.category,
-          message: error.providerDetail || error.message || 'Unable to start Basiq bank connection.',
-          providerDetail: error.providerDetail || null,
-        });
+        const payload = connectFailurePayload(error);
+        return reply
+          .code(error.category === 'not_configured' ? 503 : 502)
+          .send(payload);
       }
       if (error instanceof InvalidAustralianMobileError) {
         return reply.code(400).send({
@@ -204,12 +237,56 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  /**
+   * Persist a hosted Consent UI failure reported by callback query params or the client.
+   * Used when Basiq shows "Connections not enabled" / access-denied inside AuthLink.
+   */
+  app.post('/banking/basiq/report-hosted-error', async (request, reply) => {
+    assertBankRateLimit(`hosted-error:${clientKey(request)}`, { limit: 20, windowMs: 60_000 });
+    const businessId = businessIdFromAuth(request);
+    const body = z
+      .object({
+        error: z.string().max(200).optional(),
+        errorDescription: z.string().max(500).optional(),
+        code: z.string().max(200).optional(),
+        title: z.string().max(300).optional(),
+        detail: z.string().max(500).optional(),
+        message: z.string().max(500).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const classified = classifyBasiqHostedError(body);
+    const connection = await app.db.reportBasiqHostedFailure(businessId, {
+      error: body.error,
+      errorDescription: body.errorDescription,
+      code: body.code,
+      title: body.title,
+      detail: body.detail,
+      message: body.message,
+    });
+    bustStatusCache(businessId);
+    return reply.send({
+      recorded: Boolean(connection),
+      reason: classified.reason,
+      code: classified.connectionsNotEnabled
+        ? BASIQ_CONNECTIONS_NOT_ENABLED_CODE
+        : 'BASIQ_HOSTED_ERROR',
+      message: classified.message,
+      status: connection?.status || null,
+    });
+  });
+
   app.get('/banking/basiq/callback', async (request, reply) => {
     assertBankRateLimit(`callback:${request.ip || 'ip'}`, { limit: 30, windowMs: 60_000 });
     const query = z
       .object({
         state: z.string().min(8).max(200).optional(),
         error: z.string().max(200).optional(),
+        error_description: z.string().max(500).optional(),
+        errorDescription: z.string().max(500).optional(),
+        code: z.string().max(200).optional(),
+        title: z.string().max(300).optional(),
+        detail: z.string().max(500).optional(),
       })
       .passthrough()
       .parse(request.query);
@@ -220,11 +297,47 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
     );
     const cookieState = cookieMatch?.[1] ? decodeURIComponent(cookieMatch[1]) : null;
     const stateToken = query.state || cookieState;
+
+    const hostedErrorInput = {
+      error: query.error,
+      errorDescription: query.error_description || query.errorDescription,
+      code: query.code || query.error,
+      title: query.title,
+      detail: query.detail || query.error_description || query.errorDescription,
+      message: query.error_description || query.errorDescription || query.error,
+    };
+    const hasHostedError = Boolean(
+      query.error ||
+        query.error_description ||
+        query.errorDescription ||
+        (query.title && /connection/i.test(query.title)),
+    );
+
+    if (hasHostedError) {
+      const classified = classifyBasiqHostedError(hostedErrorInput);
+      if (stateToken && cookieState && stateToken === cookieState) {
+        try {
+          await app.db.failBasiqBankCallback({
+            stateToken,
+            cookieState,
+            ...hostedErrorInput,
+          });
+        } catch {
+          // Still redirect with the classified reason.
+        }
+      }
+      reply.header(
+        'Set-Cookie',
+        `${BASIQ_STATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
+      );
+      return redirectBanking(reply, {
+        banking: 'error',
+        reason: classified.reason,
+      });
+    }
+
     if (!stateToken) {
       return redirectBanking(reply, { banking: 'error', reason: 'missing_state' });
-    }
-    if (query.error) {
-      return redirectBanking(reply, { banking: 'error', reason: 'provider_error' });
     }
 
     try {
@@ -262,6 +375,23 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ code: 'BANK_CONNECTION_NOT_FOUND' });
       }
       if (error instanceof BasiqClientError) {
+        if (error.category === 'connections_not_enabled') {
+          try {
+            await app.db.reportBasiqHostedFailure(businessId, {
+              message: error.providerDetail || error.message,
+              detail: error.providerDetail || error.message,
+              code: error.category,
+            });
+            bustStatusCache(businessId);
+          } catch {
+            // ignore persist failure
+          }
+          return reply.code(502).send({
+            code: BASIQ_CONNECTIONS_NOT_ENABLED_CODE,
+            category: error.category,
+            message: BASIQ_CONNECTIONS_NOT_ENABLED_MESSAGE,
+          });
+        }
         return reply.code(502).send({
           code: 'BANK_REFRESH_FAILED',
           category: error.category,

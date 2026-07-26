@@ -248,6 +248,7 @@ async function api(path, options = {}, retry = true) {
     );
     error.status = response.status;
     error.code = payload?.code;
+    error.category = payload?.category || null;
     error.fieldPath = validation?.fieldPath || null;
     error.details = payload?.details || null;
     throw error;

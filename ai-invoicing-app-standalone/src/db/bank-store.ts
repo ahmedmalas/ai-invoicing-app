@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import { deriveBankConnectionStatus, nextActionForStatus } from '../domain/banking/status.js';
+import {
+  BASIQ_CONNECTIONS_NOT_ENABLED_CODE,
+  BASIQ_CONNECTIONS_NOT_ENABLED_MESSAGE,
+} from '../domain/banking/basiq-errors.js';
 import {
   isBasiqPlaceholderMobile,
   maskAustralianMobileE164,
 } from '../domain/banking/phone.js';
+import { deriveBankConnectionStatus, nextActionForStatus } from '../domain/banking/status.js';
 import type {
   BankAccount,
   BankConnection,
@@ -629,6 +633,7 @@ export function createBankStore(
           lastSuccessfulSyncAt: null,
           lastSyncAttemptAt: null,
           consentExpiresAt: null,
+          errorCode: null,
           errors: [],
           warning: 'BASIQ_API_KEY is not configured on the server.',
           nextAction: 'Ask an administrator to set BASIQ_API_KEY in Vercel (server-only).',
@@ -655,6 +660,7 @@ export function createBankStore(
           lastSuccessfulSyncAt: null,
           lastSyncAttemptAt: null,
           consentExpiresAt: null,
+          errorCode: null,
           errors: [],
           warning: sandbox
             ? 'Sandbox mode: Connect opens Basiq AuthLink in your browser. Confirm your Australian mobile first — AuthLink SMS verification uses that number (not a placeholder).'
@@ -671,8 +677,14 @@ export function createBankStore(
       }
       const status = deriveBankConnectionStatus(connection);
       const primary = accounts[0] || null;
+      const connectionsNotEnabled =
+        connection.errorCode === BASIQ_CONNECTIONS_NOT_ENABLED_CODE;
       const errors: string[] = [];
-      if (connection.errorMessage) errors.push(connection.errorMessage);
+      if (connectionsNotEnabled) {
+        errors.push(BASIQ_CONNECTIONS_NOT_ENABLED_MESSAGE);
+      } else if (connection.errorMessage) {
+        errors.push(connection.errorMessage);
+      }
       return {
         implemented: true,
         configured,
@@ -693,22 +705,26 @@ export function createBankStore(
         lastSuccessfulSyncAt: connection.lastSuccessfulSyncAt,
         lastSyncAttemptAt: connection.lastSyncAttemptAt,
         consentExpiresAt: connection.consentExpiresAt,
+        errorCode: connection.errorCode,
         errors,
-        warning:
-          status === 'consent_expiring'
+        warning: connectionsNotEnabled
+          ? null
+          : status === 'consent_expiring'
             ? 'Open-banking consent is expiring soon.'
             : status === 'connected_delayed'
               ? 'Last successful sync is delayed.'
               : status === 'reauth_required'
                 ? 'Reauthentication is required.'
                 : null,
-        nextAction: nextActionForStatus(status),
+        nextAction: nextActionForStatus(status, { errorCode: connection.errorCode }),
         distinction: {
           featureAbsent: false,
           toolAbsentForExistingFeature: false,
-          permissionDenied: false,
+          permissionDenied: connectionsNotEnabled,
           providerDisconnected: status === 'disconnected' || status === 'reauth_required',
-          temporaryFailure: status === 'provider_unavailable' || status === 'error',
+          temporaryFailure:
+            !connectionsNotEnabled &&
+            (status === 'provider_unavailable' || status === 'error'),
         },
       };
     },

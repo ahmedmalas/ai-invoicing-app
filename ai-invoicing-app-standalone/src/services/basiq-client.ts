@@ -5,6 +5,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { isBasiqConnectionsNotEnabledError } from '../domain/banking/basiq-errors.js';
+
 const TOKEN_SKEW_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_RETRIES = 2;
@@ -26,7 +28,8 @@ export type BasiqErrorCategory =
   | 'provider_error'
   | 'network'
   | 'timeout'
-  | 'invalid_response';
+  | 'invalid_response'
+  | 'connections_not_enabled';
 
 export class BasiqClientError extends Error {
   readonly category: BasiqErrorCategory;
@@ -279,17 +282,23 @@ export async function basiqRequest<T = unknown>(
       }
       if (!response.ok) {
         const providerDetail = await readBasiqErrorDetail(response);
+        const category: BasiqErrorCategory = isBasiqConnectionsNotEnabledError({
+          message: providerDetail,
+          detail: providerDetail,
+        })
+          ? 'connections_not_enabled'
+          : categorizeStatus(response.status);
         logSafe('warn', {
           event: 'basiq.request',
           endpoint: path,
           method,
           status: response.status,
           durationMs,
-          category: categorizeStatus(response.status),
+          category,
           ...(providerDetail ? { providerDetail } : {}),
         });
         throw new BasiqClientError(
-          categorizeStatus(response.status),
+          category,
           providerDetail || `Basiq ${method} ${path} failed`,
           {
             status: response.status,
@@ -353,6 +362,21 @@ export interface BasiqHealthResult {
   environment: 'sandbox' | 'production';
   latencyMs: number | null;
   errorCategory: BasiqErrorCategory | null;
+  /** Hooli OB (AU00000) visible to this API key, when probe succeeds. */
+  hooliObInstitutionAvailable: boolean | null;
+  /** Whether AU00000 reports an open-banking method for this API key. */
+  hooliObOpenBankingMethod: boolean | null;
+}
+
+function institutionHasOpenBankingMethod(methods: string[]): boolean {
+  return methods.some((method) => {
+    const normalized = method.toLowerCase().replace(/[\s_]+/g, '-');
+    return (
+      normalized.includes('open-banking') ||
+      normalized === 'openbanking' ||
+      normalized.includes('cdr')
+    );
+  });
 }
 
 export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
@@ -364,6 +388,8 @@ export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
       environment: basiqEnvironmentLabel(),
       latencyMs: null,
       errorCategory: 'not_configured',
+      hooliObInstitutionAvailable: null,
+      hooliObOpenBankingMethod: null,
     };
   }
   const started = Date.now();
@@ -371,6 +397,18 @@ export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
     await getBasiqAccessToken();
     // Lightweight authenticated probe — list institutions (limit 1).
     await basiqRequest('GET', '/institutions', { query: { limit: 1 } });
+    let hooliObInstitutionAvailable: boolean | null = null;
+    let hooliObOpenBankingMethod: boolean | null = null;
+    try {
+      const hooli = await getBasiqInstitution('AU00000');
+      hooliObInstitutionAvailable = Boolean(hooli?.id);
+      hooliObOpenBankingMethod = hooli
+        ? institutionHasOpenBankingMethod(hooli.methods)
+        : false;
+    } catch {
+      hooliObInstitutionAvailable = false;
+      hooliObOpenBankingMethod = false;
+    }
     return {
       configured: true,
       authenticated: true,
@@ -378,6 +416,8 @@ export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
       environment: basiqEnvironmentLabel(),
       latencyMs: Date.now() - started,
       errorCategory: null,
+      hooliObInstitutionAvailable,
+      hooliObOpenBankingMethod,
     };
   } catch (error) {
     const category =
@@ -390,8 +430,56 @@ export async function checkBasiqHealth(): Promise<BasiqHealthResult> {
       environment: basiqEnvironmentLabel(),
       latencyMs: Date.now() - started,
       errorCategory: category,
+      hooliObInstitutionAvailable: null,
+      hooliObOpenBankingMethod: null,
     };
   }
+}
+
+export async function getBasiqInstitution(institutionId: string): Promise<{
+  id: string;
+  name: string | null;
+  methods: string[];
+} | null> {
+  const institution = await basiqRequest<{
+    id?: string;
+    name?: string;
+    shortName?: string;
+    authorization?: unknown;
+    methods?: unknown;
+    connectors?: unknown;
+  }>('GET', `/institutions/${encodeURIComponent(institutionId)}`);
+  if (!institution?.id) return null;
+  const methods: string[] = [];
+  const rawMethods = institution.methods ?? institution.connectors ?? institution.authorization;
+  if (Array.isArray(rawMethods)) {
+    for (const item of rawMethods) {
+      if (typeof item === 'string') methods.push(item);
+      else if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        const value = record.type || record.method || record.id || record.name;
+        if (typeof value === 'string') methods.push(value);
+      }
+    }
+  }
+  return {
+    id: institution.id,
+    name: institution.name || institution.shortName || null,
+    methods,
+  };
+}
+
+/** Recent jobs for a Basiq user — used to detect hosted Consent UI failures. */
+export async function listBasiqJobs(
+  userId: string,
+  options?: { limit?: number },
+): Promise<unknown[]> {
+  const result = await basiqRequest<{ data?: unknown[] }>(
+    'GET',
+    `/users/${encodeURIComponent(userId)}/jobs`,
+    { query: { limit: options?.limit ?? 10 } },
+  );
+  return Array.isArray(result?.data) ? result.data : Array.isArray(result) ? (result as unknown[]) : [];
 }
 
 export async function createBasiqUser(input: {

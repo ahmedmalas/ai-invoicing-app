@@ -33,6 +33,36 @@ function statusLabel(status) {
   return map[status] || status || 'Unknown';
 }
 
+const CONNECTIONS_NOT_ENABLED_MESSAGE =
+  'Your Basiq application is not enabled for bank connections. Enable Connections in Basiq or contact Basiq Support.';
+
+function bankingCallbackErrorHtml(reason) {
+  if (reason === 'connections_not_enabled') {
+    return (
+      '<p class="banking-error" role="alert">' +
+      escapeHtml(CONNECTIONS_NOT_ENABLED_MESSAGE) +
+      ' This is not caused by an incorrect mobile number or an invalid API key for /token.</p>'
+    );
+  }
+  return (
+    '<p class="banking-error" role="alert">Bank connection callback failed (' +
+    escapeHtml(reason || 'unknown') +
+    '). No secrets were returned.</p>'
+  );
+}
+
+function connectErrorMessage(error) {
+  const category = error?.category || error?.body?.category || '';
+  const code = error?.code || error?.body?.code || '';
+  if (
+    category === 'connections_not_enabled' ||
+    code === 'BASIQ_CONNECTIONS_NOT_ENABLED'
+  ) {
+    return CONNECTIONS_NOT_ENABLED_MESSAGE;
+  }
+  return error?.message || 'Unable to start bank connection.';
+}
+
 export function createBankingUi({ api, shell }) {
   let txState = {
     accountId: '',
@@ -383,9 +413,47 @@ export function createBankingUi({ api, shell }) {
       }
       if (typeof onFlash === 'function') onFlash(connectFlashHtml(result));
       openAuthLinkUrl(result.authLinkUrl);
+      // Poll status so hosted Consent UI failures (Connections not enabled) surface in Aleya.
+      void pollHostedConnectStatus(onDone);
       if (typeof onDone === 'function') await onDone();
     } catch (error) {
-      window.alert(error?.message || 'Unable to start bank connection.');
+      window.alert(connectErrorMessage(error));
+    }
+  }
+
+  async function pollHostedConnectStatus(onDone) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      try {
+        const status = await loadStatus();
+        if (
+          status?.errorCode === 'BASIQ_CONNECTIONS_NOT_ENABLED' ||
+          status?.status === 'error' ||
+          status?.connected
+        ) {
+          if (typeof onDone === 'function') await onDone();
+          return;
+        }
+      } catch {
+        // Keep polling briefly; status may be temporarily unavailable.
+      }
+    }
+  }
+
+  async function reportConnectionsNotEnabledFromCallback(reason) {
+    if (reason !== 'connections_not_enabled') return;
+    try {
+      await api('/api/banking/basiq/report-hosted-error', {
+        method: 'POST',
+        body: JSON.stringify({
+          error: 'access-denied',
+          title: 'Connections not enabled',
+          detail: 'Connections not enabled',
+          message: CONNECTIONS_NOT_ENABLED_MESSAGE,
+        }),
+      });
+    } catch {
+      // Status reconcile / callback persistence may already have recorded it.
     }
   }
 
@@ -457,13 +525,14 @@ export function createBankingUi({ api, shell }) {
       host.innerHTML = '<p class="muted">Loading bank feed connection…</p>';
       try {
         const params = new URLSearchParams(location.search);
+        if (params.get('banking') === 'error') {
+          await reportConnectionsNotEnabledFromCallback(params.get('reason'));
+        }
         const callbackFlash =
           params.get('banking') === 'connected'
             ? '<p class="banking-flash" role="status">Bank connection completed. Accounts were imported where available. Open Banking to browse transactions.</p>'
             : params.get('banking') === 'error'
-              ? '<p class="banking-error" role="alert">Bank connection callback failed (' +
-                escapeHtml(params.get('reason') || 'unknown') +
-                '). No secrets were returned.</p>'
+              ? bankingCallbackErrorHtml(params.get('reason'))
               : '';
         const [status, accounts] = await Promise.all([loadStatus(), loadAccounts()]);
         const sandbox = isSandboxStatus(status);
@@ -498,9 +567,7 @@ export function createBankingUi({ api, shell }) {
       params.get('banking') === 'connected'
         ? '<p class="banking-flash" role="status">Bank connection completed. Manage the feed in Settings → Bank Feeds.</p>'
         : params.get('banking') === 'error'
-          ? '<p class="banking-error" role="alert">Bank connection callback failed (' +
-            escapeHtml(params.get('reason') || 'unknown') +
-            '). No secrets were returned.</p>'
+          ? bankingCallbackErrorHtml(params.get('reason'))
           : '';
 
     shell(

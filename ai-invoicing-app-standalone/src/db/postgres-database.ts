@@ -83,6 +83,10 @@ import {
   disconnectBankFeed as disconnectBankFeedService,
   startBasiqConnect,
 } from '../domain/banking/connection-service.js';
+import {
+  applyBasiqHostedFailure,
+  reconcileBasiqHostedJobFailures,
+} from '../domain/banking/hosted-failure.js';
 import { syncBankConnection } from '../domain/banking/sync-service.js';
 
 interface DbInvoiceLineItem {
@@ -1051,6 +1055,28 @@ export interface AppDatabase {
   }>;
   refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
   disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
+  reconcileBasiqHostedFailures(businessId: string): DatabaseResult<BankConnection | null>;
+  reportBasiqHostedFailure(
+    businessId: string,
+    input: {
+      code?: string | null | undefined;
+      title?: string | null | undefined;
+      detail?: string | null | undefined;
+      message?: string | null | undefined;
+      error?: string | null | undefined;
+      errorDescription?: string | null | undefined;
+    },
+  ): DatabaseResult<BankConnection | null>;
+  failBasiqBankCallback(input: {
+    stateToken: string;
+    cookieState?: string | null | undefined;
+    code?: string | null | undefined;
+    title?: string | null | undefined;
+    detail?: string | null | undefined;
+    message?: string | null | undefined;
+    error?: string | null | undefined;
+    errorDescription?: string | null | undefined;
+  }): DatabaseResult<BankConnection | null>;
 }
 
 function nowIso(): string {
@@ -7281,6 +7307,38 @@ export async function createPostgresDatabase(
     },
     async disconnectBankFeed(businessId, confirmed) {
       return disconnectBankFeedService(bankStore, { businessId, confirmed });
+    },
+    async reconcileBasiqHostedFailures(businessId) {
+      return reconcileBasiqHostedJobFailures(bankStore, businessId);
+    },
+    async reportBasiqHostedFailure(businessId, input) {
+      return applyBasiqHostedFailure(bankStore, businessId, input);
+    },
+    async failBasiqBankCallback(input) {
+      if (!input.cookieState || input.cookieState !== input.stateToken) {
+        throw new Error('BANK_CONNECT_STATE_MISMATCH');
+      }
+      const stateRow = await bankStore.consumeConnectState(input.stateToken);
+      if (!stateRow) {
+        throw new Error('BANK_CONNECT_STATE_INVALID');
+      }
+      const client = storage.getStore();
+      if (!client) throw new Error('DATABASE_TRANSACTION_REQUIRED');
+      const schemaName = assertWorkspaceSchemaName(stateRow.workspaceSchema);
+      await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
+      enterWorkspaceContext({
+        authUserId: 'basiq-callback',
+        workspaceId: stateRow.workspaceId,
+        schemaName,
+      });
+      return applyBasiqHostedFailure(bankStore, stateRow.businessId, {
+        code: input.code,
+        title: input.title,
+        detail: input.detail,
+        message: input.message,
+        error: input.error,
+        errorDescription: input.errorDescription,
+      });
     },
   };
   const proxy = new Proxy(implementation, {

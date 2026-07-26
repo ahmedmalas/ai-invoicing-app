@@ -76,6 +76,10 @@ import {
   disconnectBankFeed as disconnectBankFeedService,
   startBasiqConnect,
 } from '../domain/banking/connection-service.js';
+import {
+  applyBasiqHostedFailure,
+  reconcileBasiqHostedJobFailures,
+} from '../domain/banking/hosted-failure.js';
 import { syncBankConnection } from '../domain/banking/sync-service.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
@@ -1060,6 +1064,28 @@ export interface AppDatabase {
   }>;
   refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
   disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
+  reconcileBasiqHostedFailures(businessId: string): DatabaseResult<BankConnection | null>;
+  reportBasiqHostedFailure(
+    businessId: string,
+    input: {
+      code?: string | null | undefined;
+      title?: string | null | undefined;
+      detail?: string | null | undefined;
+      message?: string | null | undefined;
+      error?: string | null | undefined;
+      errorDescription?: string | null | undefined;
+    },
+  ): DatabaseResult<BankConnection | null>;
+  failBasiqBankCallback(input: {
+    stateToken: string;
+    cookieState?: string | null | undefined;
+    code?: string | null | undefined;
+    title?: string | null | undefined;
+    detail?: string | null | undefined;
+    message?: string | null | undefined;
+    error?: string | null | undefined;
+    errorDescription?: string | null | undefined;
+  }): DatabaseResult<BankConnection | null>;
 }
 
 export interface DatabaseInitOptions {
@@ -6688,6 +6714,31 @@ export function createDatabase(
         businessId,
         confirmed,
       }) as unknown as BankConnection;
+    },
+    reconcileBasiqHostedFailures(businessId) {
+      return reconcileBasiqHostedJobFailures(bankStore, businessId) as unknown as BankConnection | null;
+    },
+    reportBasiqHostedFailure(businessId, input) {
+      return applyBasiqHostedFailure(bankStore, businessId, input) as unknown as BankConnection | null;
+    },
+    failBasiqBankCallback(input) {
+      return (async () => {
+        if (!input.cookieState || input.cookieState !== input.stateToken) {
+          throw new Error('BANK_CONNECT_STATE_MISMATCH');
+        }
+        const stateRow = await bankStore.consumeConnectState(input.stateToken);
+        if (!stateRow) {
+          throw new Error('BANK_CONNECT_STATE_INVALID');
+        }
+        return applyBasiqHostedFailure(bankStore, stateRow.businessId, {
+          code: input.code,
+          title: input.title,
+          detail: input.detail,
+          message: input.message,
+          error: input.error,
+          errorDescription: input.errorDescription,
+        });
+      })() as unknown as BankConnection | null;
     },
   };
 }

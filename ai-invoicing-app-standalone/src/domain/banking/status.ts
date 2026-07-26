@@ -1,3 +1,4 @@
+import { BASIQ_CONNECTIONS_NOT_ENABLED_CODE } from './basiq-errors.js';
 import type { BankConnection, BankConnectionStatus } from './types.js';
 
 const CONSENT_EXPIRING_MS = 7 * 24 * 60 * 60 * 1000;
@@ -59,7 +60,13 @@ export function deriveBankConnectionStatus(
   return connection.status;
 }
 
-export function nextActionForStatus(status: BankConnectionStatus): string {
+export function nextActionForStatus(
+  status: BankConnectionStatus,
+  options?: { errorCode?: string | null },
+): string {
+  if (options?.errorCode === BASIQ_CONNECTIONS_NOT_ENABLED_CODE) {
+    return 'In the Basiq Dashboard for this same application/API key: enable Connections/Data, enable sandbox connections, and set Hooli OB (AU00000) method to open-banking. If those controls are unavailable, contact Basiq Support with this error. Do not create another API key unless Basiq confirms the current application cannot be enabled. Then reconnect.';
+  }
   switch (status) {
     case 'not_connected':
       return 'Open Settings → Bank Feeds, confirm your Australian mobile for AuthLink SMS verification, then connect via Basiq AuthLink.';
