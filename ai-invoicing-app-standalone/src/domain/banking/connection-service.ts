@@ -54,16 +54,19 @@ function pickActiveConsent(consents: BasiqConsentSummary[]): BasiqConsentSummary
 
 /**
  * Decide how to launch Basiq hosted UI.
- * Existing active consent + AuthLink often lands on consent.basiq.io/home manage view
- * ("You are sharing data…", Stop sharing) with no Continue — use Consent UI action=connect.
+ * Re-opening AuthLink for an existing Basiq user often lands on consent.basiq.io/home
+ * manage view ("You are sharing data…", Stop sharing) with no Continue.
+ * Prefer Consent UI action=connect whenever the user already exists, unless we are
+ * forcing a fresh AuthLink consent capture (freshConsent / changeMobile).
  */
 export function resolveBasiqLaunchMode(input: {
   activeConsent: BasiqConsentSummary | null;
+  hasExistingProviderUser?: boolean;
   changeMobile?: boolean;
   freshConsent?: boolean;
 }): 'consent_ui_connect' | 'auth_link' {
   if (input.freshConsent || input.changeMobile) return 'auth_link';
-  if (input.activeConsent) return 'consent_ui_connect';
+  if (input.activeConsent || input.hasExistingProviderUser) return 'consent_ui_connect';
   return 'auth_link';
 }
 
@@ -226,8 +229,12 @@ export async function startBasiqConnect(
     }
   }
 
+  const hadExistingProviderUser = Boolean(
+    existing?.providerUserId && existing.status !== 'disconnected',
+  );
   const launchMode = resolveBasiqLaunchMode({
     activeConsent,
+    hasExistingProviderUser: hadExistingProviderUser,
     changeMobile: Boolean(input.changeMobile),
     freshConsent: Boolean(input.freshConsent),
   });
@@ -288,8 +295,8 @@ export async function startBasiqConnect(
     deliveryMode = 'consent_ui_connect';
     expiresAt = new Date(now.getTime() + 55 * 60 * 1000).toISOString();
     message = sandbox
-      ? `Existing Basiq consent found. Opening Consent UI (action=connect) for Hooli sandbox — not the manage/Stop sharing page.`
-      : `Existing Basiq consent found. Opening Consent UI (action=connect) to add a bank connection.`;
+      ? `Opening Basiq Consent UI with action=connect for Hooli sandbox (not the manage/Stop sharing page). Ensure Dashboard Redirect URL is ${'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback'}.`
+      : `Opening Basiq Consent UI with action=connect to add a bank connection. Ensure Dashboard Redirect URL is ${'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback'}.`;
     logSafeMobileDiag('basiq.consent_ui.connect_launched', {
       providerUserId,
       consentId: activeConsent?.id || null,

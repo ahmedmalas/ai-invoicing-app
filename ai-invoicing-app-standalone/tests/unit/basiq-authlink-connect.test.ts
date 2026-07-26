@@ -249,10 +249,81 @@ describe('Basiq AuthLink connect flow', () => {
     expect(started.message.toLowerCase()).toContain('not the manage');
   });
 
-  it('resolveBasiqLaunchMode prefers consent_ui_connect for active consent', () => {
+  it('uses Consent UI action=connect for existing provider user even without listed consent', async () => {
+    process.env.BASIQ_API_KEY = 'test-key';
+    process.env.BASIQ_ENVIRONMENT = 'sandbox';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const href = String(url);
+        if (href.endsWith('/token')) {
+          return new Response(
+            JSON.stringify({ access_token: 'client-tok-2', expires_in: 3600 }),
+            { status: 200 },
+          );
+        }
+        if (href.endsWith('/users/basiq-user-1') && (!init?.method || init.method === 'GET')) {
+          return new Response(
+            JSON.stringify({ id: 'basiq-user-1', mobile: '+61412345678' }),
+            { status: 200 },
+          );
+        }
+        if (href.endsWith('/users/basiq-user-1') && init?.method === 'POST') {
+          return new Response(
+            JSON.stringify({ id: 'basiq-user-1', mobile: '+61412345678' }),
+            { status: 200 },
+          );
+        }
+        if (href.includes('/consents')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        if (href.includes('/auth_link')) {
+          throw new Error('AuthLink must not be used for existing provider user reconnect');
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const started = await startBasiqConnect(
+      mockStore({
+        providerUserId: 'basiq-user-1',
+        status: 'error',
+        authLinkMobile: '+61412345678',
+      }),
+      {
+        businessId: '11111111-1111-4111-8111-111111111111',
+        workspaceId: '11111111-1111-4111-8111-111111111111',
+        workspaceSchema: 'ws_test',
+        email: 'owner@example.com',
+        mobile: '+61412345678',
+      },
+    );
+
+    expect(started.launchMode).toBe('consent_ui_connect');
+    expect(started.deliveryMode).toBe('consent_ui_connect');
+    expect(started.activeConsentId).toBeNull();
+    const launched = new URL(started.authLinkUrl);
+    expect(launched.origin).toBe('https://consent.basiq.io');
+    expect(launched.pathname).toBe('/home');
+    expect(launched.searchParams.get('action')).toBe('connect');
+    expect(launched.searchParams.get('state')).toBeTruthy();
+    expect(launched.searchParams.get('institutionId')).toBe('AU00000');
+    expect(launched.searchParams.get('token')).toBe('client-tok-2');
+    expect(started.redirectUrlRequired).toBe(
+      'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback',
+    );
+  });
+
+  it('resolveBasiqLaunchMode prefers consent_ui_connect for existing users/consent', () => {
     expect(
       resolveBasiqLaunchMode({
         activeConsent: { id: 'c1', status: 'active', expiresAt: null, active: true },
+      }),
+    ).toBe('consent_ui_connect');
+    expect(
+      resolveBasiqLaunchMode({
+        activeConsent: null,
+        hasExistingProviderUser: true,
       }),
     ).toBe('consent_ui_connect');
     expect(
