@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { deriveBankConnectionStatus, nextActionForStatus } from '../domain/banking/status.js';
+import {
+  isBasiqPlaceholderMobile,
+  maskAustralianMobileE164,
+} from '../domain/banking/phone.js';
 import type {
   BankAccount,
   BankConnection,
@@ -54,6 +58,7 @@ function mapConnection(row: Record<string, unknown>): BankConnection {
     lastSuccessfulSyncAt: (row.last_successful_sync_at as string | null) ?? null,
     errorCode: (row.error_code as string | null) ?? null,
     errorMessage: (row.error_message as string | null) ?? null,
+    authLinkMobile: (row.auth_link_mobile as string | null) ?? null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -143,6 +148,7 @@ export function createBankStore(
       lastSuccessfulSyncAt?: string | null | undefined;
       errorCode?: string | null | undefined;
       errorMessage?: string | null | undefined;
+      authLinkMobile?: string | null | undefined;
     }): Promise<BankConnection> {
       const now = nowIso();
       const existing = await this.getConnectionByBusiness(input.businessId);
@@ -163,6 +169,7 @@ export function createBankStore(
               last_successful_sync_at = COALESCE(?, last_successful_sync_at),
               error_code = ?,
               error_message = ?,
+              auth_link_mobile = COALESCE(?, auth_link_mobile),
               updated_at = ?
              WHERE id = ? AND business_id = ?`,
           )
@@ -179,6 +186,7 @@ export function createBankStore(
             input.lastSuccessfulSyncAt ?? null,
             input.errorCode ?? null,
             input.errorMessage ?? null,
+            input.authLinkMobile ?? null,
             now,
             id,
             input.businessId,
@@ -190,8 +198,8 @@ export function createBankStore(
               id, business_id, provider, provider_user_id, provider_connection_id, status,
               consent_id, consent_status, consent_started_at, consent_expires_at,
               last_sync_attempt_at, last_successful_sync_at, error_code, error_message,
-              created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              auth_link_mobile, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             id,
@@ -208,6 +216,7 @@ export function createBankStore(
             input.lastSuccessfulSyncAt ?? null,
             input.errorCode ?? null,
             input.errorMessage ?? null,
+            input.authLinkMobile ?? null,
             now,
             now,
           );
@@ -231,6 +240,7 @@ export function createBankStore(
         lastSuccessfulSyncAt: string | null;
         errorCode: string | null;
         errorMessage: string | null;
+        authLinkMobile: string | null;
       }>,
     ): Promise<BankConnection | null> {
       const existing = await this.getConnectionById(businessId, connectionId);
@@ -249,6 +259,7 @@ export function createBankStore(
             last_successful_sync_at = ?,
             error_code = ?,
             error_message = ?,
+            auth_link_mobile = ?,
             updated_at = ?
            WHERE id = ? AND business_id = ?`,
         )
@@ -273,6 +284,7 @@ export function createBankStore(
             : existing.lastSuccessfulSyncAt,
           fields.errorCode !== undefined ? fields.errorCode : existing.errorCode,
           fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+          fields.authLinkMobile !== undefined ? fields.authLinkMobile : existing.authLinkMobile,
           now,
           connectionId,
           businessId,
@@ -592,10 +604,16 @@ export function createBankStore(
       const sandbox = isBasiqSandboxEnvironment();
       const connection = await this.getConnectionByBusiness(businessId);
       const accounts = connection ? await this.listAccounts(businessId, true) : [];
+      // Never surface placeholder mobiles as a confirmed destination.
+      const authLinkMobileMasked =
+        connection?.authLinkMobile && !isBasiqPlaceholderMobile(connection.authLinkMobile)
+          ? maskAustralianMobileE164(connection.authLinkMobile)
+          : null;
       const authLinkMeta = {
         environment,
         sandbox,
         authLinkDelivery: 'open_auth_link' as const,
+        authLinkMobileMasked,
       };
       if (!configured && !connection) {
         return {
@@ -639,8 +657,8 @@ export function createBankStore(
           consentExpiresAt: null,
           errors: [],
           warning: sandbox
-            ? 'Sandbox mode: Connect opens the Basiq AuthLink in your browser. Basiq does not text you the AuthLink URL.'
-            : null,
+            ? 'Sandbox mode: Connect opens Basiq AuthLink in your browser. Confirm your Australian mobile first — AuthLink SMS verification uses that number (not a placeholder).'
+            : 'Confirm your Australian mobile before connecting — AuthLink SMS verification uses that number.',
           nextAction: nextActionForStatus('not_connected'),
           distinction: {
             featureAbsent: false,

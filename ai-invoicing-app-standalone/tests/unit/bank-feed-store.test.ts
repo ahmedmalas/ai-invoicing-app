@@ -13,7 +13,7 @@ function memoryBankDb() {
       provider_user_id TEXT NOT NULL, provider_connection_id TEXT, status TEXT NOT NULL,
       consent_id TEXT, consent_status TEXT, consent_started_at TEXT, consent_expires_at TEXT,
       last_sync_attempt_at TEXT, last_successful_sync_at TEXT, error_code TEXT, error_message TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      auth_link_mobile TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE TABLE bank_accounts (
       id TEXT PRIMARY KEY, business_id TEXT NOT NULL, bank_connection_id TEXT NOT NULL,

@@ -1033,6 +1033,8 @@ export interface AppDatabase {
     workspaceSchema: string;
     email: string;
     mobile?: string | null;
+    storedMobile?: string | null;
+    changeMobile?: boolean;
     firstName?: string | null;
     lastName?: string | null;
   }): DatabaseResult<{
@@ -1043,7 +1045,8 @@ export interface AppDatabase {
     environment: 'sandbox' | 'production';
     deliveryMode: 'open_auth_link';
     sandbox: boolean;
-    authLinkMobile: string | null;
+    authLinkMobile: string;
+    authLinkMobileMasked: string;
     message: string;
   }>;
   completeBasiqBankCallback(input: {
@@ -6654,7 +6657,8 @@ export function createDatabase(
         environment: 'sandbox' | 'production';
         deliveryMode: 'open_auth_link';
         sandbox: boolean;
-        authLinkMobile: string | null;
+        authLinkMobile: string;
+        authLinkMobileMasked: string;
         message: string;
       };
     },

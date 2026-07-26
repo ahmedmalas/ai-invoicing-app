@@ -138,6 +138,8 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         mobile: z.string().min(8).max(32).optional(),
         /** Explicit resend of AuthLink (same connect path, clearer UX). */
         resend: z.boolean().optional(),
+        /** Force a new mobile (invalidates prior AuthLink and updates Basiq user). */
+        changeMobile: z.boolean().optional(),
       })
       .parse(request.body ?? {});
 
@@ -145,7 +147,11 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
     const email =
       (profile?.email && String(profile.email).trim()) ||
       `${businessId.replaceAll('-', '').slice(0, 12)}@users.aleya.app`;
-    const mobile = body.mobile?.trim() || profile?.phone?.trim() || null;
+    // Explicit body mobile wins. Otherwise profile phone seeds first connect;
+    // reconnect/resend reuse the last confirmed AuthLink mobile inside the service.
+    const mobile =
+      body.mobile?.trim() ||
+      (body.changeMobile ? null : body.resend ? null : profile?.phone?.trim() || null);
 
     try {
       const started = await app.db.startBasiqBankConnect({
@@ -154,6 +160,7 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         workspaceSchema: workspace.schemaName,
         email,
         mobile,
+        changeMobile: Boolean(body.changeMobile),
         firstName: profile?.companyName?.split(/\s+/)[0] || 'Aleya',
         lastName: 'Business',
       });
@@ -170,12 +177,13 @@ export const bankingRoutes: FastifyPluginAsync = async (app) => {
         environment: started.environment,
         sandbox: started.sandbox,
         deliveryMode: started.deliveryMode,
-        message: body.resend
-          ? started.sandbox
-            ? 'Sandbox AuthLink regenerated. Opening Basiq Connect again (no SMS is sent).'
-            : started.message
-          : started.message,
-        // Never include tokens or secrets. Do not claim AuthLink was SMS-delivered.
+        authLinkMobileMasked: started.authLinkMobileMasked,
+        message: body.changeMobile
+          ? `Mobile updated. New AuthLink created — SMS verification will go to ${started.authLinkMobileMasked}.`
+          : body.resend
+            ? `AuthLink regenerated. SMS verification will go to ${started.authLinkMobileMasked}.`
+            : started.message,
+        // Never include the full mobile, tokens, or secrets.
       });
     } catch (error) {
       if (error instanceof BasiqClientError) {

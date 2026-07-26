@@ -72,8 +72,8 @@ export function createBankingUi({ api, shell }) {
     const intro =
       options.intro ||
       (sandbox
-        ? 'Sandbox test connection: Connect opens the Basiq AuthLink in your browser (Hooli test bank). No SMS is sent.'
-        : 'Connect a bank via Basiq AuthLink in your browser. Manage consent and sync here. Full account numbers are never shown.');
+        ? 'Sandbox test connection: Confirm your Australian mobile, then open Basiq AuthLink (Hooli). AuthLink SMS verification uses that mobile — Aleya never uses a placeholder ending in 000.'
+        : 'Connect a bank via Basiq AuthLink. Confirm the mobile that will receive the AuthLink SMS verification code. Full account numbers are never shown.');
     const connectLabel = sandbox
       ? 'Connect sandbox test bank'
       : 'Connect bank account';
@@ -81,12 +81,18 @@ export function createBankingUi({ api, shell }) {
       status.status === 'connecting' ||
       status.status === 'reauth_required' ||
       status.status === 'error';
+    const showChangeMobile =
+      Boolean(status.authLinkMobileMasked) ||
+      status.status === 'connecting' ||
+      status.status === 'reauth_required' ||
+      status.status === 'error';
+    const maskedMobile = status.authLinkMobileMasked || null;
     return [
       '<section class="banking-panel" data-banking-status data-bank-feeds-panel>',
       '<header class="banking-panel-head">',
       '<h2>' + escapeHtml(title) + '</h2>',
       sandbox
-        ? '<p class="banking-warning" role="status">Sandbox test connection — AuthLink opens in the browser; Basiq does not text you the AuthLink URL.</p>'
+        ? '<p class="banking-warning" role="status">Sandbox — AuthLink opens in the browser. Basiq will SMS a verification code to your confirmed mobile (not a placeholder).</p>'
         : '',
       '<p class="muted">' + escapeHtml(intro) + '</p>',
       '</header>',
@@ -98,6 +104,9 @@ export function createBankingUi({ api, shell }) {
         '</dd></div>',
       '<div><dt>Environment</dt><dd>' +
         escapeHtml(sandbox ? 'Sandbox' : status.environment || 'Production') +
+        '</dd></div>',
+      '<div><dt>AuthLink SMS destination</dt><dd data-authlink-mobile-masked>' +
+        escapeHtml(maskedMobile || 'Not set — confirm before connecting') +
         '</dd></div>',
       '<div><dt>Institution</dt><dd>' +
         escapeHtml(status.institution || primary?.institutionName || '—') +
@@ -142,6 +151,9 @@ export function createBankingUi({ api, shell }) {
         : '<button type="button" class="button secondary" data-bank-reconnect>Reconnect</button>',
       showResend
         ? '<button type="button" class="button secondary" data-bank-resend>Resend AuthLink</button>'
+        : '',
+      showChangeMobile
+        ? '<button type="button" class="button secondary" data-bank-change-mobile>Change mobile number</button>'
         : '',
       status.connected ||
       status.status === 'connecting' ||
@@ -264,17 +276,18 @@ export function createBankingUi({ api, shell }) {
   }
 
   function connectFlashHtml(result) {
-    const sandbox = Boolean(result?.sandbox) || result?.environment === 'sandbox';
-    const message =
-      result?.message ||
-      (sandbox
-        ? 'Sandbox AuthLink created. Opening the test bank connection (no SMS is sent).'
-        : 'AuthLink created. Opening Basiq Connect.');
+    const message = result?.message || 'AuthLink created. Opening Basiq Connect.';
     const url = result?.authLinkUrl || '';
+    const masked = result?.authLinkMobileMasked || '';
     return (
       '<p><strong>' +
       escapeHtml(message) +
       '</strong></p>' +
+      (masked
+        ? '<p data-authlink-mobile-masked>SMS verification destination: <strong>' +
+          escapeHtml(masked) +
+          '</strong></p>'
+        : '') +
       (url
         ? '<p>AuthLink: <a href="' +
           escapeHtml(url) +
@@ -285,11 +298,32 @@ export function createBankingUi({ api, shell }) {
     );
   }
 
+  function promptAustralianMobile(defaultValue) {
+    const entered = window.prompt(
+      'Australian mobile for Basiq AuthLink SMS verification (E.164, e.g. +614XXXXXXXX). This is where Basiq sends the code after you open AuthLink — not used to text you the AuthLink URL.',
+      defaultValue || '+614',
+    );
+    if (entered === null) return null;
+    const trimmed = entered.trim();
+    if (!trimmed) {
+      window.alert('A valid Australian mobile (+614XXXXXXXX) is required.');
+      return null;
+    }
+    return trimmed;
+  }
+
   async function connectBank(options = {}) {
-    const { isReconnect = false, resend = false, onDone, onFlash } = options;
+    const {
+      isReconnect = false,
+      resend = false,
+      changeMobile = false,
+      onDone,
+      onFlash,
+    } = options;
     if (
       isReconnect &&
       !resend &&
+      !changeMobile &&
       !window.confirm(
         'Reconnect may replace the existing open-banking consent. Continue?',
       )
@@ -303,18 +337,26 @@ export function createBankingUi({ api, shell }) {
     } catch {
       status = null;
     }
-    const sandbox = isSandboxStatus(status);
-    const body = { resend: Boolean(resend) };
+    const body = {
+      resend: Boolean(resend),
+      changeMobile: Boolean(changeMobile),
+    };
 
-    // Production only: collect AU mobile for hosted AuthLink 2FA after open.
-    // Basiq does not SMS-deliver the AuthLink URL itself.
-    if (!sandbox) {
-      const entered = window.prompt(
-        'Australian mobile for Basiq AuthLink two-factor authentication (E.164, e.g. +614XXXXXXXX). Used after you open AuthLink — not to SMS you the AuthLink URL. Leave blank to use the business profile phone.',
-        '+614',
-      );
+    // Always collect/confirm AU mobile for AuthLink hosted 2FA (sandbox + production).
+    // Never silently reuse Basiq placeholder mobiles ending in 000.
+    if (changeMobile || !status?.authLinkMobileMasked) {
+      const entered = promptAustralianMobile('+614');
       if (entered === null) return;
-      if (entered.trim()) body.mobile = entered.trim();
+      body.mobile = entered;
+      body.changeMobile = true;
+    } else if (
+      !window.confirm(
+        'SMS verification code will be sent to ' +
+          status.authLinkMobileMasked +
+          '. Continue to open AuthLink?',
+      )
+    ) {
+      return;
     }
 
     try {
@@ -324,6 +366,19 @@ export function createBankingUi({ api, shell }) {
       });
       if (!result?.authLinkUrl) {
         window.alert(result?.message || 'Unable to start bank connection.');
+        return;
+      }
+      const masked = result.authLinkMobileMasked || status?.authLinkMobileMasked || '';
+      if (
+        masked &&
+        !window.confirm(
+          'AuthLink ready. Basiq will send the SMS code to ' +
+            masked +
+            '. Open AuthLink now?',
+        )
+      ) {
+        if (typeof onFlash === 'function') onFlash(connectFlashHtml(result));
+        if (typeof onDone === 'function') await onDone();
         return;
       }
       if (typeof onFlash === 'function') onFlash(connectFlashHtml(result));
@@ -377,6 +432,15 @@ export function createBankingUi({ api, shell }) {
         onFlash: setFlash,
       }),
     );
+    root.querySelector('[data-bank-change-mobile]')?.addEventListener('click', () =>
+      void connectBank({
+        isReconnect: false,
+        resend: false,
+        changeMobile: true,
+        onDone: reload,
+        onFlash: setFlash,
+      }),
+    );
     root.querySelector('[data-bank-refresh]')?.addEventListener('click', () =>
       void refreshBank(reload),
     );
@@ -408,8 +472,8 @@ export function createBankingUi({ api, shell }) {
           renderConnectionPanel(status, accounts, {
             title: 'Bank Feeds',
             intro: sandbox
-              ? 'Sandbox test connection for this Aleya business. Connect opens the Basiq AuthLink (no SMS). Use Banking to browse imported transactions after consent.'
-              : 'Connect and manage your Basiq bank feed for this Aleya business. AuthLink opens in the browser. Use Banking in the sidebar to search imported transactions.',
+              ? 'Sandbox test connection for this Aleya business. Confirm your Australian mobile for AuthLink SMS verification, then open AuthLink (Hooli). Use Banking to browse imported transactions after consent.'
+              : 'Connect and manage your Basiq bank feed for this Aleya business. Confirm the mobile for AuthLink SMS verification, then open AuthLink. Use Banking to search imported transactions.',
             showTransactionsLink: true,
             connectFlash,
           }) +

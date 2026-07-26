@@ -399,19 +399,62 @@ export async function createBasiqUser(input: {
   mobile?: string | null | undefined;
   firstName?: string | null | undefined;
   lastName?: string | null | undefined;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; mobile: string | null }> {
   const body: Record<string, string> = { email: input.email };
   if (input.mobile) body.mobile = input.mobile;
   if (input.firstName) body.firstName = input.firstName;
   if (input.lastName) body.lastName = input.lastName;
-  const created = await basiqRequest<{ id: string }>('POST', '/users', { body });
-  return { id: created.id };
+  const created = await basiqRequest<{ id: string; mobile?: string }>('POST', '/users', { body });
+  return { id: created.id, mobile: created.mobile || input.mobile || null };
+}
+
+/** Fetch a Basiq user (server-only). Callers must not log the full mobile. */
+export async function getBasiqUser(userId: string): Promise<{
+  id: string;
+  email: string | null;
+  mobile: string | null;
+}> {
+  const user = await basiqRequest<{ id?: string; email?: string; mobile?: string }>(
+    'GET',
+    `/users/${encodeURIComponent(userId)}`,
+  );
+  return {
+    id: user.id || userId,
+    email: user.email || null,
+    mobile: user.mobile || null,
+  };
+}
+
+/**
+ * Update Basiq user fields (POST /users/{id}). Used to replace a stale/placeholder
+ * mobile before generating AuthLink so hosted 2FA SMS goes to the confirmed number.
+ */
+export async function updateBasiqUser(
+  userId: string,
+  input: { mobile?: string | null; email?: string | null },
+): Promise<{ id: string; mobile: string | null }> {
+  const body: Record<string, string> = {};
+  if (input.mobile?.trim()) body.mobile = input.mobile.trim();
+  if (input.email?.trim()) body.email = input.email.trim();
+  if (!Object.keys(body).length) {
+    throw new BasiqClientError('invalid_response', 'Basiq user update requires at least one field');
+  }
+  const updated = await basiqRequest<{ id?: string; mobile?: string }>(
+    'POST',
+    `/users/${encodeURIComponent(userId)}`,
+    { body },
+  );
+  return {
+    id: updated.id || userId,
+    mobile: updated.mobile || input.mobile || null,
+  };
 }
 
 /**
  * Create a Basiq AuthLink. The returned public URL must be opened in the browser.
- * Optional `mobile` is used for hosted AuthLink 2FA after open — Basiq does not
- * SMS-deliver the AuthLink URL itself via this endpoint.
+ * Optional `mobile` takes preference over the User object mobile for hosted 2FA SMS
+ * (official Basiq behaviour). Creating a new AuthLink invalidates prior links for the user.
+ * Basiq does not SMS-deliver the AuthLink URL itself via this endpoint.
  */
 export async function createBasiqAuthLink(
   userId: string,

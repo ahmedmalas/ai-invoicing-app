@@ -706,7 +706,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 46;
+export const DATABASE_SCHEMA_VERSION = 47;
 /** Advisory lock key for controlled schema migrations (must not run on every cold start). */
 export const POSTGRES_SCHEMA_BOOT_LOCK_KEY = 1_905_052;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
@@ -1024,6 +1024,8 @@ export interface AppDatabase {
     workspaceSchema: string;
     email: string;
     mobile?: string | null;
+    storedMobile?: string | null;
+    changeMobile?: boolean;
     firstName?: string | null;
     lastName?: string | null;
   }): DatabaseResult<{
@@ -1034,7 +1036,8 @@ export interface AppDatabase {
     environment: 'sandbox' | 'production';
     deliveryMode: 'open_auth_link';
     sandbox: boolean;
-    authLinkMobile: string | null;
+    authLinkMobile: string;
+    authLinkMobileMasked: string;
     message: string;
   }>;
   completeBasiqBankCallback(input: {
@@ -1350,6 +1353,7 @@ CREATE TABLE IF NOT EXISTS bank_connections (
   last_successful_sync_at TEXT,
   error_code TEXT,
   error_message TEXT,
+  auth_link_mobile TEXT,
   created_at TEXT,
   updated_at TEXT
 );
@@ -1366,6 +1370,7 @@ ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_sync_attempt_at TEXT;
 ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS last_successful_sync_at TEXT;
 ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_code TEXT;
 ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS auth_link_mobile TEXT;
 ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS created_at TEXT;
 ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS updated_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_bank_connections_business ON bank_connections(business_id);

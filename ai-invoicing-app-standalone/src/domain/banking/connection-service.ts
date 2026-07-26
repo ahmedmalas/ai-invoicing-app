@@ -7,11 +7,15 @@ import {
   createBasiqAuthLink,
   createBasiqUser,
   deleteBasiqConnection,
+  getBasiqUser,
   isBasiqSandboxEnvironment,
+  updateBasiqUser,
 } from '../../services/basiq-client.js';
 import {
-  BASIQ_SANDBOX_PLACEHOLDER_MOBILE,
   InvalidAustralianMobileError,
+  isBasiqPlaceholderMobile,
+  maskAustralianMobileE164,
+  mobileEndingDigits,
   normalizeAustralianMobileE164,
 } from './phone.js';
 import { syncBankConnection } from './sync-service.js';
@@ -26,6 +30,16 @@ export function createConnectStateToken(): string {
   return randomBytes(24).toString('base64url');
 }
 
+function logSafeMobileDiag(event: string, payload: Record<string, unknown>): void {
+  console.info(
+    JSON.stringify({
+      service: 'basiq-connect',
+      event,
+      ...payload,
+    }),
+  );
+}
+
 export async function startBasiqConnect(
   store: BankStore,
   input: {
@@ -34,8 +48,12 @@ export async function startBasiqConnect(
     workspaceSchema: string;
     email: string;
     mobile?: string | null;
+    /** Previously confirmed AuthLink mobile (E.164) from Aleya storage. */
+    storedMobile?: string | null;
     firstName?: string | null;
     lastName?: string | null;
+    /** Force collecting/using a newly supplied mobile (Change mobile). */
+    changeMobile?: boolean;
   },
 ): Promise<{
   authLinkUrl: string;
@@ -45,8 +63,10 @@ export async function startBasiqConnect(
   environment: 'sandbox' | 'production';
   deliveryMode: AuthLinkDeliveryMode;
   sandbox: boolean;
-  /** Present only in production when a real AU mobile was supplied for hosted 2FA. */
-  authLinkMobile: string | null;
+  /** Full E.164 for server persistence only — never send to browser clients. */
+  authLinkMobile: string;
+  /** Safe for UI / API responses. */
+  authLinkMobileMasked: string;
   message: string;
 }> {
   if (!basiqConfigured()) {
@@ -57,23 +77,27 @@ export async function startBasiqConnect(
   }
 
   const sandbox = isBasiqSandboxEnvironment();
-  let mobileForApi: string;
-  if (sandbox) {
-    // Sandbox does not SMS-deliver AuthLinks. Basiq still expects a mobile on
-    // the user/auth_link for API validity; use a fixed sandbox placeholder and
-    // open the returned AuthLink URL in the browser (Hooli test bank).
-    mobileForApi = BASIQ_SANDBOX_PLACEHOLDER_MOBILE;
-  } else {
-    const normalized = normalizeAustralianMobileE164(input.mobile);
-    if (!normalized) {
-      throw new InvalidAustralianMobileError(
-        'A valid Australian mobile (+614XXXXXXXX) is required for Basiq AuthLink 2FA in production.',
-      );
-    }
-    mobileForApi = normalized;
+  const existing = await store.getConnectionByBusiness(input.businessId);
+  // AuthLink hosted 2FA always needs a real AU mobile (sandbox and production).
+  // Basiq docs: auth_link.mobile overrides the User mobile for SMS 2FA.
+  // Reconnect/resend prefer: new input → previously confirmed stored mobile → (caller may pass profile phone as input.mobile).
+  const stored =
+    input.storedMobile ||
+    (existing?.authLinkMobile && !isBasiqPlaceholderMobile(existing.authLinkMobile)
+      ? existing.authLinkMobile
+      : null);
+  const candidate = input.changeMobile ? input.mobile : input.mobile || stored || null;
+  const mobileForApi = normalizeAustralianMobileE164(candidate);
+  if (!mobileForApi) {
+    throw new InvalidAustralianMobileError(
+      'A valid Australian mobile (+614XXXXXXXX) is required for Basiq AuthLink SMS verification.',
+    );
+  }
+  const mobileMasked = maskAustralianMobileE164(mobileForApi);
+  if (!mobileMasked) {
+    throw new InvalidAustralianMobileError();
   }
 
-  const existing = await store.getConnectionByBusiness(input.businessId);
   let providerUserId = existing?.providerUserId;
   if (!providerUserId || existing?.status === 'disconnected') {
     const userInput: {
@@ -89,6 +113,38 @@ export async function startBasiqConnect(
     if (input.lastName) userInput.lastName = input.lastName;
     const created = await createBasiqUser(userInput);
     providerUserId = created.id;
+    logSafeMobileDiag('basiq.user.created', {
+      providerUserId,
+      mobileEnding: mobileEndingDigits(mobileForApi),
+      mobileMasked,
+      sandbox,
+    });
+  } else {
+    // Inspect retained Basiq user mobile (masked only) and replace if stale/placeholder.
+    try {
+      const remote = await getBasiqUser(providerUserId);
+      const remoteEnding = mobileEndingDigits(remote.mobile);
+      const remotePlaceholder = isBasiqPlaceholderMobile(remote.mobile);
+      logSafeMobileDiag('basiq.user.inspected', {
+        providerUserId,
+        remoteMobileEnding: remoteEnding,
+        remoteIsPlaceholder: remotePlaceholder,
+        willOverrideWithEnding: mobileEndingDigits(mobileForApi),
+        sandbox,
+      });
+    } catch (error) {
+      logSafeMobileDiag('basiq.user.inspect_failed', {
+        providerUserId,
+        category: error instanceof BasiqClientError ? error.category : 'provider_error',
+      });
+    }
+    await updateBasiqUser(providerUserId, { mobile: mobileForApi });
+    logSafeMobileDiag('basiq.user.mobile_updated', {
+      providerUserId,
+      mobileEnding: mobileEndingDigits(mobileForApi),
+      mobileMasked,
+      sandbox,
+    });
   }
 
   const upsertInput: Parameters<BankStore['upsertConnection']>[0] = {
@@ -100,13 +156,28 @@ export async function startBasiqConnect(
     consentStartedAt: new Date().toISOString(),
     errorCode: null,
     errorMessage: null,
+    authLinkMobile: mobileForApi,
   };
   if (existing && existing.status !== 'disconnected') {
     upsertInput.id = existing.id;
   }
   const connection = await store.upsertConnection(upsertInput);
 
+  // New AuthLink invalidates prior links; mobile overrides User mobile for 2FA SMS.
   const authLink = await createBasiqAuthLink(providerUserId, { mobile: mobileForApi });
+  const authLinkMobile =
+    normalizeAustralianMobileE164(authLink.mobile) || mobileForApi;
+  const authLinkMobileMasked =
+    maskAustralianMobileE164(authLinkMobile) || mobileMasked;
+
+  logSafeMobileDiag('basiq.auth_link.created', {
+    providerUserId,
+    mobileEnding: mobileEndingDigits(authLinkMobile),
+    mobileMasked: authLinkMobileMasked,
+    sandbox,
+    expiresAt: authLink.expiresAt,
+  });
+
   const stateToken = createConnectStateToken();
   const now = new Date();
   await store.saveConnectState({
@@ -120,6 +191,11 @@ export async function startBasiqConnect(
     createdAt: now.toISOString(),
   });
 
+  // Persist confirmed mobile on the connection for reconnect/resend.
+  await store.updateConnectionFields(input.businessId, connection.id, {
+    authLinkMobile: authLinkMobile,
+  });
+
   return {
     authLinkUrl: authLink.publicUrl,
     stateToken,
@@ -128,10 +204,11 @@ export async function startBasiqConnect(
     environment: sandbox ? 'sandbox' : 'production',
     deliveryMode: 'open_auth_link',
     sandbox,
-    authLinkMobile: sandbox ? null : mobileForApi,
+    authLinkMobile,
+    authLinkMobileMasked,
     message: sandbox
-      ? 'Sandbox AuthLink created. Opening Basiq Connect for a sandbox test institution (no SMS is sent).'
-      : 'AuthLink created. Opening Basiq Connect — complete any mobile 2FA on Basiq’s hosted page.',
+      ? `Sandbox AuthLink created. SMS verification code will be sent to ${authLinkMobileMasked}. Opening Basiq Connect for a sandbox test institution.`
+      : `AuthLink created. SMS verification code will be sent to ${authLinkMobileMasked}. Opening Basiq Connect.`,
   };
 }
 
@@ -220,6 +297,7 @@ export async function disconnectBankFeed(
     providerConnectionId: null,
     errorCode: null,
     errorMessage: null,
+    authLinkMobile: null,
   });
   if (!updated) throw new Error('BANK_CONNECTION_NOT_FOUND');
   return updated;

@@ -62,9 +62,9 @@ export function deriveBankConnectionStatus(
 export function nextActionForStatus(status: BankConnectionStatus): string {
   switch (status) {
     case 'not_connected':
-      return 'Open Settings → Bank Feeds and connect via Basiq AuthLink (sandbox opens the AuthLink URL; no SMS).';
+      return 'Open Settings → Bank Feeds, confirm your Australian mobile for AuthLink SMS verification, then connect via Basiq AuthLink.';
     case 'connecting':
-      return 'Finish Basiq AuthLink consent in the browser, then return to Aleya. Use Resend AuthLink if the link expired.';
+      return 'Enter the SMS code on Basiq AuthLink (sent to the masked mobile shown in Aleya), finish consent, then return. Use Change mobile or Resend AuthLink if needed.';
     case 'syncing':
       return 'Wait for the current sync to finish, or refresh shortly.';
     case 'connected':

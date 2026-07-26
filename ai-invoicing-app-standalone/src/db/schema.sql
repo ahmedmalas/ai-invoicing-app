@@ -1219,6 +1219,7 @@ CREATE TABLE IF NOT EXISTS bank_connections (
   last_successful_sync_at TEXT,
   error_code TEXT,
   error_message TEXT,
+  auth_link_mobile TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

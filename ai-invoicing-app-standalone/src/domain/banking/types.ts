@@ -31,6 +31,8 @@ export interface BankConnection {
   lastSuccessfulSyncAt: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** Last confirmed AuthLink 2FA mobile (E.164). Server-only — never expose raw to clients. */
+  authLinkMobile: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -107,14 +109,17 @@ export interface BankFeedStatusView {
   connected: boolean;
   status: BankConnectionStatus | 'not_configured' | 'not_connected';
   provider: BankProvider | null;
-  /** Basiq environment for AuthLink UX (sandbox opens AuthLink; no AuthLink SMS). */
+  /** Basiq environment for AuthLink UX (sandbox opens AuthLink in the browser). */
   environment: 'sandbox' | 'production';
   sandbox: boolean;
   /**
    * How AuthLink is presented to the user.
    * Basiq does not SMS-deliver AuthLink URLs — the browser must open `authLinkUrl`.
+   * Hosted AuthLink 2FA SMS uses the confirmed mobile (masked below).
    */
   authLinkDelivery: 'open_auth_link';
+  /** Masked destination for AuthLink SMS 2FA (never the full number). */
+  authLinkMobileMasked: string | null;
   institution: string | null;
   maskedAccount: string | null;
   accounts: Array<{
