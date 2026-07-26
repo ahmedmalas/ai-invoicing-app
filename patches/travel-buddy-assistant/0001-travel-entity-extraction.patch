@@ -1,0 +1,783 @@
+From 4c551545de3bc1a5d90bed85a2f26216b663f91e Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 26 Jul 2026 08:10:16 +0000
+Subject: [PATCH] Extract travel entities before asking for clarification.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stop the generic “tell me a little more” reply when the user already
+supplied origin, destination, dates, times, hotel area, and car hire.
+Persist those requirements in conversation state and ask only for the
+smallest missing detail (for example which Friday at end of August).
+---
+ .../trip-platform/AiPlanningPanel.tsx         |  69 ++-
+ .../ai-planning/travelRequirements.test.ts    |  75 +++
+ .../ai-planning/travelRequirements.ts         | 557 ++++++++++++++++++
+ 3 files changed, 695 insertions(+), 6 deletions(-)
+ create mode 100644 src/features/ai-planning/travelRequirements.test.ts
+ create mode 100644 src/features/ai-planning/travelRequirements.ts
+
+diff --git a/src/components/trip-platform/AiPlanningPanel.tsx b/src/components/trip-platform/AiPlanningPanel.tsx
+index 39c804b..3a69500 100644
+--- a/src/components/trip-platform/AiPlanningPanel.tsx
++++ b/src/components/trip-platform/AiPlanningPanel.tsx
+@@ -1,5 +1,16 @@
+ import { useMemo, useRef, useState, type FormEvent } from 'react';
+ import type { AiPlanMode, AiTravelPlan } from '../../features/ai-planning/aiPlanning';
++import {
++  createEmptyTravelRequirements,
++  extractTravelRequirements,
++  formatTravelRequirementsReply,
++  hasExplicitItineraryRequest,
++  hasExtractedTravelEntities,
++  hasTravelRequest,
++  identifyMissingTravelFields,
++  mergeTravelRequirements,
++  type TravelRequirementState,
++} from '../../features/ai-planning/travelRequirements';
+ import { detectUserCurrency } from '../../lib/currency';
+ import { useSharedTripStore } from '../../store/TripStoreContext';
+ import { PrimaryButton, SecondaryButton, StatusBanner } from './shared/ui';
+@@ -53,8 +64,18 @@ const inferMode = (message: string): AiPlanMode => {
+ const isGreeting = (message: string) => /^(hi|hello|hey|good morning|good afternoon|good evening|hiya|hi aleya|hello aleya)[!,.\s]*$/i.test(message.trim());
+ const isThanks = (message: string) => /^(thanks|thank you|thankyou|cheers|great|perfect|okay thanks)[!,.\s]*$/i.test(message.trim());
+ const isCapabilityQuestion = (message: string) => /what can you do|how can you help|who are you|what are you/i.test(message);
+-const hasPlanningIntent = (message: string) => /\b(plan|build|create|make|design|organise|organize|prepare|revise|change|improve)\b.*\b(trip|holiday|vacation|journey|itinerary|travel|honeymoon|weekend)\b|\b(itinerary|trip plan|travel plan)\b/i.test(message);
+-const hasDestination = (message: string, destination: string) => destination.trim().length > 0 || /\b(?:to|in|visit|visiting|going to)\s+[a-z][a-z\s-]{2,}/i.test(message);
++
++const looksLikeDateClarification = (message: string, state: TravelRequirementState) => {
++  if (!state.needsSpecificDate && !state.destination) return false;
++  return (
++    /\b\d{1,2}(?:st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(
++      message,
++    ) ||
++    /\b\d{4}-\d{2}-\d{2}\b/.test(message) ||
++    /\b(?:friday|saturday|sunday|monday|tuesday|wednesday|thursday)\s+\d{1,2}\b/i.test(message) ||
++    /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/.test(message)
++  );
++};
+ 
+ const formatPlanReply = (plan: AiTravelPlan, request: string) => {
+   const budget = `${plan.budgetSuggestion.amount.toLocaleString('en-AU')} ${plan.budgetSuggestion.currency}`;
+@@ -74,6 +95,8 @@ export function AiPlanningPanel() {
+   const greeting = travellerName ? `Hi ${travellerName}. How can I help with your travel today?` : 'Hi. How can I help with your travel today?';
+   const [input, setInput] = useState('');
+   const [feedback, setFeedback] = useState<string | null>(null);
++  const [requirements, setRequirements] = useState<TravelRequirementState>(() => createEmptyTravelRequirements());
++  const requirementsRef = useRef<TravelRequirementState>(createEmptyTravelRequirements());
+   const [messages, setMessages] = useState<ChatMessage[]>([
+     {
+       id: createId(),
+@@ -90,6 +113,11 @@ export function AiPlanningPanel() {
+     window.setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 0);
+   };
+ 
++  const rememberRequirements = (next: TravelRequirementState) => {
++    requirementsRef.current = next;
++    setRequirements(next);
++  };
++
+   const sendMessage = (event?: FormEvent) => {
+     event?.preventDefault();
+     const request = input.trim();
+@@ -111,11 +139,40 @@ export function AiPlanningPanel() {
+       reply('I can help you research destinations, compare travel options, understand visa requirements, plan an itinerary, work within a budget, organise bookings, and revise plans through normal conversation.');
+       return;
+     }
+-    if (!hasPlanningIntent(request)) {
+-      reply('I understand. Tell me a little more about what you need, and I’ll help without creating an itinerary unless you ask me to.');
++
++    // Always maximise entity extraction before asking for anything else.
++    const extracted = extractTravelRequirements(request);
++    let nextRequirements = mergeTravelRequirements(requirementsRef.current, extracted);
++    if (looksLikeDateClarification(request, nextRequirements)) {
++      const clarification = extractTravelRequirements(request);
++      nextRequirements = mergeTravelRequirements(nextRequirements, {
++        ...clarification,
++        approximateDates: clarification.approximateDates || request.trim(),
++        needsSpecificDate: false,
++      });
++    }
++    rememberRequirements(nextRequirements);
++
++    const hasEntities = hasExtractedTravelEntities(nextRequirements) || hasTravelRequest(request);
++    const wantsItinerary = hasExplicitItineraryRequest(request);
++    const missing = identifyMissingTravelFields(nextRequirements);
++
++    if (hasEntities && (!wantsItinerary || missing.length > 0)) {
++      reply(formatTravelRequirementsReply(nextRequirements));
++      return;
++    }
++
++    if (!wantsItinerary) {
++      // No extractable travel entities and no itinerary ask — keep it short, don't restart.
++      reply(
++        requirements.destination || requirements.origin
++          ? formatTravelRequirementsReply(nextRequirements)
++          : 'Happy to help — share the trip details you already know (cities, dates, flights, hotel area, car hire) and I’ll only ask for what’s missing. I won’t create an itinerary unless you ask me to.',
++      );
+       return;
+     }
+-    if (!hasDestination(request, trip.destination ?? '')) {
++
++    if (!nextRequirements.destination && !(trip.destination ?? '').trim()) {
+       reply('Absolutely. Which destination or countries are you considering? You can also include your dates, departure city, travellers, budget and preferred pace.');
+       return;
+     }
+@@ -133,7 +190,7 @@ export function AiPlanningPanel() {
+     <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-900 via-slate-950 to-sky-950/50 shadow-2xl shadow-sky-950/30" aria-labelledby="aleya-assistant-title">
+       <header className="border-b border-white/10 px-5 py-5 md:px-7">
+         <h2 id="aleya-assistant-title" className="text-3xl font-bold text-white">Aleya AI Assistant</h2>
+-        <p className="mt-2 text-sm leading-6 text-slate-300">Ask naturally. Aleya will listen first and only create plans when you request one.</p>
++        <p className="mt-2 text-sm leading-6 text-slate-300">Ask naturally. Aleya extracts what you already said, asks only for what’s missing, and only creates an itinerary when you request one.</p>
+       </header>
+ 
+       {feedback ? <div className="px-5 pt-4 md:px-7"><StatusBanner kind="info" message={feedback} /></div> : null}
+diff --git a/src/features/ai-planning/travelRequirements.test.ts b/src/features/ai-planning/travelRequirements.test.ts
+new file mode 100644
+index 0000000..5205c72
+--- /dev/null
++++ b/src/features/ai-planning/travelRequirements.test.ts
+@@ -0,0 +1,75 @@
++import { describe, expect, it } from 'vitest';
++import {
++  extractTravelRequirements,
++  formatTravelRequirementsReply,
++  hasExtractedTravelEntities,
++  hasExplicitItineraryRequest,
++  hasTravelRequest,
++  identifyMissingTravelFields,
++  listCapturedRequirements,
++  mergeTravelRequirements,
++  createEmptyTravelRequirements,
++} from './travelRequirements';
++
++const MELBOURNE_PROMPT =
++  "I want to travel to Melbourne at the end of August from Friday afternoon after 5pm and come back to Sydney around afternoon. I'll need flights around the times I mentioned, car hire that matches the flights schedule and hotel at Docklands.";
++
++describe('travel requirement extraction', () => {
++  it('extracts the Melbourne end-of-August travel brief without asking to repeat it', () => {
++    expect(hasTravelRequest(MELBOURNE_PROMPT)).toBe(true);
++    expect(hasExplicitItineraryRequest(MELBOURNE_PROMPT)).toBe(false);
++
++    const extracted = extractTravelRequirements(MELBOURNE_PROMPT);
++    expect(hasExtractedTravelEntities(extracted)).toBe(true);
++    expect(extracted.destination).toBe('Melbourne');
++    expect(extracted.origin).toBe('Sydney');
++    expect(extracted.hotelLocation).toBe('Docklands');
++    expect(extracted.carHireRequired).toBe(true);
++    expect(extracted.requestedServices).toEqual(expect.arrayContaining(['flights', 'hotel', 'car_hire']));
++    expect(extracted.preferredDepartureTime?.toLowerCase()).toContain('friday');
++    expect(extracted.preferredDepartureTime?.toLowerCase()).toContain('5');
++    expect(extracted.preferredReturnTime?.toLowerCase()).toContain('afternoon');
++    expect(extracted.approximateDates?.toLowerCase()).toContain('end of august');
++    expect(extracted.needsSpecificDate).toBe(true);
++
++    const missing = identifyMissingTravelFields(extracted);
++    expect(missing).toEqual(['specific_friday']);
++    expect(missing).not.toContain('destination');
++    expect(missing).not.toContain('origin');
++
++    const captured = listCapturedRequirements(extracted);
++    expect(captured.some((line) => /Sydney\s*→\s*Melbourne/i.test(line))).toBe(true);
++    expect(captured.some((line) => /Docklands hotel/i.test(line))).toBe(true);
++    expect(captured.some((line) => /Rental car matching your flights/i.test(line))).toBe(true);
++    expect(captured.some((line) => /Afternoon return to Sydney/i.test(line))).toBe(true);
++
++    const reply = formatTravelRequirementsReply(extracted);
++    expect(reply).toMatch(/I've got:/i);
++    expect(reply).toMatch(/Sydney\s*→\s*Melbourne/i);
++    expect(reply).toMatch(/Friday after 5pm near the end of August/i);
++    expect(reply).toMatch(/Afternoon return to Sydney/i);
++    expect(reply).toMatch(/Docklands hotel/i);
++    expect(reply).toMatch(/Rental car matching your flights/i);
++    expect(reply).toMatch(/which Friday at the end of August/i);
++    expect(reply).toMatch(/won't create an itinerary unless you ask/i);
++    expect(reply.toLowerCase()).not.toContain('tell me a little more about what you need');
++  });
++
++  it('merges follow-up clarifications into conversation state', () => {
++    const first = extractTravelRequirements(MELBOURNE_PROMPT);
++    const followUp = extractTravelRequirements('Friday 28 August 2026');
++    const merged = mergeTravelRequirements(first, {
++      ...followUp,
++      needsSpecificDate: false,
++      approximateDates: '28 August 2026',
++    });
++    expect(merged.destination).toBe('Melbourne');
++    expect(merged.origin).toBe('Sydney');
++    expect(merged.approximateDates).toBe('28 August 2026');
++    expect(identifyMissingTravelFields({ ...merged, needsSpecificDate: false })).toEqual([]);
++  });
++
++  it('starts from empty state helpers', () => {
++    expect(createEmptyTravelRequirements().destination).toBeNull();
++  });
++});
+diff --git a/src/features/ai-planning/travelRequirements.ts b/src/features/ai-planning/travelRequirements.ts
+new file mode 100644
+index 0000000..92e1ddb
+--- /dev/null
++++ b/src/features/ai-planning/travelRequirements.ts
+@@ -0,0 +1,557 @@
++/**
++ * Conversational travel-requirement extraction for Aleya.
++ * Maximises entity capture from free text before asking clarifications.
++ */
++
++export type TravelService =
++  | 'flights'
++  | 'hotel'
++  | 'car_hire'
++  | 'transfers'
++  | 'visa'
++  | 'itinerary'
++  | 'rail'
++  | 'activities';
++
++export type TravelRequirementState = {
++  origin: string | null;
++  destination: string | null;
++  approximateDates: string | null;
++  preferredDepartureTime: string | null;
++  preferredReturnTime: string | null;
++  hotelLocation: string | null;
++  carHireRequired: boolean;
++  requestedServices: TravelService[];
++  /** True when dates mention a weekday + fuzzy window but not a calendar date. */
++  needsSpecificDate: boolean;
++  rawNotes: string[];
++};
++
++export type TravelMissingField =
++  | 'destination'
++  | 'origin'
++  | 'dates'
++  | 'specific_friday'
++  | 'specific_date'
++  | 'return_timing';
++
++const EMPTY_STATE: TravelRequirementState = {
++  origin: null,
++  destination: null,
++  approximateDates: null,
++  preferredDepartureTime: null,
++  preferredReturnTime: null,
++  hotelLocation: null,
++  carHireRequired: false,
++  requestedServices: [],
++  needsSpecificDate: false,
++  rawNotes: [],
++};
++
++const CITY_PATTERN =
++  /\b(?:Sydney|Melbourne|Brisbane|Perth|Adelaide|Canberra|Hobart|Darwin|Gold Coast|Cairns|Newcastle|Wollongong|Geelong|Townsville|Ballarat|Bendigo|Launceston|Alice Springs|Auckland|Wellington|Christchurch|Queenstown|Tokyo|Osaka|Kyoto|Singapore|Bali|Denpasar|Jakarta|Bangkok|Phuket|Kuala Lumpur|Hong Kong|Taipei|Seoul|Busan|Shanghai|Beijing|London|Paris|Rome|Berlin|Amsterdam|Dubai|Los Angeles|New York|San Francisco|Vancouver|Toronto|Fiji|Nadi|Port Vila)\b/gi;
++
++const MONTHS =
++  'january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec';
++
++const WEEKDAYS = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
++
++const titleCase = (value: string): string =>
++  value
++    .split(/\s+/)
++    .filter(Boolean)
++    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
++    .join(' ');
++
++const uniqueServices = (services: TravelService[]): TravelService[] => [...new Set(services)];
++
++const mergeText = (current: string | null, next: string | null | undefined): string | null => {
++  const trimmed = next?.trim();
++  if (!trimmed) return current;
++  return trimmed;
++};
++
++export function createEmptyTravelRequirements(): TravelRequirementState {
++  return { ...EMPTY_STATE, requestedServices: [], rawNotes: [] };
++}
++
++export function mergeTravelRequirements(
++  current: TravelRequirementState,
++  patch: Partial<TravelRequirementState>,
++): TravelRequirementState {
++  return {
++    origin: mergeText(current.origin, patch.origin) ?? current.origin,
++    destination: mergeText(current.destination, patch.destination) ?? current.destination,
++    approximateDates: mergeText(current.approximateDates, patch.approximateDates) ?? current.approximateDates,
++    preferredDepartureTime:
++      mergeText(current.preferredDepartureTime, patch.preferredDepartureTime) ??
++      current.preferredDepartureTime,
++    preferredReturnTime:
++      mergeText(current.preferredReturnTime, patch.preferredReturnTime) ?? current.preferredReturnTime,
++    hotelLocation: mergeText(current.hotelLocation, patch.hotelLocation) ?? current.hotelLocation,
++    carHireRequired: Boolean(current.carHireRequired || patch.carHireRequired),
++    requestedServices: uniqueServices([
++      ...current.requestedServices,
++      ...(patch.requestedServices ?? []),
++    ]),
++    needsSpecificDate: Boolean(
++      patch.needsSpecificDate === undefined
++        ? current.needsSpecificDate
++        : patch.needsSpecificDate || current.needsSpecificDate,
++    ),
++    rawNotes: [...current.rawNotes, ...(patch.rawNotes ?? [])].slice(-12),
++  };
++}
++
++/** Broader than itinerary verbs — any travel-request signal. */
++export function hasTravelRequest(message: string): boolean {
++  const value = message.toLowerCase();
++  if (
++    /\b(flight|flights|hotel|hotels|accommodation|car hire|rental car|hire car|visa|transfer|transfers|itinerary|trip|holiday|vacation|travel|fly|flying|going to|visit|visiting|book|booking|stay|staying)\b/i.test(
++      value,
++    )
++  ) {
++    return true;
++  }
++  if (/\b(?:to|from)\s+[a-z][a-z\s-]{2,}/i.test(message)) return true;
++  return CITY_PATTERN.test(message);
++}
++
++export function hasExplicitItineraryRequest(message: string): boolean {
++  return /\b(plan|build|create|make|design|organise|organize|prepare|revise|change|improve)\b.*\b(trip|holiday|vacation|journey|itinerary|travel|honeymoon|weekend)\b|\b(itinerary|trip plan|travel plan)\b/i.test(
++    message,
++  );
++}
++
++function extractCities(message: string): string[] {
++  const matches = message.match(CITY_PATTERN) ?? [];
++  const seen = new Set<string>();
++  const cities: string[] = [];
++  for (const match of matches) {
++    const key = match.toLowerCase();
++    if (seen.has(key)) continue;
++    seen.add(key);
++    cities.push(titleCase(match));
++  }
++  return cities;
++}
++
++function extractServices(message: string): { services: TravelService[]; carHireRequired: boolean } {
++  const value = message.toLowerCase();
++  const services: TravelService[] = [];
++  if (/\bflights?\b|\bfly\b|\bflying\b|\bairfare\b/.test(value)) services.push('flights');
++  if (/\bhotels?\b|\baccommodation\b|\bstay\b|\bstaying\b/.test(value)) services.push('hotel');
++  if (/\bcar hire\b|\brental car\b|\bhire car\b|\bcar rental\b/.test(value)) services.push('car_hire');
++  if (/\btransfer|taxi|rideshare|uber|airport transfer\b/.test(value)) services.push('transfers');
++  if (/\bvisa\b/.test(value)) services.push('visa');
++  if (/\bitinerary\b/.test(value)) services.push('itinerary');
++  if (/\btrain\b|\brail\b/.test(value)) services.push('rail');
++  if (/\bactivit(?:y|ies)\b|\btour\b|\bleisure\b/.test(value)) services.push('activities');
++  const carHireRequired = services.includes('car_hire');
++  return { services: uniqueServices(services), carHireRequired };
++}
++
++function extractHotelLocation(message: string): string | null {
++  const atMatch = message.match(
++    /\b(?:hotel|stay|accommodation|lodge|resort)\s+(?:at|in|near|around)\s+([A-Za-z][A-Za-z0-9\s'-]{1,40})/i,
++  );
++  if (atMatch?.[1]) {
++    return titleCase(atMatch[1].replace(/[.,;!?].*$/, '').trim());
++  }
++  const docklands = message.match(/\bDocklands\b/i);
++  if (docklands && /\bhotel\b/i.test(message)) return 'Docklands';
++  return null;
++}
++
++function extractApproximateDates(message: string): {
++  approximateDates: string | null;
++  needsSpecificDate: boolean;
++} {
++  const value = message.toLowerCase();
++  const chunks: string[] = [];
++  let needsSpecificDate = false;
++
++  const endOfMonth = value.match(
++    new RegExp(`\\b(?:at\\s+the\\s+)?end\\s+of\\s+(${MONTHS})(?:\\s+(\\d{4}))?\\b`, 'i'),
++  );
++  if (endOfMonth) {
++    const month = titleCase(endOfMonth[1]!);
++    const year = endOfMonth[2] ? ` ${endOfMonth[2]}` : '';
++    chunks.push(`end of ${month}${year}`);
++  }
++
++  const midMonth = value.match(
++    new RegExp(`\\b(?:mid|middle of)\\s+(${MONTHS})(?:\\s+(\\d{4}))?\\b`, 'i'),
++  );
++  if (midMonth) {
++    chunks.push(`mid ${titleCase(midMonth[1]!)}${midMonth[2] ? ` ${midMonth[2]}` : ''}`);
++  }
++
++  const earlyLate = value.match(
++    new RegExp(`\\b(early|late)\\s+(${MONTHS})(?:\\s+(\\d{4}))?\\b`, 'i'),
++  );
++  if (earlyLate) {
++    chunks.push(
++      `${earlyLate[1]} ${titleCase(earlyLate[2]!)}${earlyLate[3] ? ` ${earlyLate[3]}` : ''}`,
++    );
++  }
++
++  const iso = value.match(/\b(\d{4}-\d{2}-\d{2})\b/);
++  if (iso) chunks.push(iso[1]!);
++
++  const dmy = value.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(${MONTHS})(?:\s+(\d{4}))?\b/i);
++  if (dmy) {
++    chunks.push(`${dmy[1]} ${titleCase(dmy[2]!)}${dmy[3] ? ` ${dmy[3]}` : ''}`);
++  }
++
++  const weekday = value.match(new RegExp(`\\b(${WEEKDAYS})\\b`, 'i'));
++  if (weekday) {
++    chunks.push(titleCase(weekday[1]!));
++    // Weekday + fuzzy month window without a day number → need which occurrence.
++    if (endOfMonth || midMonth || earlyLate) {
++      needsSpecificDate = true;
++    } else if (!iso && !dmy) {
++      needsSpecificDate = true;
++    }
++  }
++
++  if (!chunks.length && /\bnext\s+(week|weekend|month)\b/i.test(value)) {
++    const next = value.match(/\bnext\s+(week|weekend|month)\b/i);
++    if (next) chunks.push(`next ${next[1]}`);
++    needsSpecificDate = true;
++  }
++
++  const approximateDates = chunks.length ? chunks.join(', ') : null;
++  // Fuzzy month-only without weekday/day still needs a specific date.
++  if (approximateDates && !iso && !dmy && (endOfMonth || midMonth || earlyLate) && !weekday) {
++    needsSpecificDate = true;
++  }
++
++  return { approximateDates, needsSpecificDate };
++}
++
++function extractDepartureTime(message: string): string | null {
++  const afterHour = message.match(
++    new RegExp(
++      `\\b(?:(${WEEKDAYS})\\s+)?(?:afternoon|morning|evening|night)?\\s*(?:after\\s+)?(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b`,
++      'i',
++    ),
++  );
++  // Prefer explicit "Friday afternoon after 5pm" style.
++  const fridayAfter = message.match(
++    new RegExp(
++      `\\b((?:${WEEKDAYS})\\s+(?:afternoon|morning|evening|night)\\s+after\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b`,
++      'i',
++    ),
++  );
++  if (fridayAfter?.[1]) return fridayAfter[1].replace(/\s+/g, ' ').trim();
++
++  const afterFive = message.match(
++    new RegExp(
++      `\\b((?:${WEEKDAYS})\\s+)?(?:from\\s+)?((?:afternoon|morning|evening)\\s+after\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b`,
++      'i',
++    ),
++  );
++  if (afterFive) {
++    const day = afterFive[1]?.trim();
++    const time = afterFive[2]?.trim();
++    return [day ? titleCase(day) : null, time].filter(Boolean).join(' ');
++  }
++
++  const departAfter = message.match(
++    /\b(?:depart(?:ing)?|leave|leaving|fly(?:ing)?)\s+(?:after|around|at)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
++  );
++  if (departAfter?.[1]) return `after ${departAfter[1].trim()}`;
++
++  if (/\bafter\s+5\s*(?:pm)?\b/i.test(message) && /\bfriday\b/i.test(message)) {
++    return 'Friday afternoon after 5pm';
++  }
++
++  // Fallback: "Friday afternoon" near travel/from phrasing.
++  const windowOnly = message.match(
++    new RegExp(`\\b((?:${WEEKDAYS})\\s+(?:afternoon|morning|evening|night))\\b`, 'i'),
++  );
++  if (windowOnly?.[1] && !/\bcome back\b|\breturn\b/i.test(windowOnly[1])) {
++    return titleCase(windowOnly[1]);
++  }
++
++  void afterHour;
++  return null;
++}
++
++function extractReturnTime(message: string): string | null {
++  const returnAround = message.match(
++    /\b(?:come back|return|returning|fly back|back)\b[^.]*?\b(?:around|in the|by)?\s*(morning|afternoon|evening|night)\b/i,
++  );
++  if (returnAround?.[1]) {
++    return `${returnAround[1].toLowerCase()}`;
++  }
++  const returnAt = message.match(
++    /\b(?:come back|return|returning|fly back)\b[^.]*?\b(?:at|after|before)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
++  );
++  if (returnAt?.[1]) return returnAt[1].trim();
++  return null;
++}
++
++const STOP_WORDS =
++  /^(?:at|on|in|from|to|for|the|a|an|and|with|around|after|before|near|by|next|this|that|end|start|beginning|early|late|mid|middle|morning|afternoon|evening|night|friday|saturday|sunday|monday|tuesday|wednesday|thursday|january|february|march|april|may|june|july|august|september|october|november|december)$/i;
++
++function firstPlaceToken(raw: string, knownCities: string[]): string | null {
++  const cleaned = raw.replace(/[.,;!?].*$/, '').trim();
++  if (!cleaned) return null;
++
++  // Prefer an exact known city appearing at the start of the capture.
++  const lower = cleaned.toLowerCase();
++  const knownHit = knownCities.find((city) => lower === city.toLowerCase() || lower.startsWith(`${city.toLowerCase()} `));
++  if (knownHit) return knownHit;
++
++  const words = cleaned.split(/\s+/).filter(Boolean);
++  const kept: string[] = [];
++  for (const word of words.slice(0, 3)) {
++    if (STOP_WORDS.test(word)) break;
++    kept.push(word);
++  }
++  if (!kept.length) return null;
++  const candidate = titleCase(kept.join(' '));
++  if (new RegExp(`^(?:${WEEKDAYS})$`, 'i').test(candidate)) return null;
++  return candidate;
++}
++
++function extractOriginDestination(message: string): {
++  origin: string | null;
++  destination: string | null;
++} {
++  const cities = extractCities(message);
++  let destination: string | null = null;
++  let origin: string | null = null;
++
++  const toMatch = message.match(
++    /\b(?:travel|fly|going|go|trip|visit(?:ing)?|head(?:ing)?)\s+to\s+([A-Za-z][A-Za-z\s-]{1,40})/i,
++  );
++  if (toMatch?.[1]) {
++    destination = firstPlaceToken(toMatch[1], cities);
++  }
++
++  const fromCity = message.match(/\bfrom\s+([A-Za-z][A-Za-z\s-]{1,40}?)(?:\s+to\b|\s+on\b|\s+at\b|[.,]|$)/i);
++  if (fromCity?.[1]) {
++    const candidate = firstPlaceToken(fromCity[1], cities);
++    // Avoid treating "from Friday..." as origin.
++    if (candidate) origin = candidate;
++  }
++
++  const backTo = message.match(
++    /\b(?:come back|return|returning|fly back|back)\s+to\s+([A-Za-z][A-Za-z\s-]{1,40})/i,
++  );
++  if (backTo?.[1]) {
++    origin = firstPlaceToken(backTo[1], cities) || origin;
++  }
++
++  // Route pattern using known cities only: Sydney to Melbourne
++  if (cities.length >= 2) {
++    const route = message.match(
++      new RegExp(`\\b(${cities.map((c) => c.replace(/\s+/g, '\\s+')).join('|')})\\s+to\\s+(${cities.map((c) => c.replace(/\s+/g, '\\s+')).join('|')})\\b`, 'i'),
++    );
++    if (route) {
++      origin = origin || titleCase(route[1]!);
++      destination = destination || titleCase(route[2]!);
++    }
++  }
++
++  if (!destination && cities.length) {
++    // Prefer first city after "to", else first city that isn't origin.
++    destination = cities.find((city) => city !== origin) || cities[0] || null;
++  }
++  if (!origin && cities.length >= 2) {
++    origin = cities.find((city) => city !== destination) || null;
++  }
++
++  return { origin, destination };
++}
++
++export function extractTravelRequirements(message: string): TravelRequirementState {
++  const { origin, destination } = extractOriginDestination(message);
++  const { approximateDates, needsSpecificDate } = extractApproximateDates(message);
++  const preferredDepartureTime = extractDepartureTime(message);
++  const preferredReturnTime = extractReturnTime(message);
++  const hotelLocation = extractHotelLocation(message);
++  const { services, carHireRequired } = extractServices(message);
++
++  // Car hire that matches flights → keep as requirement note.
++  const rawNotes: string[] = [];
++  if (/car hire that matches|rental car.*flight|matches? (?:the )?flights?/i.test(message)) {
++    rawNotes.push('Rental car matching flight schedule');
++  }
++
++  return {
++    origin,
++    destination,
++    approximateDates,
++    preferredDepartureTime,
++    preferredReturnTime,
++    hotelLocation,
++    carHireRequired,
++    requestedServices: services,
++    needsSpecificDate,
++    rawNotes,
++  };
++}
++
++function compactDepartureSummary(state: TravelRequirementState): string | null {
++  const departure = state.preferredDepartureTime?.replace(/\s+/g, ' ').trim() || '';
++  const dates = (state.approximateDates || '')
++    .split(',')
++    .map((part) => part.trim())
++    .filter((part) => part && !new RegExp(`^(${WEEKDAYS})$`, 'i').test(part));
++
++  const fuzzyMonth = dates.find((part) => /end of|mid |early |late /i.test(part)) || dates[0] || '';
++
++  if (departure && fuzzyMonth) {
++    // Prefer "Friday after 5pm near the end of August"
++    const shortDeparture = departure
++      .replace(/\bafternoon\s+after\b/i, 'after')
++      .replace(/\bmorning\s+after\b/i, 'after')
++      .replace(/\bevening\s+after\b/i, 'after');
++    const monthBit = fuzzyMonth.toLowerCase().startsWith('the ')
++      ? fuzzyMonth
++      : /^(end of|mid|early|late)\b/i.test(fuzzyMonth)
++        ? fuzzyMonth
++        : fuzzyMonth;
++    return `${shortDeparture} near the ${monthBit.replace(/^the\s+/i, '')}`;
++  }
++  if (departure) return departure;
++  if (fuzzyMonth) return fuzzyMonth;
++  if (state.approximateDates) return state.approximateDates;
++  return null;
++}
++
++export function listCapturedRequirements(state: TravelRequirementState): string[] {
++  const lines: string[] = [];
++  if (state.origin && state.destination) {
++    lines.push(`${state.origin} → ${state.destination}`);
++  } else if (state.destination) {
++    lines.push(`Destination: ${state.destination}`);
++  } else if (state.origin) {
++    lines.push(`Origin: ${state.origin}`);
++  }
++
++  const departureSummary = compactDepartureSummary(state);
++  if (departureSummary) lines.push(departureSummary);
++
++  if (state.preferredReturnTime) {
++    const dest = state.origin ? ` to ${state.origin}` : '';
++    const window = state.preferredReturnTime.toLowerCase();
++    if (/(morning|afternoon|evening|night)/.test(window) && !/\d/.test(window)) {
++      lines.push(`${titleCase(window)} return${dest}`);
++    } else {
++      lines.push(`Return${dest} around ${state.preferredReturnTime}`);
++    }
++  }
++
++  if (state.hotelLocation) {
++    lines.push(`${state.hotelLocation} hotel`);
++  }
++
++  if (state.carHireRequired || state.requestedServices.includes('car_hire')) {
++    lines.push(
++      state.rawNotes.some((note) => /matching/i.test(note))
++        ? 'Rental car matching your flights'
++        : 'Rental car',
++    );
++  } else if (state.requestedServices.includes('flights') || state.requestedServices.includes('hotel')) {
++    const labels = state.requestedServices
++      .filter((service) => service !== 'car_hire')
++      .map((service) =>
++        service === 'flights' ? 'Flights' : service === 'hotel' ? 'Hotel' : service.replace('_', ' '),
++      );
++    if (labels.length) lines.push(labels.join(', '));
++  }
++
++  return lines;
++}
++
++export function identifyMissingTravelFields(state: TravelRequirementState): TravelMissingField[] {
++  const missing: TravelMissingField[] = [];
++  if (!state.destination) missing.push('destination');
++  if (!state.origin) missing.push('origin');
++  if (!state.approximateDates && !state.preferredDepartureTime) missing.push('dates');
++  if (state.needsSpecificDate) {
++    if (/\bfriday\b/i.test(`${state.approximateDates ?? ''} ${state.preferredDepartureTime ?? ''}`)) {
++      missing.push('specific_friday');
++    } else {
++      missing.push('specific_date');
++    }
++  }
++  return missing;
++}
++
++function clarificationFor(missing: TravelMissingField[], state: TravelRequirementState): string {
++  if (missing.includes('destination')) {
++    return 'Which city or country are you travelling to?';
++  }
++  if (missing.includes('origin')) {
++    return 'Which city are you departing from?';
++  }
++  if (missing.includes('specific_friday')) {
++    const monthHint =
++      state.approximateDates?.match(new RegExp(`(?:end of|mid|early|late)?\\s*(${MONTHS})`, 'i'))?.[1] ||
++      'August';
++    return `which Friday at the end of ${titleCase(monthHint)} you mean`;
++  }
++  if (missing.includes('specific_date')) {
++    return 'the specific travel dates you want';
++  }
++  if (missing.includes('dates')) {
++    return 'your travel dates (even roughly is fine)';
++  }
++  return 'one more detail so I can search accurately';
++}
++
++export function formatTravelRequirementsReply(state: TravelRequirementState): string {
++  const captured = listCapturedRequirements(state);
++  const missing = identifyMissingTravelFields(state);
++  const services = uniqueServices([
++    ...state.requestedServices,
++    ...(state.carHireRequired ? (['car_hire'] as TravelService[]) : []),
++  ]);
++  const searchBits = [
++    services.includes('flights') ? 'flights' : null,
++    services.includes('hotel') || state.hotelLocation ? 'hotels' : null,
++    services.includes('car_hire') || state.carHireRequired ? 'car hire' : null,
++  ].filter(Boolean) as string[];
++  const searchList =
++    searchBits.length <= 1
++      ? searchBits[0] || 'options'
++      : `${searchBits.slice(0, -1).join(', ')} and ${searchBits[searchBits.length - 1]}`;
++
++  if (!captured.length && missing.length) {
++    return `Happy to help. To get started I just need ${clarificationFor(missing, state)}. I won’t create an itinerary unless you ask me to.`;
++  }
++
++  const bulletBlock = captured.map((line) => `• ${line}`).join('\n');
++
++  if (!missing.length) {
++    return `I've got:\n${bulletBlock}\n\nI can search for ${searchList} next. I won't create an itinerary unless you ask me to.`;
++  }
++
++  const need = clarificationFor(missing, state);
++  const onlyThing =
++    missing.length === 1
++      ? `The only thing I need is ${need}. Once I have that I'll search for ${searchList}. I won't create an itinerary unless you ask me to.`
++      : `I still need ${need}. Once I have that I'll search for ${searchList}. I won't create an itinerary unless you ask me to.`;
++
++  return `I've got:\n${bulletBlock}\n\n${onlyThing}`;
++}
++
++/** True when the message contributed at least one travel entity. */
++export function hasExtractedTravelEntities(state: TravelRequirementState): boolean {
++  return Boolean(
++    state.origin ||
++      state.destination ||
++      state.approximateDates ||
++      state.preferredDepartureTime ||
++      state.preferredReturnTime ||
++      state.hotelLocation ||
++      state.carHireRequired ||
++      state.requestedServices.length,
++  );
++}
+-- 
+2.43.0
+

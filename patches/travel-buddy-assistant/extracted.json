@@ -1,0 +1,18 @@
+{
+  "origin": "Sydney",
+  "destination": "Melbourne",
+  "approximateDates": "end of August, Friday",
+  "preferredDepartureTime": "Friday afternoon after 5pm",
+  "preferredReturnTime": "afternoon",
+  "hotelLocation": "Docklands",
+  "carHireRequired": true,
+  "requestedServices": [
+    "flights",
+    "hotel",
+    "car_hire"
+  ],
+  "needsSpecificDate": true,
+  "rawNotes": [
+    "Rental car matching flight schedule"
+  ]
+}
