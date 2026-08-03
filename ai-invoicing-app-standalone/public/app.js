@@ -177,11 +177,26 @@ function focusInvoiceValidationField(fieldPath) {
 }
 
 function saveSession(value) {
-  session = value;
   if (value) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(value));
+    const expiresInSec = Number(value.expires_in || 3600);
+    const expiresAtMs =
+      typeof value.expires_at === 'number' && value.expires_at > 1_000_000_000_000
+        ? value.expires_at
+        : typeof value.expires_at === 'number' && value.expires_at > 1_000_000_000
+          ? value.expires_at * 1000
+          : Date.now() + expiresInSec * 1000;
+    session = {
+      ...value,
+      expires_in: expiresInSec,
+      expires_at: expiresAtMs,
+      saved_at: Date.now(),
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     signOutInProgress = false;
-  } else localStorage.removeItem(SESSION_KEY);
+  } else {
+    session = null;
+    localStorage.removeItem(SESSION_KEY);
+  }
 }
 
 function provisionalUser(data) {
@@ -200,16 +215,38 @@ function toast(message, error = false) {
   setTimeout(() => node.remove(), 4200);
 }
 
+let refreshInFlight = null;
+
 async function refreshSession() {
   if (!session?.refresh_token) return false;
-  const response = await fetch('/api/auth/refresh', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ refreshToken: session.refresh_token }),
-  });
-  if (!response.ok) return false;
-  saveSession(await response.json());
-  return true;
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: session.refresh_token }),
+      });
+      if (!response.ok) return false;
+      saveSession(await response.json());
+      return true;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+/** Refresh before the access token expires so /api/auth/me is not a 401→retry chain. */
+async function ensureFreshSession({ skewMs = 60_000 } = {}) {
+  if (!session?.access_token) return false;
+  const expiresAt = Number(session.expires_at || 0);
+  // Legacy sessions without expiry metadata keep the previous 401→refresh path,
+  // but refreshSession is single-flight so parallel calls do not stampede.
+  if (!expiresAt) return true;
+  if (Date.now() < expiresAt - skewMs) return true;
+  if (!session.refresh_token) return Boolean(session.access_token);
+  return refreshSession();
 }
 
 async function api(path, options = {}, retry = true) {
@@ -473,7 +510,7 @@ function filterBar(placeholder, statuses = []) {
   );
 }
 
-async function loadWorkspace({ force = false } = {}) {
+async function loadWorkspace({ force = false, deferQuotes = false } = {}) {
   if (
     !force &&
     workspaceCacheAt &&
@@ -482,25 +519,48 @@ async function loadWorkspace({ force = false } = {}) {
   ) {
     return cache;
   }
-  const [customers, quotes, invoices, payments, report, businessProfile] = await Promise.all([
+  // Critical path for first paint: lists + AR read-model + business profile.
+  // Quotes are deferred on dashboard so they do not add another cold concurrent boot.
+  // Report limit stays modest on bootstrap; /reports can refetch with a higher limit.
+  const [customers, invoices, payments, report, businessProfile] = await Promise.all([
     api('/api/customers?limit=500'),
-    api('/api/quotes?limit=500'),
     api('/api/invoices?limit=500'),
     api('/api/payments?limit=500'),
-    api('/api/reports/read-model?limit=500'),
+    api('/api/reports/read-model?limit=100'),
     api('/api/business-profile').catch((error) =>
       error.status === 404 ? null : Promise.reject(error),
     ),
   ]);
   cache = {
     customers: customers.customers,
-    quotes: quotes.quotes,
+    quotes: Array.isArray(cache.quotes) ? cache.quotes : [],
     invoices: invoices.invoices,
     payments: payments.payments,
     report,
     businessProfile,
   };
   workspaceCacheAt = Date.now();
+
+  const loadQuotes = async () => {
+    const quotes = await api('/api/quotes?limit=500');
+    cache.quotes = quotes.quotes;
+    workspaceCacheAt = Date.now();
+    return cache.quotes;
+  };
+
+  if (deferQuotes) {
+    void loadQuotes()
+      .then(() => {
+        if (location.pathname === '/dashboard' || location.pathname === '/') {
+          dashboardPage();
+        }
+      })
+      .catch(() => {
+        /* non-critical progressive load */
+      });
+  } else {
+    await loadQuotes();
+  }
   return cache;
 }
 
@@ -2412,20 +2472,27 @@ async function renderRoute({ forceReload = false } = {}) {
   const invoiceRoute = parseInvoiceWorkspacePath(path);
   const isAleyaAi = path === '/aleya-ai';
   const isBanking = path === '/workspace/banking';
+  const isDashboard = path === '/dashboard';
   const warm =
     !forceReload &&
     workspaceCacheAt &&
     Date.now() - workspaceCacheAt < WORKSPACE_CACHE_TTL_MS &&
     Array.isArray(cache.customers) &&
     Boolean(document.querySelector('.app-shell'));
-  // Aleya AI / Banking must not wait on full invoice/customer/report preload.
+  // Paint the app shell immediately — do not wait for every dataset before chrome appears.
   if (!warm && !isAleyaAi && !isBanking) {
-    root.innerHTML =
-      '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>';
+    if (!document.querySelector('.app-shell')) {
+      shell(
+        '<main class="boot"><span class="brand-mark">A</span><p>Loading live workspace…</p></main>',
+      );
+    }
   }
   try {
     if (!isAleyaAi && !isBanking) {
-      await loadWorkspace({ force: forceReload });
+      await loadWorkspace({
+        force: forceReload,
+        deferQuotes: isDashboard && !forceReload,
+      });
     } else if (!document.querySelector('.app-shell')) {
       // Minimal shell only — page-specific data loads inside the route.
       shell('');
@@ -2514,6 +2581,7 @@ async function bootstrap() {
       return;
     }
     try {
+      await ensureFreshSession();
       const identity = await api('/api/auth/me');
       currentUser = identity.user;
       if (['/', '/sign-in', '/create-account', '/forgot-password', '/auth/callback'].includes(location.pathname))

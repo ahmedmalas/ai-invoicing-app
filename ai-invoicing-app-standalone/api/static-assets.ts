@@ -1,7 +1,7 @@
 /**
  * Serve browser assets without initializing Postgres / Fastify.
- * Vercel rewrites `/assets/*` into this serverless function, so cold starts
- * must not run schema migrations just to return CSS/JS.
+ * Prefer CDN filesystem files under public/assets (see prepare-cdn-assets.mjs).
+ * This path remains as a fallback when a request still reaches the function.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -31,6 +31,10 @@ const ASSET_CONTENT_TYPES: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+/** Fingerprinted / content-addressed assets may be cached aggressively. */
+export const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+export const SHORT_ASSET_CACHE_CONTROL = 'public, max-age=86400';
+
 /** Map request pathname → filename under /public (or generated content). */
 function resolvePublicFileName(pathname: string): string | null {
   if (pathname === '/favicon.svg' || pathname === '/favicon.ico') {
@@ -46,8 +50,9 @@ function resolvePublicFileName(pathname: string): string | null {
 
 function readPublicFile(fileName: string): Buffer | null {
   for (const root of PUBLIC_ROOT_CANDIDATES) {
-    const full = join(root, fileName);
-    if (existsSync(full)) return readFileSync(full);
+    for (const full of [join(root, 'assets', fileName), join(root, fileName)]) {
+      if (existsSync(full)) return readFileSync(full);
+    }
   }
   return null;
 }
@@ -64,6 +69,13 @@ function pathnameOf(request: IncomingMessage): string {
   } catch {
     return (request.url || '/').split('?')[0] || '/';
   }
+}
+
+function cacheControlFor(fileName: string): string {
+  if (fileName === 'build-identity.js' || fileName === 'favicon.svg') {
+    return SHORT_ASSET_CACHE_CONTROL;
+  }
+  return IMMUTABLE_ASSET_CACHE_CONTROL;
 }
 
 export function isStaticAssetPath(pathname: string): boolean {
@@ -89,12 +101,16 @@ export function tryServeStaticAsset(
   if (!isStaticAssetPath(pathname)) return false;
 
   if (pathname === '/assets/build-identity.js') {
-    const identity = createBuildIdentity(process.env);
-    const body = `export const buildIdentity = ${JSON.stringify(identity)};\n`;
+    const fromDisk = readPublicFile('build-identity.js');
+    const body = fromDisk
+      ? fromDisk
+      : Buffer.from(
+          `export const buildIdentity = ${JSON.stringify(createBuildIdentity(process.env))};\n`,
+          'utf8',
+        );
     response.statusCode = 200;
     response.setHeader('content-type', 'application/javascript; charset=utf-8');
-    response.setHeader('cache-control', 'no-cache, no-store, must-revalidate');
-    response.setHeader('pragma', 'no-cache');
+    response.setHeader('cache-control', SHORT_ASSET_CACHE_CONTROL);
     if (request.method === 'HEAD') {
       response.end();
     } else {
@@ -122,19 +138,21 @@ export function tryServeStaticAsset(
   if (fileName === 'launch-app.js') {
     const identity = createBuildIdentity(process.env);
     const version = identity.appCommitSha.slice(0, 12);
-    const source = body
-      .toString('utf8')
-      .replace(
-        "application.src = '/assets/app.js';",
-        `application.src = '/assets/app.js?v=${version}';`,
+    const text = body.toString('utf8');
+    if (!text.includes('/assets/app.js?v=')) {
+      body = Buffer.from(
+        text.replace(
+          "application.src = '/assets/app.js';",
+          `application.src = '/assets/app.js?v=${version}';`,
+        ),
+        'utf8',
       );
-    body = Buffer.from(source, 'utf8');
+    }
   }
 
   response.statusCode = 200;
   response.setHeader('content-type', contentTypeFor(fileName));
-  response.setHeader('cache-control', 'no-cache, no-store, must-revalidate');
-  response.setHeader('pragma', 'no-cache');
+  response.setHeader('cache-control', cacheControlFor(fileName));
   if (request.method === 'HEAD') {
     response.end();
   } else {
