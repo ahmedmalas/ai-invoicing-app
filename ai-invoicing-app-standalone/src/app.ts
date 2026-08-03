@@ -253,10 +253,9 @@ export async function buildApp(options: BuildAppOptions) {
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/auth/refresh',
+    // Retired Basiq callback still public so old AuthLink redirects land safely on Settings.
     '/banking/basiq/callback',
     '/api/banking/basiq/callback',
-    '/banking/basiq/webhook',
-    '/api/banking/basiq/webhook',
   ]);
   if (servesFrontend) {
     for (const path of [

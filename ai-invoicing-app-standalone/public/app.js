@@ -1141,7 +1141,7 @@ async function settingsPage() {
     escapeHtml(profile.primaryColor || '#173f35') +
     '" required></label><label>Secondary colour<input name="secondaryColor" type="color" value="' +
     escapeHtml(profile.secondaryColor || '#c4f36b') +
-    '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock. In production, phone may be used for Basiq AuthLink two-factor authentication after AuthLink is opened in the browser (not to SMS-deliver the AuthLink URL).</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
+    '" required></label></div><p class="muted">Business name and address are required before PDF preview and download unlock. Phone is optional contact detail for your business profile.</p><button class="button" type="submit">Save business profile</button></form></article><article class="panel"><header class="panel-head"><h2>Brand identity</h2></header><div class="panel-body stack">' +
     (logoSrcFromProfile(profile)
       ? '<div class="notice success"><strong>Logo active</strong><br>Your selected logo is used across the dashboard, invoices and PDFs.</div><img class="settings-logo-preview" src="' +
         logoSrcFromProfile(profile) +
@@ -1165,7 +1165,7 @@ async function settingsPage() {
         'Aleya Settings',
         activeTab === 'bank-feeds' ? 'Bank Feeds' : 'Business profile',
         activeTab === 'bank-feeds'
-          ? 'Connect and manage the Basiq bank feed for this workspace. Imported transactions are browsed under Banking.'
+          ? 'Bank feeds are not connected yet. A new provider is being configured.'
           : 'This Aleya workspace stores your business identity for invoices, quotes and receipts. It is the single source of truth — not an external settings page.',
       ) +
       '<nav class="settings-tabs" aria-label="Settings sections">' +

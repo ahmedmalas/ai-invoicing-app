@@ -67,22 +67,18 @@ import type {
   BankAccount,
   BankConnection,
   BankFeedStatusView,
-  BankSyncResult,
   BankTransaction,
   ListBankTransactionsFilter,
 } from '../domain/banking/types.js';
-import {
-  completeBasiqCallback,
-  disconnectBankFeed as disconnectBankFeedService,
-  startBasiqConnect,
-} from '../domain/banking/connection-service.js';
-import {
-  applyBasiqHostedFailure,
-  reconcileBasiqHostedJobFailures,
-} from '../domain/banking/hosted-failure.js';
-import { syncBankConnection } from '../domain/banking/sync-service.js';
+import { BANK_FEEDS_RETIRED_CODE } from '../domain/banking/retired.js';
 import { assertAssignmentInTeamScopeOrThrow } from '../domain/teams/assignment-scope.js';
 import { assertTeamActionAuthorizedOrThrow } from '../domain/teams/authorization.js';
+
+function bankFeedsRetiredError(): Error {
+  return Object.assign(new Error('BANK_FEEDS_PROVIDER_RETIRED'), {
+    code: BANK_FEEDS_RETIRED_CODE,
+  });
+}
 
 function loadSchemaSql(): string {
   try {
@@ -721,7 +717,7 @@ interface ListQueryOptions {
   offset?: number;
 }
 
-export const DATABASE_SCHEMA_VERSION = 46;
+export const DATABASE_SCHEMA_VERSION = 47;
 export const PLATFORM_SNAPSHOT_VERSION = 1;
 
 export const PLATFORM_SNAPSHOT_TABLES = [
@@ -1031,6 +1027,8 @@ export interface AppDatabase {
     filter: ListBankTransactionsFilter,
   ): DatabaseResult<{ items: BankTransaction[]; total: number }>;
   getBankConnection(businessId: string): DatabaseResult<BankConnection | null>;
+  clearRetiredBankFeedProviderState(): DatabaseResult<{ cleared: true }>;
+  /** @deprecated Basiq retired — always rejects. */
   startBasiqBankConnect(input: {
     businessId: string;
     workspaceId: string;
@@ -1042,33 +1040,17 @@ export interface AppDatabase {
     freshConsent?: boolean;
     firstName?: string | null;
     lastName?: string | null;
-  }): DatabaseResult<{
-    authLinkUrl: string;
-    stateToken: string;
-    connection: BankConnection;
-    expiresAt: string | null;
-    environment: 'sandbox' | 'production';
-    deliveryMode: 'open_auth_link' | 'consent_ui_connect';
-    sandbox: boolean;
-    authLinkMobile: string;
-    authLinkMobileMasked: string;
-    message: string;
-    launchMode: 'consent_ui_connect' | 'auth_link';
-    activeConsentId: string | null;
-    redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
-  }>;
+  }): DatabaseResult<never>;
+  /** @deprecated Basiq retired — always rejects. */
   completeBasiqBankCallback(input: {
     stateToken: string;
     cookieState?: string | null;
-  }): DatabaseResult<{
-    workspaceId: string;
-    workspaceSchema: string;
-    businessId: string;
-    sync: BankSyncResult;
-  }>;
-  refreshBankFeed(businessId: string): DatabaseResult<BankSyncResult>;
-  disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<BankConnection>;
-  reconcileBasiqHostedFailures(businessId: string): DatabaseResult<BankConnection | null>;
+  }): DatabaseResult<never>;
+  /** @deprecated Basiq retired — always rejects. */
+  refreshBankFeed(businessId: string): DatabaseResult<never>;
+  /** @deprecated Basiq retired — clears leftover state when confirmed. */
+  disconnectBankFeed(businessId: string, confirmed: boolean): DatabaseResult<{ cleared: true }>;
+  reconcileBasiqHostedFailures(businessId: string): DatabaseResult<null>;
   reportBasiqHostedFailure(
     businessId: string,
     input: {
@@ -1079,7 +1061,7 @@ export interface AppDatabase {
       error?: string | null | undefined;
       errorDescription?: string | null | undefined;
     },
-  ): DatabaseResult<BankConnection | null>;
+  ): DatabaseResult<null>;
   failBasiqBankCallback(input: {
     stateToken: string;
     cookieState?: string | null | undefined;
@@ -1089,7 +1071,7 @@ export interface AppDatabase {
     message?: string | null | undefined;
     error?: string | null | undefined;
     errorDescription?: string | null | undefined;
-  }): DatabaseResult<BankConnection | null>;
+  }): DatabaseResult<null>;
 }
 
 export interface DatabaseInitOptions {
@@ -1732,6 +1714,8 @@ export function createDatabase(
     allocateNumber: (table, prefix) => allocateDocumentNumber(table, prefix),
   });
   const bankStore = createBankStore(db);
+  // Schema bump to 47: scrub any leftover Basiq mobile/consent connection state.
+  void bankStore.clearRetiredProviderState();
 
   const listRoleIdsForUser = db.prepare(
     'SELECT role_id FROM user_role_links WHERE user_id = ? ORDER BY created_at ASC, id ASC',
@@ -6662,7 +6646,7 @@ export function createDatabase(
       restorePlatformSnapshot(parsedSnapshot);
     },
 
-    // Banking methods are async (provider I/O). Callers always await; cast satisfies SqliteAppDatabase.
+    // Banking — Basiq provider retired; status is always not-connected.
     getBankFeedStatus(businessId) {
       return bankStore.getFeedStatusView(businessId) as unknown as BankFeedStatusView;
     },
@@ -6678,74 +6662,30 @@ export function createDatabase(
     getBankConnection(businessId) {
       return bankStore.getConnectionByBusiness(businessId) as unknown as BankConnection | null;
     },
-    startBasiqBankConnect(input) {
-      return startBasiqConnect(bankStore, input) as unknown as {
-        authLinkUrl: string;
-        stateToken: string;
-        connection: BankConnection;
-        expiresAt: string | null;
-        environment: 'sandbox' | 'production';
-        deliveryMode: 'open_auth_link' | 'consent_ui_connect';
-        sandbox: boolean;
-        authLinkMobile: string;
-        authLinkMobileMasked: string;
-        message: string;
-        launchMode: 'consent_ui_connect' | 'auth_link';
-        activeConsentId: string | null;
-        redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
-      };
+    clearRetiredBankFeedProviderState() {
+      return bankStore.clearRetiredProviderState() as unknown as { cleared: true };
     },
-    completeBasiqBankCallback(input) {
-      return completeBasiqCallback(bankStore, input) as unknown as {
-        workspaceId: string;
-        workspaceSchema: string;
-        businessId: string;
-        sync: BankSyncResult;
-      };
+    startBasiqBankConnect() {
+      throw bankFeedsRetiredError();
     },
-    refreshBankFeed(businessId) {
-      return (async () => {
-        const connection = await bankStore.getConnectionByBusiness(businessId);
-        if (!connection || connection.status === 'disconnected') {
-          throw new Error('BANK_CONNECTION_NOT_FOUND');
-        }
-        return syncBankConnection(bankStore, {
-          businessId,
-          connectionId: connection.id,
-          triggerRefresh: true,
-        });
-      })() as unknown as BankSyncResult;
+    completeBasiqBankCallback() {
+      throw bankFeedsRetiredError();
     },
-    disconnectBankFeed(businessId, confirmed) {
-      return disconnectBankFeedService(bankStore, {
-        businessId,
-        confirmed,
-      }) as unknown as BankConnection;
+    refreshBankFeed() {
+      throw bankFeedsRetiredError();
     },
-    reconcileBasiqHostedFailures(businessId) {
-      return reconcileBasiqHostedJobFailures(bankStore, businessId) as unknown as BankConnection | null;
+    disconnectBankFeed(_businessId, confirmed) {
+      if (!confirmed) throw new Error('BANK_DISCONNECT_CONFIRMATION_REQUIRED');
+      return bankStore.clearRetiredProviderState() as unknown as { cleared: true };
     },
-    reportBasiqHostedFailure(businessId, input) {
-      return applyBasiqHostedFailure(bankStore, businessId, input) as unknown as BankConnection | null;
+    reconcileBasiqHostedFailures() {
+      return null;
     },
-    failBasiqBankCallback(input) {
-      return (async () => {
-        if (input.cookieState && input.cookieState !== input.stateToken) {
-          throw new Error('BANK_CONNECT_STATE_MISMATCH');
-        }
-        const stateRow = await bankStore.consumeConnectState(input.stateToken);
-        if (!stateRow) {
-          throw new Error('BANK_CONNECT_STATE_INVALID');
-        }
-        return applyBasiqHostedFailure(bankStore, stateRow.businessId, {
-          code: input.code,
-          title: input.title,
-          detail: input.detail,
-          message: input.message,
-          error: input.error,
-          errorDescription: input.errorDescription,
-        });
-      })() as unknown as BankConnection | null;
+    reportBasiqHostedFailure() {
+      return null;
+    },
+    failBasiqBankCallback() {
+      return null;
     },
   };
 }

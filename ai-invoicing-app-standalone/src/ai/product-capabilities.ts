@@ -100,7 +100,7 @@ export const PRODUCT_CAPABILITIES: ProductCapability[] = [
     domain: 'banking',
     label: 'Bank feeds / open banking',
     appExists: 'partial',
-    aiAccess: 'write',
+    aiAccess: 'read',
     tools: [
       'get_bank_feed_status',
       'list_connected_bank_accounts',
@@ -117,7 +117,7 @@ export const PRODUCT_CAPABILITIES: ProductCapability[] = [
     undo: 'none',
     permissions: 'authenticated workspace',
     limitation:
-      'Phase 1 Basiq sandbox/test institutions only. Live Australian bank access requires verified production consent configuration. Static BSB/account on invoice templates remain payment instructions, not the feed.',
+      'Previous Basiq bank-feed provider retired. UI shows not connected with a disabled Connect bank account placeholder until a new provider is configured. Static BSB/account on invoice templates remain payment instructions, not a live feed.',
     priority: 'P1',
     conclusiveIntents: [
       'bank_feed_connected',
@@ -392,14 +392,15 @@ export function bankFeedStatusPayload() {
     implemented: true,
     connected: false,
     status: 'not_connected' as const,
-    provider: 'basiq' as const,
+    provider: null,
     institution: null,
     maskedAccount: null,
     lastSuccessfulSyncAt: null,
     lastSyncAttemptAt: null,
     errors: [] as string[],
     warning: null,
-    nextAction: 'Open Settings → Bank Feeds and connect a Basiq sandbox test institution.',
+    nextAction:
+      'Bank feeds are not connected yet. A new bank-feed provider is being configured.',
     distinction: {
       featureAbsent: false,
       toolAbsentForExistingFeature: false,
@@ -537,7 +538,7 @@ export function answerForStatusIntent(intent: Exclude<StatusIntent, null>): {
   return {
     toolName: 'get_bank_feed_status',
     assistantMessage:
-      'Bank feeds are available via Basiq Phase 1. Open /workspace/banking or ask Aleya AI for the live connection status.',
+      'Bank feeds are not connected yet. The previous provider has been retired and a new provider is being configured. Open Settings → Bank Feeds for the current status.',
     data: status,
   };
 }

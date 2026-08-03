@@ -1203,7 +1203,7 @@ BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_STOCK_MOVEMENT');
 END;
 
--- Bank feeds (Basiq) — Phase 1
+-- Bank feeds tables (provider-neutral storage; previous Basiq connection flow retired)
 CREATE TABLE IF NOT EXISTS bank_connections (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL,
@@ -1271,7 +1271,7 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_business_date ON bank_transactions(business_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_account ON bank_transactions(bank_account_id);
 
--- Basiq OAuth/connect CSRF state (SQLite single-file DB)
+-- Retired Basiq OAuth/connect CSRF state (kept empty; cleared on schema upgrade)
 CREATE TABLE IF NOT EXISTS basiq_connect_states (
   state_token TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,

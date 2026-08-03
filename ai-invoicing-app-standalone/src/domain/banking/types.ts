@@ -1,6 +1,6 @@
-/** Bank-feed domain types (Basiq Phase 1). */
+/** Bank-feed domain types (provider-neutral after Basiq retirement). */
 
-export type BankProvider = 'basiq';
+export type BankProvider = 'basiq' | 'none';
 
 export type BankConnectionStatus =
   | 'not_connected'
@@ -31,7 +31,7 @@ export interface BankConnection {
   lastSuccessfulSyncAt: string | null;
   errorCode: string | null;
   errorMessage: string | null;
-  /** Last confirmed AuthLink 2FA mobile (E.164). Server-only — never expose raw to clients. */
+  /** Retired Basiq AuthLink mobile — cleared on provider retirement. */
   authLinkMobile: string | null;
   createdAt: string;
   updatedAt: string;
@@ -74,6 +74,7 @@ export interface BankTransaction {
   updatedAt: string;
 }
 
+/** @deprecated Basiq connect CSRF state — table retained empty after retirement. */
 export interface BasiqConnectState {
   stateToken: string;
   workspaceId: string;
@@ -109,19 +110,11 @@ export interface BankFeedStatusView {
   connected: boolean;
   status: BankConnectionStatus | 'not_configured' | 'not_connected';
   provider: BankProvider | null;
-  /** Basiq environment for AuthLink UX (sandbox opens AuthLink in the browser). */
-  environment: 'sandbox' | 'production';
+  environment: 'sandbox' | 'production' | null;
   sandbox: boolean;
-  /**
-   * How AuthLink is presented to the user.
-   * Basiq does not SMS-deliver AuthLink URLs — the browser must open `authLinkUrl`.
-   * Hosted AuthLink 2FA SMS uses the confirmed mobile (masked below).
-   */
-  authLinkDelivery: 'open_auth_link' | 'consent_ui_connect';
-  /** Masked destination for AuthLink SMS 2FA (never the full number). */
+  authLinkDelivery: 'open_auth_link' | 'consent_ui_connect' | null;
   authLinkMobileMasked: string | null;
-  /** Required Basiq Dashboard Redirect URL for Consent UI return. */
-  redirectUrlRequired: 'https://ai-invoicing-app.vercel.app/api/banking/basiq/callback';
+  redirectUrlRequired: string | null;
   institution: string | null;
   maskedAccount: string | null;
   accounts: Array<{
@@ -135,7 +128,6 @@ export interface BankFeedStatusView {
   lastSuccessfulSyncAt: string | null;
   lastSyncAttemptAt: string | null;
   consentExpiresAt: string | null;
-  /** Stable provider/app error code when status is error (never secrets). */
   errorCode: string | null;
   errors: string[];
   warning: string | null;
@@ -147,4 +139,7 @@ export interface BankFeedStatusView {
     providerDisconnected: boolean;
     temporaryFailure: boolean;
   };
+  /** True after the previous provider integration was retired. */
+  retired?: boolean;
+  code?: string;
 }

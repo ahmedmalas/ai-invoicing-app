@@ -12,11 +12,11 @@ import { createDatabase } from '../../src/db/database.js';
 import { enterWorkspaceContext } from '../../src/auth/workspace-context.js';
 
 describe('Aleya product capability map', () => {
-  it('marks bank feeds as partial Basiq Phase 1 (not absent)', () => {
+  it('marks bank feeds as partial/unconfigured after Basiq retirement (not fully absent)', () => {
     const bank = PRODUCT_CAPABILITIES.find((item) => item.id === 'bank_feeds');
     expect(bank?.appExists).toBe('partial');
     expect(bank?.tools).toContain('get_bank_feed_status');
-    expect(bank?.tools).toContain('list_recent_bank_transactions');
+    expect(bank?.limitation?.toLowerCase()).toContain('retired');
     const status = bankFeedStatusPayload();
     expect(status.implemented).toBe(true);
     expect(status.distinction.featureAbsent).toBe(false);
@@ -49,7 +49,7 @@ describe('Aleya bank-feed tools', () => {
     resetAleyaRegistryForTests();
   });
 
-  it('registers real bank-feed tools and reads workspace status from DB', async () => {
+  it('registers bank-feed tools that report the retired/not-connected state', async () => {
     const registry = ensureAleyaToolsRegistered(getAleyaRegistry());
     for (const name of [
       'get_bank_feed_status',

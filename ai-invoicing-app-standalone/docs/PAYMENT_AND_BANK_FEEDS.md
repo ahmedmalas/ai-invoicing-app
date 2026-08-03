@@ -22,22 +22,23 @@ Customer portal payment declaration:
 - Reminders stop when payment is approved, confidently detected, or manually marked paid.
 - If status is uncertain, system must avoid asserting non-payment as fact.
 
-## Live Bank Feeds / Open Banking (Not implemented)
+## Live Bank Feeds / Open Banking (Provider retired — awaiting replacement)
 
-**Current product state (binding):** Live bank feeds do **not** exist in this Aleya workspace.
+**Current product state (binding):** The previous Basiq bank-feed integration has been **retired**. Bank Feeds shows a neutral “not connected” state with a disabled **Connect bank account** placeholder until a new provider is configured.
 
 | Capability | Status |
 |---|---|
-| Bank feeds / open-banking providers | Not implemented |
-| Connected bank accounts | Not implemented |
-| Transaction synchronisation | Not implemented |
-| Connection / last-sync / sync errors | Not implemented |
-| Expired consent | Not implemented |
-| Imported bank transactions | Not implemented |
+| Bank feeds / open-banking providers | Not connected (previous provider retired) |
+| Connected bank accounts | Not connected |
+| Transaction synchronisation | Not connected |
+| Connection / last-sync / sync errors | Not connected |
+| Expired consent | N/A (no active provider) |
+| Imported bank transactions | Not shown as an active feed |
 | Bank reconciliation | Not implemented |
-| Provider webhooks / background sync jobs | Not implemented |
+| Provider webhooks / background sync jobs | Retired with Basiq |
 | Static BSB/account on invoice templates | Exists (payment instructions on PDFs only) |
 | Manual customer payment recording | Exists (`/payments`) |
+
 
 Do **not** confuse template bank details or “Bank transfer” payment methods with a live bank-feed connection.
 

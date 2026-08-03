@@ -12,7 +12,7 @@ const AUTH_BYPASS_USER_ID = '00000000-0000-0000-0000-000000000001';
 const PORT = Number(process.env.VERIFY_PORT || 4215);
 const BASE = `http://127.0.0.1:${PORT}`;
 const CHROME = process.env.CHROME_PATH || '/usr/local/bin/google-chrome';
-const OUT = process.env.ARTIFACT_DIR || '/opt/cursor/artifacts/basiq-bank-feed-phase1';
+const OUT = process.env.ARTIFACT_DIR || '/opt/cursor/artifacts/bank-feeds-retired';
 const report = { ok: false, checks: {}, errors: [], steps: [] };
 mkdirSync(OUT, { recursive: true });
 
@@ -166,7 +166,7 @@ async function main() {
     );
     await waitFor(
       page,
-      async () => Boolean(await page.$('[data-bank-feeds-panel], [data-bank-connect]')),
+      async () => Boolean(await page.$('[data-settings-bank-feeds]')),
       20000,
       'bank feeds panel',
     );
@@ -181,13 +181,11 @@ async function main() {
       (t) => t.tab === 'bank-feeds' && t.active,
     );
     const panelText = await page.$eval('[data-settings-bank-feeds]', (el) => el.textContent || '');
-    report.checks.bank_feeds_panel =
-      /Status|Connect bank|Not connected|Provider not configured|Bank Feeds/i.test(panelText);
-    report.checks.bank_feeds_actions = Boolean(
-      (await page.$('[data-bank-connect]')) ||
-        (await page.$('[data-bank-refresh]')) ||
-        (await page.$('[data-bank-reconnect]')),
-    );
+    report.checks.bank_feeds_panel = /Bank feeds are not connected yet/i.test(panelText);
+    report.checks.bank_feeds_placeholder_action =
+      /Connect bank account/i.test(panelText) &&
+      Boolean(await page.$('button[disabled]'));
+    report.checks.bank_feeds_no_basiq_flow = !/AuthLink|Basiq/i.test(panelText);
     step('settings_bank_feeds', panelText.slice(0, 220).replace(/\s+/g, ' '));
     await page.screenshot({ path: join(OUT, 'settings-tabs.png'), fullPage: false });
     await page.screenshot({ path: join(OUT, 'settings-bank-feeds.png'), fullPage: true });
@@ -199,15 +197,14 @@ async function main() {
     await sleep(300);
     await waitFor(
       page,
-      async () => Boolean(await page.$('.banking-page h1, [data-banking-root]')),
+      async () => Boolean(await page.$('.banking-page h1, .banking-placeholder')),
       20000,
       'banking content',
     );
     const bankingHeading = await page.$eval('h1', (el) => el.textContent?.trim() || '');
-    report.checks.banking_page = bankingHeading === 'Banking';
-    report.checks.banking_links_to_settings = Boolean(
-      await page.$('a[href="/settings?tab=bank-feeds"]'),
-    );
+    report.checks.banking_page =
+      bankingHeading === 'Bank Feeds' || bankingHeading === 'Banking';
+    report.checks.banking_placeholder = Boolean(await page.$('.banking-placeholder'));
     step('banking_page', bankingHeading);
     await page.screenshot({ path: join(OUT, 'workspace-banking.png'), fullPage: true });
 
