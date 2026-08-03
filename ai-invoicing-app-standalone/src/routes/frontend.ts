@@ -129,8 +129,7 @@ function sendJs(reply: {
 }, body: string) {
   return reply
     .type('application/javascript; charset=utf-8')
-    .header('Cache-Control', 'no-cache, no-store, must-revalidate')
-    .header('Pragma', 'no-cache')
+    .header('Cache-Control', 'public, max-age=31536000, immutable')
     .send(body);
 }
 
@@ -153,19 +152,22 @@ export const frontendRoutes: FastifyPluginAsync = async (app) => {
   }
 
   app.get('/assets/build-identity.js', async (_request, reply) =>
-    sendJs(reply, buildIdentityModuleSource()),
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'public, max-age=86400')
+      .send(buildIdentityModuleSource()),
   );
 
   app.get('/assets/styles.css', async (_request, reply) =>
     reply
       .type('text/css; charset=utf-8')
-      .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
       .send(asset('styles.css')),
   );
   app.get('/assets/auth-controls.css', async (_request, reply) =>
     reply
       .type('text/css; charset=utf-8')
-      .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
       .send(asset('auth-controls.css')),
   );
   app.get('/assets/app.js', async (_request, reply) => sendJs(reply, asset('app.js')));

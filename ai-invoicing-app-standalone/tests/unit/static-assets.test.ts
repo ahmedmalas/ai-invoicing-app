@@ -56,15 +56,19 @@ describe('static asset serving without DB boot', () => {
     const css = await fetch(`${runtime.baseUrl}/assets/styles.css`);
     expect(css.status).toBe(200);
     expect(css.headers.get('content-type')).toContain('text/css');
+    expect(css.headers.get('cache-control')).toMatch(/public/);
+    expect(css.headers.get('cache-control')).not.toMatch(/no-store/);
     expect((await css.text()).length).toBeGreaterThan(20);
 
     const js = await fetch(`${runtime.baseUrl}/assets/banking-ui.js`);
     expect(js.status).toBe(200);
     expect(js.headers.get('content-type')).toContain('javascript');
+    expect(js.headers.get('cache-control')).toContain('immutable');
     expect(await js.text()).toContain('createBankingUi');
 
     const identity = await fetch(`${runtime.baseUrl}/assets/build-identity.js`);
     expect(identity.status).toBe(200);
+    expect(identity.headers.get('cache-control')).toMatch(/max-age/);
     expect(await identity.text()).toContain('buildIdentity');
 
     expect(appBuilds).toBe(0);

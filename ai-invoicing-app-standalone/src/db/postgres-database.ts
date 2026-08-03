@@ -1583,12 +1583,13 @@ export async function ensurePostgresSchemaReady(
   };
 
   // Phase 1: lock-free probe. If schema is already current, skip all DDL.
+  // Use a single pool.query (one round-trip) — avoid connect + SET + SET + SELECT.
   {
-    const probe = await pool.connect();
     try {
-      await probe.query("SET lock_timeout = '2s'");
-      await probe.query("SET statement_timeout = '5s'");
-      const current = await readPublicSchemaVersion(probe);
+      const version = await pool.query<{ schema_version: number }>(
+        'SELECT schema_version FROM public.app_database_metadata WHERE singleton_id = 1',
+      );
+      const current = version.rows[0]?.schema_version ?? null;
       if (current != null && current > DATABASE_SCHEMA_VERSION) {
         const path = setPath('ahead');
         console.warn(
@@ -1604,8 +1605,22 @@ export async function ensurePostgresSchemaReady(
         const path = setPath('skip');
         return { path, schemaVersion: current };
       }
-    } finally {
-      probe.release();
+    } catch (error) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? (error as { code?: string }).code
+          : undefined;
+      // Undefined table/relation → fall through to controlled migration.
+      if (code !== '42P01' && code !== '3F000') {
+        // Unexpected probe failure — continue to Phase 2 rather than crash cold start.
+        console.warn(
+          JSON.stringify({
+            event: 'postgres.boot.probe_failed',
+            code,
+            message: error instanceof Error ? error.message : 'unknown',
+          }),
+        );
+      }
     }
   }
 
@@ -6365,7 +6380,7 @@ export async function createPostgresDatabase(
 
       const invoiceRows = (await db
         .prepare(
-          `SELECT *
+          `SELECT id, customer_id, issue_date, invoice_number, total
            FROM invoices
            WHERE status = 'Finalised'
              AND (? IS NULL OR issue_date >= ?)
@@ -6373,7 +6388,13 @@ export async function createPostgresDatabase(
            ORDER BY issue_date ASC, created_at ASC, id ASC
            LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to, limit, offset)) as DbInvoiceRow[];
+        .all(from, from, to, to, limit, offset)) as Array<{
+        id: string;
+        customer_id: string;
+        issue_date: string;
+        invoice_number: string | null;
+        total: number;
+      }>;
       const invoiceIds = invoiceRows.map((row) => row.id);
 
       let invoiceCreditsById = new Map<string, number>();
@@ -6586,14 +6607,20 @@ export async function createPostgresDatabase(
 
       const purchaseOrderRows = (await db
         .prepare(
-          `SELECT *
+          `SELECT id, supplier_id, issue_date, purchase_order_number, total
            FROM purchase_orders
            WHERE (? IS NULL OR issue_date >= ?)
              AND (? IS NULL OR issue_date <= ?)
            ORDER BY issue_date ASC, created_at ASC, id ASC
            LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to, limit, offset)) as DbPurchaseOrderRow[];
+        .all(from, from, to, to, limit, offset)) as Array<{
+        id: string;
+        supplier_id: string;
+        issue_date: string;
+        purchase_order_number: string;
+        total: number;
+      }>;
       const purchaseOrderIds = purchaseOrderRows.map((row) => row.id);
       let billedByPurchaseOrder = new Map<string, number>();
       if (purchaseOrderIds.length > 0) {
@@ -6625,14 +6652,21 @@ export async function createPostgresDatabase(
 
       const supplierBillRows = (await db
         .prepare(
-          `SELECT *
+          `SELECT id, supplier_id, bill_number, bill_date, status, total
            FROM supplier_bills
            WHERE (? IS NULL OR bill_date >= ?)
              AND (? IS NULL OR bill_date <= ?)
            ORDER BY bill_date ASC, created_at ASC, id ASC
            LIMIT ? OFFSET ?`,
         )
-        .all(from, from, to, to, limit, offset)) as DbSupplierBillRow[];
+        .all(from, from, to, to, limit, offset)) as Array<{
+        id: string;
+        supplier_id: string;
+        bill_number: string;
+        bill_date: string;
+        status: SupplierBillStatus;
+        total: number;
+      }>;
       const supplierBillIds = supplierBillRows.map((row) => row.id);
       let paymentsBySupplierBill = new Map<string, number>();
       if (supplierBillIds.length > 0) {

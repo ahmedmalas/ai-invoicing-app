@@ -191,10 +191,12 @@ describe('Vercel Node runtime handler', () => {
     const css = await fetch(`${baseUrl}/assets/styles.css`);
     expect(css.status).toBe(200);
     expect(css.headers.get('content-type')).toContain('text/css');
+    expect(css.headers.get('cache-control')).toMatch(/public/);
     expect(builds).toBe(0);
 
     const js = await fetch(`${baseUrl}/assets/auth-controls.js`);
     expect(js.status).toBe(200);
+    expect(js.headers.get('cache-control')).toContain('immutable');
     expect(builds).toBe(0);
   });
 });
